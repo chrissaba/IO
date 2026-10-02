@@ -1032,10 +1032,11 @@ DUCK_SEND_JS = """() => {
 }"""
 DUCK_READ_JS = """() => {
   const main = (document.querySelector('main') || document.body).innerText;
+  const limited = /reached (your|the) (daily )?(usage |chat )?limit|limit (reached|exceeded)|try again (later|tomorrow)/i.test(main.slice(-1500));
   const challenge = [...document.querySelectorAll('[role=dialog], dialog')].some(d => d.offsetParent !== null && /challenge|human|bots use/i.test(d.innerText));
   const at = main.lastIndexOf('You said');
   const parts = at < 0 ? [] : main.slice(at).split('Duck.ai said');
-  return JSON.stringify({challenge, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
+  return JSON.stringify({limited, challenge, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
 }"""
 # Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
 DUCK_NO_HISTORY_JS = """() => { localStorage.setItem('isRecentChatsOn', JSON.stringify('0')); return 'ok'; }"""  # Duck.ai's own "keep recent chats" switch
@@ -1113,6 +1114,8 @@ class DuckAI:
                     state = json.loads(await js(DUCK_READ_JS))
                 except ValueError:
                     continue
+                if state.get("limited"):
+                    return "error: limit: Duck.ai says its usage limit is reached"
                 if state.get("challenge"):
                     return "error: Duck.ai asked to prove a human is there; that's for the user, not IO"
                 new = duck_answer(state.get("text", ""))
@@ -1773,6 +1776,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         if not loop:
             gemini, director = None, False
         director_queue: list[tuple[str, dict]] = []
+        director_paused_until = 0.0
 
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
@@ -1792,6 +1796,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in tools})
             log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
                 actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
+            if reply.startswith("error: limit"):
+                nonlocal director_paused_until
+                director_paused_until = time.time() + 1800
+                log("progress", step=step, n=0, summary="Duck.ai's usage limit was reached: Qwen decides on its own for 30 minutes, then IO asks Duck.ai again.")
             director_queue.extend(batch)
             return (thoughts or "(director)") if batch else ""
 
@@ -1856,7 +1864,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             pending = None  # director mode: the next queued action stands in for the local model's choice
             if director:
-                thoughts = "" if director_queue else await direct(step)
+                if not director_queue and time.time() < director_paused_until:
+                    thoughts = ""  # Duck.ai hit its usage limit: Qwen decides until the pause is over
+                else:
+                    thoughts = "" if director_queue else await direct(step)
                 if director_queue:
                     tool_name, tool_args = director_queue.pop(0)
                     call = SimpleNamespace(id=f"director-{step}", function=SimpleNamespace(name=tool_name, arguments=json.dumps(tool_args)))
