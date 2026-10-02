@@ -420,7 +420,7 @@ var ConnectedTabGroup = class {
 		chrome.tabs.onRemoved.removeListener(this._onTabRemovedListener);
 		const groupTabs = [...this._groupTabIds];
 		this._groupTabIds.clear();
-		if (groupTabs.length) ungroupTabs(groupTabs);
+		if (groupTabs.length) closeGroupTabs(groupTabs);
 		this.onclose?.();
 	}
 	async _updateBadge(tabId, { text, color, title }) {
@@ -459,6 +459,25 @@ var ConnectedTabGroup = class {
 		}
 	}
 };
+// IO: when the agent disconnects, its tabs go with it instead of being left behind ungrouped. A tab that is the last
+// one in its window is only ungrouped, so closing the group never closes a Chrome window.
+async function closeGroupTabs(tabIds) {
+	try {
+		const tabs = (await Promise.all(tabIds.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
+		const close = [];
+		for (const tab of tabs) {
+			const inWindow = await chrome.tabs.query({ windowId: tab.windowId });
+			const closing = close.filter((t) => t.windowId === tab.windowId).length;
+			if (inWindow.length - closing > 1) close.push(tab);
+		}
+		const keep = tabs.filter((tab) => !close.includes(tab)).map((tab) => tab.id);
+		if (close.length) await retryOnDrag(() => chrome.tabs.remove(close.map((tab) => tab.id)));
+		if (keep.length) await ungroupTabs(keep);
+	} catch (error) {
+		debugLog("Error closing group tabs:", error);
+		await ungroupTabs(tabIds);
+	}
+}
 async function ungroupTabs(tabIds) {
 	try {
 		await retryOnDrag(() => chrome.tabs.ungroup(tabIds));
