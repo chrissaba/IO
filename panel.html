@@ -265,6 +265,16 @@
   .underbar .status { margin-left: auto; display: flex; gap: 12px; align-items: center; }
   .underbar .status span { display: inline-flex; align-items: center; gap: 5px; }
   .underbar .paused { color: var(--warn); }
+  /* model switcher, bottom right under the send button like Claude's */
+  .modelpick { position: relative; }
+  .modelpick > button { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
+                        padding: 3px 6px; border-radius: 6px; cursor: pointer; }
+  .modelpick > button:hover { background: var(--hover); color: var(--text); }
+  .menu.modelmenu { left: auto; right: 0; bottom: calc(100% + 4px); width: 320px; }
+  .modelmenu button { align-items: flex-start; }
+  .modelmenu .opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .modelmenu .opt small { color: var(--faint); font-size: 11.5px; }
+  .modelmenu .tick { margin-left: auto; color: var(--accent); }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
   .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 
@@ -514,8 +524,21 @@
           <span class="paused" x-show="s.status.paused">Paused. Messages wait until you resume.</span>
           <span class="status">
             <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
-            <span :title="'Eyes (UI-TARS): ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
+            <span :title="'Eyes: ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
           </span>
+          <div class="modelpick" @mousedown.outside="modelOpen = false">
+            <div class="menu modelmenu" x-show="modelOpen" x-transition.opacity.duration.100ms>
+              <template x-for="m in MODELS" :key="m.id">
+                <button @click="pickModel(m.id)">
+                  <span class="opt"><span x-text="m.name"></span><small x-text="m.about"></small></span>
+                  <span class="ic tick" x-show="s.settings.model_mode === m.id" x-html="ic('check', 'sm')"></span>
+                </button>
+              </template>
+            </div>
+            <button @click="modelOpen = !modelOpen" :title="'Model: ' + modelName() + (s.status.boss === 'ready' ? '' : ' (' + s.status.boss + ')')">
+              <span x-text="modelName()"></span><span class="ic" x-html="ic('chevron-down', 'sm')"></span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -730,7 +753,7 @@
       <h2>Model</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Which models to use</div>
-            <div x-show="s.settings.model_mode !== 'smart'">Fast: Gemma 4 E4B thinks, UI-TARS finds where to click. Quickest.</div>
+            <div x-show="!['smart', 'balanced'].includes(s.settings.model_mode)">Fast: Gemma 4 E4B thinks, UI-TARS finds where to click. Quickest.</div>
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
@@ -1236,6 +1259,19 @@ function agent() {
         post("/api/history/clear").then(() => this.refresh());
     },
     saveSettings() { post("/api/settings", this.s.settings); },
+    MODELS: [
+      { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },
+      { id: "balanced", name: "Balanced", about: "Qwen 3.6 35B-A3B. Sharper eyes, still quick." },
+      { id: "smart", name: "Smart", about: "Qwen 3.8 27B. Most careful, several times slower." },
+    ],
+    modelOpen: false,
+    modelName() { return (this.MODELS.find((m) => m.id === (this.s.settings.model_mode || "fast")) || this.MODELS[0]).name; },
+    pickModel(id) {
+      this.modelOpen = false;
+      if (this.s.settings.model_mode === id) return;
+      this.s.settings.model_mode = id;
+      this.saveSettings();
+    },
     async saveChromeToken() {
       if (!this.chromeToken.trim()) return;
       await post("/api/browser", { token: this.chromeToken });
