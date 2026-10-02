@@ -670,6 +670,7 @@ def clean_summary(text: str) -> str:
     """Drops bookkeeping a small model sometimes copies into its answer from the chat history."""
     text = re.sub(r"\s*\[actions taken:.*?\]\s*$", "", text or "", flags=re.S)
     text = re.sub(r"\s*\(context, not part of the request:.*?\)\s*$", "", text, flags=re.S)
+    text = re.sub(r"\n\s*done\.?\s*$", "", text, flags=re.I)  # a stray "done" line after the answer
     return text.strip()
 
 
@@ -682,6 +683,50 @@ def fill_empty(summary: str, last_info: str) -> str:
     if last_info and (len(summary) < 8 or EMPTY_SUMMARY.match(summary.strip())):
         return last_info.strip()[:2000]
     return summary
+
+
+CHECK_SYSTEM = """You check the work of a Windows assistant before it reports back to the user.
+Given the user's request, the actions it took with their results, and the answer it wants to give, decide whether
+the request was really done and the answer is supported by the results. Failed actions, missing steps, or an answer
+that claims more than the results show mean it is not done.
+If the results reasonably support the answer, say YES: don't ask for extra proof the user didn't want.
+Reply with exactly YES, or NO: followed by one sentence saying what is missing or wrong and what to do next."""
+
+SUMMARY_SYSTEM = """You compress the working notes of a Windows assistant so it can keep going with less to read.
+Summarize the earlier steps below in at most 150 words: what has been done, what was found (exact values, names,
+paths, URLs, coordinates and refs it may still need), and what failed. Don't add advice. Output only the summary."""
+MAX_REDOS = 2
+COMPACT_AT = 40000  # characters of working messages before older steps are summarized
+KEEP_RECENT = 6  # newest messages always kept word for word
+
+
+def local_chat(system: str, user: str, max_tokens: int = 300) -> str:
+    client = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=1, timeout=90)
+    reply = client.chat.completions.create(model=BOSS_MODEL, temperature=0.1, max_tokens=max_tokens,
+                                           messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+    return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
+
+
+def check_work(task: str, steps: list[str], answer: str) -> str:
+    """'' when the work looks done; otherwise what is missing, in one sentence."""
+    verdict = local_chat(CHECK_SYSTEM, f"Request: {task}\n\nActions and results:\n" + "\n".join(steps[-8:]) +
+                         f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=120)
+    if verdict.upper().startswith("NO"):
+        return verdict[2:].lstrip(" :.-") or "the request doesn't look done yet"
+    return ""
+
+
+def summarize_steps(task: str, old: list[dict]) -> str:
+    lines = []
+    for m in old:
+        if m["role"] == "assistant":
+            calls = ", ".join(f"{tc['function']['name']}({tc['function']['arguments'][:200]})" for tc in m.get("tool_calls") or [])
+            lines.append(f"assistant: {str(m.get('content') or '')[:300]} {calls}".strip())
+        elif m["role"] == "tool":
+            lines.append(f"result: {str(m['content'])[:600]}")
+        else:
+            lines.append(f"note: {str(m['content'])[:400]}")
+    return local_chat(SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines), max_tokens=320)
 
 
 def text_of(res) -> str:
@@ -811,6 +856,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             system = system.replace(" It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot "
                                     "(its title, headings and text).", "")
         messages: list[dict] = [{"role": "system", "content": system}, *conversation, {"role": "user", "content": user_content}]
+        head = len(messages)  # everything after this is the task's own working notes, which can be summarized
+        steps_log: list[str] = []  # every action with its result, for checking the work before answering
+        redos = 0
         log("start", task=task, tools=[t["function"]["name"] for t in tools])
         extra_tools = "\n".join(f"- {alias}: {(t.description or '').split('. ')[0][:120]}" for alias, _, t in plugin_tools)
         last_error, refused_done = "", False
@@ -820,6 +868,23 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
         actions: list[str] = []  # short action/result lines, for replanning
         error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
+
+        async def check_before_done(answer: str) -> str:
+            """Before reporting back after doing things, check the work; if it falls short, say so and keep going.
+            At most MAX_REDOS times per task, and never for plain chat (no tools used)."""
+            nonlocal redos
+            if not steps_log or redos >= MAX_REDOS:
+                return ""
+            try:
+                problem = await asyncio.to_thread(check_work, task, steps_log, answer)
+            except Exception as e:
+                log("warning", text=f"couldn't check the work: {e}")
+                return ""
+            if not problem:
+                return ""
+            redos += 1
+            log("check", text=problem)
+            return f"Not done yet: {problem} Fix it, then give your answer again."
 
         async def get_plan(history: str = "") -> None:
             """The local boss writes itself a plan (and a new one when stuck). Everything stays on this PC, so it gets
@@ -861,6 +926,17 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             if stuck and replans < MAX_REPLANS:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
                 await get_plan("\n".join(actions[-12:]))
+            if sum(len(str(m.get("content") or "")) for m in messages[head:]) > COMPACT_AT:
+                cut = len(messages) - KEEP_RECENT
+                while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
+                    cut -= 1
+                if cut - head >= 4:
+                    try:
+                        summary_text = await asyncio.to_thread(summarize_steps, task, messages[head:cut])
+                        messages[head:cut] = [{"role": "user", "content": f"Progress so far (older steps summarized to save space):\n{summary_text}"}]
+                        log("compact", step=step, text=summary_text)
+                    except Exception as e:
+                        log("warning", text=f"couldn't summarize older steps: {e}")
             t0 = time.time()
             # model calls run in a thread so the web app's event loop stays responsive
             try:
@@ -904,6 +980,10 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 if m or (text and (plain_replies >= 1 or not announcing)):
                     summary = m.group(2).strip() if m else text
                     summary = fill_empty(clean_summary(summary), last_info)
+                    problem = await check_before_done(summary)
+                    if problem:
+                        messages.append({"role": "user", "content": problem})
+                        continue
                     log("done", step=step, summary=summary)
                     return summary
                 plain_replies += 1
@@ -953,6 +1033,11 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                         result = "Not done: you said you would try something else. Do it now, then call done with the answer."
                         log("tool", step=step, name=name, args=args, result=result)
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                        continue
+                    problem = await check_before_done(summary)
+                    if problem:
+                        log("tool", step=step, name=name, args=args, result=problem)
+                        messages.append({"role": "tool", "tool_call_id": c.id, "content": problem})
                         continue
                     log("done", step=step, summary=summary)
                     return summary
@@ -1047,6 +1132,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
                 actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}")  # for replanning
+                steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> {result[:1500]}")
                 log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
                 messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                 if name in ("look_at_screen", "PowerShell", "browser_read") and not last_error:
