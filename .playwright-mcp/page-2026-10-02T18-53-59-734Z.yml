@@ -1,0 +1,390 @@
+- generic [active] [ref=f27e1]:
+  - generic:
+    - generic:
+      - link "Skip to main content" [ref=f27e2] [cursor=pointer]
+      - link "Accessibility help" [ref=f27e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=en
+  - generic [ref=f27e8]:
+    - search [ref=f27e9]:
+      - generic [ref=f27e11]:
+        - link "Go to Google Home" [ref=f27e13] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=en&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQPHoECAYQBA
+        - generic [ref=f27e22]:
+          - combobox "Search" [ref=f27e24]: Idle Obelisk Miner how to fire bombs Idle Obelisk Miner how to fire bombs
+          - generic [ref=f27e25]:
+            - button "Clear" [ref=f27e29] [cursor=pointer]
+            - generic [ref=f27e34]:
+              - button "Search by voice" [ref=f27e37] [cursor=pointer]
+              - button "Search by image" [ref=f27e42] [cursor=pointer]
+    - generic [ref=f27e45]:
+      - button "Settings" [ref=f27e47] [cursor=pointer]
+      - button "Share" [ref=f27e52] [cursor=pointer]
+      - generic [ref=f27e58]:
+        - button "Google apps" [ref=f27e60] [cursor=pointer]
+        - link "Sign in" [ref=f27e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/search%3Fq%3DIdle%2BObelisk%2BMiner%2Bhow%2Bto%2Bfire%2Bbombs&ec=futura_srp_og_si_72236_p
+  - generic [ref=f27e68]:
+    - navigation [ref=f27e74]:
+      - generic [ref=f27e80]:
+        - list [ref=f27e81]:
+          - listitem [ref=f27e82]:
+            - link "AI Mode" [ref=f27e85] [cursor=pointer]:
+              - /url: /search?q=Idle+Obelisk+Miner+how+to+fire+bombs&sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=50&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&vsint=&aep=1&ntc=1&cs=0&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ2J8OegQIDxAD
+          - listitem [ref=f27e89]:
+            - link "All" [disabled] [ref=f27e90]
+          - listitem [ref=f27e93]:
+            - link "Short videos" [ref=f27e94] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=39&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+how+to+fire+bombs&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQs6gLegQIExAB
+          - listitem [ref=f27e97]:
+            - link "Videos" [ref=f27e98] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=vids&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+how+to+fire+bombs&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQtKgLegQIFhAB
+          - listitem [ref=f27e101]:
+            - link "Images" [ref=f27e102] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=2&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+how+to+fire+bombs&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQtKgLegQIFRAB
+          - listitem [ref=f27e105]:
+            - link "Forums" [ref=f27e106] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=forums&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+how+to+fire+bombs&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQs6gLegQIFxAB
+          - listitem [ref=f27e109]:
+            - link "Shopping" [ref=f27e110] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&udm=28&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+how+to+fire+bombs&ved=1t:220175&ictx=111
+          - listitem [ref=f27e113]:
+            - button [ref=f27e114] [cursor=pointer]:
+              - generic "More filters" [ref=f27e115]: More
+        - button "Tools" [ref=f27e122] [cursor=pointer]
+    - heading "Search Results" [level=1] [ref=f27e129]
+    - generic [ref=f27e134]:
+      - generic [ref=f27e153]:
+        - heading "Thinking" [level=2] [ref=f27e157]
+        - progressbar "Generating" [ref=f27e160]
+      - main [ref=f27e162]:
+        - generic [ref=f27e166]:
+          - generic [ref=f27e169]:
+            - heading "Web results" [level=2] [ref=f27e170]
+            - generic [ref=f27e171]:
+              - generic [ref=f27e174]:
+                - link "Bombs - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Bombs" [ref=f27e176] [cursor=pointer]:
+                  - /url: /goto?url=CAESYgHrOzAV-f2eLg8GxRpjYMXIAc6-pNfFL_DQXKk2ZkXWrbTF3VEm6JTcY39S20-JsniWf8codb-5kKhabpaPZqBerQu5oPnDxHwc3g_k6YRcfjB0ZF0nZ7CUrw-iTE36ElA5
+                  - heading "Bombs - Idle Obelisk Miner Wiki" [level=3] [ref=f27e177]
+                  - generic [ref=f27e183]:
+                    - generic [ref=f27e184]: Idle Obelisk Miner Wiki
+                    - generic [ref=f27e186]: https://shminer.miraheze.org › wiki › Bombs
+                - button "About this result" [ref=f27e192] [cursor=pointer]
+              - generic [ref=f27e198]:
+                - generic [ref=f27e199]: Sep 21, 2026 —
+                - generic [ref=f27e200]:
+                  - text: Fire Slow Fires a bomb every 1.25 seconds. Fire Fire
+                  - emphasis [ref=f27e201]: s bomb
+                  - text: at a fast speed while holding the button. Fire All Fires all bombs of that type at ...
+              - link [aria-hidden] [ref=f27e204] [cursor=pointer]:
+                - /url: /goto?url=CAESYgHrOzAV-f2eLg8GxRpjYMXIAc6-pNfFL_DQXKk2ZkXWrbTF3VEm6JTcY39S20-JsniWf8codb-5kKhabpaPZqBerQu5oPnDxHwc3g_k6YRcfjB0ZF0nZ7CUrw-iTE36ElA5
+              - list [ref=f27e208]:
+                - listitem [ref=f27e209]:
+                  - link "Bomb Upgrades" [ref=f27e210] [cursor=pointer]:
+                    - /url: /goto?url=CAEScAHrOzAV2I26G9V6RNQAFQR1l4l7USsJYaY6Q6OR0zt5poXcYbxjU5-lqlKRw11EUyVMeN9uQ3C9_gE6zwqHW06RKp3CEN6G02LPpjLdXHcecWE6UXAmnkIdgnILjzt6jvFWVI15lxEt7hOre4qQNIg
+                - listitem [ref=f27e213]:
+                  - link "Bomb Firing Modes" [ref=f27e214] [cursor=pointer]:
+                    - /url: /goto?url=CAESdAHrOzAVXzHqM2mKnEwwoDcljwlYEQ26IKLiQcqz_A9H3DMmyUKy521KkTLaRdNNTsi3Cnd7ns46MlIBsFPYFNtFuXGDngo9jEyw_DJ-nTrXpSTQqJH6djFZJhoSSinJ_dpYadBwGKs5DkmtfIPoQTkjaIOq
+                - listitem [ref=f27e217]:
+                  - link "Golden Bombs" [ref=f27e218] [cursor=pointer]:
+                    - /url: /goto?url=CAESbwHrOzAV1RBaRit6M9b-4RInqooBDbNJE7zSkbgNz4v1Wteyygv5CSwdq45lV1Cf58NUE8AIa1dKo5p4bv4vMdkErsLGTeR6hI2sKeIUn75gD3JYHlMiNvrVnCMezn4J8zXdcaNyPh1uAgJLhbmpaQ
+                - listitem [ref=f27e221]:
+                  - link "Bombs" [ref=f27e222] [cursor=pointer]:
+                    - /url: /goto?url=CAESaAHrOzAVwG-L2tAeFDNHF0MokwJIGFsIv7oN2Jg-cQrmDyyAO7jR9EjDCGZatxuq5t7KSoId8-FhoVFxlajLhN1L02s1xKwneLaxC9Mqq_SHK_4DIFSutM4w95-GwBd6b7rvJddfhKvY
+          - generic [ref=f27e228]:
+            - generic [ref=f27e231]:
+              - 'link "How do the bomb toggles work? : r/IdleObeliskMiner Reddit · r/IdleObeliskMiner 10+ comments · 5 months ago" [ref=f27e233] [cursor=pointer]':
+                - /url: /goto?url=CAESkwEB6zswFf6hKFAU63iufkxpHt3nP4n1NaKru_pyR8QgUMr9KIvO2fRE--W_3Y5c1Axme5EyVopQTwOnDUJO2JgaURhTaVvFlS64e55zc-zfHOLWZs_1lXPX9PDsaDcIVLUIPe80J9NE_Pebsb2q00JkK54rm_RhUJjn2KITNojiuaDKXmR4yBFJInKb347cfII0YLs
+                - 'heading "How do the bomb toggles work? : r/IdleObeliskMiner" [level=3] [ref=f27e234]'
+                - generic [ref=f27e240]:
+                  - generic [ref=f27e241]: Reddit · r/IdleObeliskMiner
+                  - generic [ref=f27e243]: 10+ comments · 5 months ago
+              - button "About this result" [ref=f27e249] [cursor=pointer]
+            - generic [ref=f27e254]: Google has been extraordinarily unhelpful. "Use all" works as I imagined, double tap "fire all" and Huzzah, fire all. But the slow fire and normal fire, ...
+            - generic [ref=f27e260]:
+              - link "14 answers" [ref=f27e261] [cursor=pointer]:
+                - /url: /goto?url=CAESmwEB6zswFW0Fc5aIq3vrbwHvN8Tdyl2S8FEtWjVVbVWQG9dmElwCFz5PRT5bThm11NZAifGZto2hjw9WHtAy2eCzzQhkgdq2oS-t7NVkyh0bdVr8kEw8coDc1VIGELGK11dWzUwdr9hxA79SIByaHh4AqlM9q6UIIffDGvaeE0QuLerOUI__5oc1xj01hoD1aDFtqBaHjT4meM2zPg
+              - generic [ref=f27e262]: ·
+              - generic [ref=f27e263]: "Top answer:"
+              - generic [ref=f27e264]: I wouldn't check the box to use buffs online, I would save your gift 2x for online use until ...
+            - generic [ref=f27e267]:
+              - generic [ref=f27e268]:
+                - link [ref=f27e271] [cursor=pointer]:
+                  - /url: /goto?url=CAESoQEB6zswFVy2KutIsAwhNdvnaYp83HEyQM5BqpWgMVzep04krpTbcA5UxYgNQH-oKj7GWfihk3j8S2nQ3XDjjhwt8Kl8AUIHzLao3yfafzkSJtMm7mW93SFYIWVElhEY0vllKAinYM7Cl-q65MyhdiqGMi1yB8e0s-z6hDVqfsu3pvdGvZ4a6xEoMJpEJ5OPJgplOBmCos1uPb2hnfU1pX0vig
+                  - generic [ref=f27e272]:
+                    - text: Definitive answer to best
+                    - emphasis [ref=f27e273]: bomb
+                    - text: "-"
+                    - emphasis [ref=f27e274]: firing
+                    - text: "order : r ..."
+                - generic [ref=f27e275]: 32 answers
+                - generic [ref=f27e277]: Jul 20, 2026
+              - generic [ref=f27e279]:
+                - link [ref=f27e282] [cursor=pointer]:
+                  - /url: /goto?url=CAESfwHrOzAVwcNpdSRvdpUKLbOKWmjSyZlWgQMcAm7St5Z546FjV8aa1yCJZWLvfC5HeVor-xOkTOcosphmzrPiLbELX2QDfQsWzgKm_7D29PbYUA-kvJUpBS7MR9d-2ou9UXQqFZQ1HBZYFAzjrw282Mj2kGqu6Gp2xZO0YQP6-dI
+                  - generic [ref=f27e283]:
+                    - emphasis [ref=f27e284]: Fire
+                    - text: "all : r/"
+                    - emphasis [ref=f27e285]: IdleObeliskMiner
+                    - text: "- Reddit"
+                - generic [ref=f27e286]: 16 answers
+                - generic [ref=f27e288]: Dec 29, 2025
+              - link "More results from www.reddit.com" [ref=f27e293] [cursor=pointer]:
+                - /url: /search?q=Idle+Obelisk+Miner+how+to+fire+bombs+site:www.reddit.com&sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQrQIoAnoECB8QAw
+          - generic [ref=f27e297]:
+            - generic [ref=f27e300]:
+              - link "Obelisk:FAQ Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Obelisk:FAQ" [ref=f27e302] [cursor=pointer]:
+                - /url: /goto?url=CAESaAHrOzAVGfxeOveFgVKj-hHlz43k0ByY9ej8Cd3ws_rErmyjbbZeHcat-aNB1CidNZ4kJ3IHWo6ZSfgKsCnaNSNC84EymSb6OkOGB8nY0n_0XA_vdziRCQHP-ZDOLGxMuwzR6XXdtmgm
+                - heading "Obelisk:FAQ" [level=3] [ref=f27e303]
+                - generic [ref=f27e309]:
+                  - generic [ref=f27e310]: Idle Obelisk Miner Wiki
+                  - generic [ref=f27e312]: https://shminer.miraheze.org › wiki › Obelisk:FAQ
+              - button "About this result" [ref=f27e318] [cursor=pointer]
+            - generic [ref=f27e324]:
+              - generic [ref=f27e325]: Sep 22, 2026 —
+              - generic [ref=f27e326]:
+                - emphasis [ref=f27e327]: You can fire the bombs manually or with the Spoon Strat
+                - text: ", Autofiring Bomb of Plenty and using the spoon to slow fire Transmuter Bomb."
+            - link [aria-hidden] [ref=f27e330] [cursor=pointer]:
+              - /url: /goto?url=CAESaAHrOzAVGfxeOveFgVKj-hHlz43k0ByY9ej8Cd3ws_rErmyjbbZeHcat-aNB1CidNZ4kJ3IHWo6ZSfgKsCnaNSNC84EymSb6OkOGB8nY0n_0XA_vdziRCQHP-ZDOLGxMuwzR6XXdtmgm
+          - generic [ref=f27e336]:
+            - generic [ref=f27e338]:
+              - heading "Videos" [level=2] [ref=f27e339]
+              - button "About this result" [ref=f27e344] [cursor=pointer]
+            - generic [ref=f27e350]:
+              - generic [ref=f27e355]:
+                - generic [ref=f27e356]:
+                  - link [ref=f27e358] [cursor=pointer]:
+                    - /url: /goto?url=CAESkQEB6zswFTwfOipld-P3BR_0QDjMrb7fexZTDsVyUDM9LWqZjnbyDw5kO-3bSZYc_Ih75dksXT3DKNHOma--MBhx7WmWVt9XYMVNk63HL00WNIis5nQqXj3YVB5a7zjF7FSVtOM-pm3SpP6jJ92zhTZGu9LlPzND9BgIIW1oPL7sjtlq89mMXKLq_cNTYX0EPpyZ
+                    - 'heading "leveling up infinity bombs : r/IdleObeliskMiner Reddit MCfan567 Aug 31, 2025" [level=3] [ref=f27e359]':
+                      - generic [ref=f27e360]: "leveling up infinity bombs : r/IdleObeliskMiner"
+                      - generic [ref=f27e364]:
+                        - generic [ref=f27e365]:
+                          - text: Reddit
+                          - generic [ref=f27e366]: · MCfan567
+                        - generic [ref=f27e367]: Aug 31, 2025
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic [aria-hidden]:
+                            - text: Reddit
+                            - generic: · MCfan567
+                      - button "About this result" [ref=f27e371] [cursor=pointer]
+                - 'link "leveling up infinity bombs : r/IdleObeliskMiner by MCfan567 on Reddit. Play on Reddit." [ref=f27e376] [cursor=pointer]':
+                  - /url: /goto?url=CAESkQEB6zswFTwfOipld-P3BR_0QDjMrb7fexZTDsVyUDM9LWqZjnbyDw5kO-3bSZYc_Ih75dksXT3DKNHOma--MBhx7WmWVt9XYMVNk63HL00WNIis5nQqXj3YVB5a7zjF7FSVtOM-pm3SpP6jJ92zhTZGu9LlPzND9BgIIW1oPL7sjtlq89mMXKLq_cNTYX0EPpyZ
+              - generic [ref=f27e388]:
+                - generic [ref=f27e389]:
+                  - generic [ref=f27e390]:
+                    - link [ref=f27e392] [cursor=pointer]:
+                      - /url: /goto?url=CAESZgHrOzAVg4tJ888F_q-sJPV6pbj8kvl96auTHgtJhSny7fxEI5fgWRZJ280Xq0DLLku0aTlKpwsVHrWl6mCmBQ6L0c6ZVWCuuoowtisGCec2xpsefVQ5n8fbqxQByVs-eJMeIG8Ziw
+                      - heading "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER YouTube Kosh Sep 17, 2024" [level=3] [ref=f27e393]:
+                        - generic [ref=f27e394]: ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER
+                        - generic [ref=f27e398]:
+                          - generic [ref=f27e399]:
+                            - text: YouTube
+                            - generic [ref=f27e400]: · Kosh
+                          - generic [ref=f27e401]: Sep 17, 2024
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic [aria-hidden]:
+                              - text: YouTube
+                              - generic: · Kosh
+                        - button "About this result" [ref=f27e405] [cursor=pointer]
+                  - button "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER by Kosh on YouTube. Play on Google. 29:18" [ref=f27e410] [cursor=pointer]:
+                    - generic [ref=f27e420]: 29:18
+                - button "12 key moments in this video" [ref=f27e430] [cursor=pointer]
+              - generic [ref=f27e446]:
+                - generic [ref=f27e447]:
+                  - link [ref=f27e449] [cursor=pointer]:
+                    - /url: /goto?url=CAESeAHrOzAVIfC0o1kplWBXMWErfKI3GGS4Ys04qNqSl6-mzk9oc-D4NgLYr-iE_wtGK0U8rse-2TVO8lf3egYRKviNzJyD8zAlrUZKat7qrM44DW_BOYiahVahfbHna-c3K9jLB5G5Z6dfrKDxdyqu-VW7mGeSsNrZLQ
+                    - heading "Idle Obelisk Miner Bomb Tier List YouTube TigerSam24 1 week ago" [level=3] [ref=f27e450]:
+                      - generic [ref=f27e451]: Idle Obelisk Miner Bomb Tier List
+                      - generic [ref=f27e455]:
+                        - generic [ref=f27e456]:
+                          - text: YouTube
+                          - generic [ref=f27e457]: · TigerSam24
+                        - generic [ref=f27e458]: 1 week ago
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic [aria-hidden]:
+                            - text: YouTube
+                            - generic: · TigerSam24
+                      - button "About this result" [ref=f27e462] [cursor=pointer]
+                - button "Idle Obelisk Miner Bomb Tier List by TigerSam24 on YouTube. Play on Google. 8:11" [ref=f27e467] [cursor=pointer]:
+                  - generic [ref=f27e477]: 8:11
+              - generic [ref=f27e487]:
+                - generic [ref=f27e488]:
+                  - link [ref=f27e490] [cursor=pointer]:
+                    - /url: /goto?url=CAESnAEB6zswFZY1LJHYDxMBeXtIF69aal2tF5bV_3yABKEw8RAQy2m6d1h1m5w2QHgkL7Z8UZKZOcCyG0y8ySUP3tvklEzrAJLywiS42NOOd0fT0v4dy-XhOjgOfC5QYXzbP7t7gc579HoAoCmPXz4K5O3XIUAZBvQ9uUqEnSKlXWsbBkrbdAqiI_w55doaGi7v6-IMiOXFKcTT4gdnytU
+                    - 'heading "Why does my chain bomb keep going off : r/IdleObeliskMiner Reddit Euphoric_Guidance2 Apr 28, 2026" [level=3] [ref=f27e491]':
+                      - generic [ref=f27e492]: "Why does my chain bomb keep going off : r/IdleObeliskMiner"
+                      - generic [ref=f27e496]:
+                        - generic [ref=f27e497]:
+                          - text: Reddit
+                          - generic [ref=f27e498]: · Euphoric_Guidance2
+                        - generic [ref=f27e499]: Apr 28, 2026
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic [aria-hidden]:
+                            - text: Reddit
+                            - generic: · Euphoric_Guidance2
+                      - button "About this result" [ref=f27e503] [cursor=pointer]
+                - 'link "Why does my chain bomb keep going off : r/IdleObeliskMiner by Euphoric_Guidance2 on Reddit. Play on Reddit. 0:08" [ref=f27e508] [cursor=pointer]':
+                  - /url: /goto?url=CAESnAEB6zswFZY1LJHYDxMBeXtIF69aal2tF5bV_3yABKEw8RAQy2m6d1h1m5w2QHgkL7Z8UZKZOcCyG0y8ySUP3tvklEzrAJLywiS42NOOd0fT0v4dy-XhOjgOfC5QYXzbP7t7gc579HoAoCmPXz4K5O3XIUAZBvQ9uUqEnSKlXWsbBkrbdAqiI_w55doaGi7v6-IMiOXFKcTT4gdnytU
+                  - generic [ref=f27e515]: 0:08
+            - link "View all videos" [ref=f27e519] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&udm=vids&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+how+to+fire+bombs&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ8ccDKAJ6BAhKEAU
+              - separator [aria-hidden] [ref=f27e520]
+              - generic [ref=f27e521]: View all
+          - generic [ref=f27e530]:
+            - heading "People also ask" [level=2] [ref=f27e532]
+            - generic [ref=f27e533]:
+              - button "How do I fire all bombs at once in Obelisk Miner?" [ref=f27e539] [cursor=pointer]
+              - button "Do bombs work on obelisk?" [ref=f27e553] [cursor=pointer]
+              - button "What is the best bomb strategy in Obelisk Miner?" [ref=f27e567] [cursor=pointer]
+              - button "How to get bomb cards obelisk miner?" [ref=f27e581] [cursor=pointer]
+          - generic [ref=f27e591]:
+            - heading "Web results" [level=2] [ref=f27e592]
+            - generic [ref=f27e593]:
+              - generic [ref=f27e596]:
+                - link "FAQ - Obelisk Miner Wiki - Fandom Fandom https://obeliskminer.fandom.com › wiki › FAQ" [ref=f27e598] [cursor=pointer]:
+                  - /url: /goto?url=CAESYwHrOzAV8tJ7qS19B_1Wy5cMjuF1rjMAs8e-f5S0PZrkCxktpXvUoSqq_mWCAxQBwGyLWGiekTw78Dy08SjBFWbpf4EG4mNHL3Pa9fntWjwR1fbojx2im6161F4X_i-dmpvAlQ
+                  - heading "FAQ - Obelisk Miner Wiki - Fandom" [level=3] [ref=f27e599]
+                  - generic [ref=f27e605]:
+                    - generic [ref=f27e606]: Fandom
+                    - generic [ref=f27e608]: https://obeliskminer.fandom.com › wiki › FAQ
+                - button "About this result" [ref=f27e614] [cursor=pointer]
+              - generic [ref=f27e621]:
+                - text: Early game, you can auto-pause
+                - emphasis [ref=f27e622]: chain bomb
+                - text: and drone on some floor to manually send bomb of plenty or transmuter bomb.
+          - generic [ref=f27e626]:
+            - generic [ref=f27e629]:
+              - link "Guides/Cherry Bomb Guide - Idle Obelisk Miner Wiki - Miraheze Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Cherry_Bomb_G..." [ref=f27e631] [cursor=pointer]:
+                - /url: /goto?url=CAESdQHrOzAV594TKGCU5vmaB4PO7viyogwJ9y6CxjGrvbhXjVHo69tYZxxHn9153ZG0HpesjjkiJLO3zOMOKlxdtzLhX-8wXm_rNKjvJHBskSFElizjAJJ1VvxjAJX8VcRri6Kh158FhnCyG7ARu8l4j8kvpy3kBw
+                - heading "Guides/Cherry Bomb Guide - Idle Obelisk Miner Wiki - Miraheze" [level=3] [ref=f27e632]
+                - generic [ref=f27e638]:
+                  - generic [ref=f27e639]: Idle Obelisk Miner Wiki
+                  - generic [ref=f27e641]: https://shminer.miraheze.org › wiki › Cherry_Bomb_G...
+              - button "About this result" [ref=f27e647] [cursor=pointer]
+            - generic [ref=f27e653]:
+              - generic [ref=f27e654]: Jun 14, 2026 —
+              - generic [ref=f27e655]:
+                - text: Early game,
+                - emphasis [ref=f27e656]: always use your cherry charges on Battery Bomb
+                - text: . Gaining bomb capacity is the single most important thing you can do for game ...
+              - link "Read more" [ref=f27e657] [cursor=pointer]:
+                - /url: /goto?url=CAESyQEB6zswFe8pFoNd12x6pAyVrotd59pJwpf5JEcHN64z9QtjpoBP39zLZb_ndXEN2GA-yQN4Hy6GOsNgyDzpDYH72kH1E0Vv0R4xUaYLNqy0cHgj7zInLDPsqNvva89IwJ2ngJiB-Fj6SbROJeDNh-udpRrArqYmJqdytuzE6ZeXPp81G1mkPyrq-qrxDPVpJHDf3rX-GXeuLuZnT-jvvFNWnUoJfCKxVYZYpxG776tLwi9_zWJuCtCkV2uOORVm6yplJmY9StebHOU
+          - generic [ref=f27e664]:
+            - generic [ref=f27e667]:
+              - link "PLAY ON PC + AUTOMATION // IDLE OBELISK MINER YouTube · Kosh Idle 18.4K+ views · 1 year ago" [ref=f27e669] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVAZmRll0QBSNIipVXiWp79WvfsAsed08uwuAQuvk1fszh-vnuM-Lya9jq5FE7dqSsnC7bDSn98zyJXVR89ARQf1Ln8uJszxKHTlWhM19v8csbT6d-Q1JU-BW5yvAfEsfm4A
+                - heading "PLAY ON PC + AUTOMATION // IDLE OBELISK MINER" [level=3] [ref=f27e670]
+                - generic [ref=f27e676]:
+                  - generic [ref=f27e677]: YouTube · Kosh Idle
+                  - generic [ref=f27e679]: 18.4K+ views · 1 year ago
+              - button "About this result" [ref=f27e685] [cursor=pointer]
+            - generic [ref=f27e690]:
+              - button "PLAY ON PC + AUTOMATION // IDLE OBELISK MINER by Kosh Idle on YouTube. Play on Google. 8:16" [ref=f27e691] [cursor=pointer]:
+                - generic [ref=f27e692]: 8:16
+              - generic [ref=f27e705]: Beginner-friendly guide that will help you to understand the game basics, figure out how game works and what will be your easiest way to ...
+            - button "5 key moments in this video" [ref=f27e711] [cursor=pointer]
+          - generic [ref=f27e724]:
+            - generic [ref=f27e727]:
+              - link "Cherry bomb obelisk miner. FAQ axlxzyosgwqx.digital https://axlxzyosgwqx.digital › gcuqtdfnwtufqjencrrinkkr" [ref=f27e729] [cursor=pointer]:
+                - /url: /goto?url=CAEScAHrOzAVKDXyMenACFlYeCDvLOc_CFPrYq4Q0yW_M3D36jPGkyHkJP400bli6-vCPFm_NFXu0_5r9TDQtKcAazByhlLh6acC5PpEFcY7DE0yglabLhtHUsdT9eezBSqmFGP32Z2BlhgZDcY51bpe5LI
+                - heading "Cherry bomb obelisk miner. FAQ" [level=3] [ref=f27e730]
+                - generic [ref=f27e736]:
+                  - generic [ref=f27e737]: axlxzyosgwqx.digital
+                  - generic [ref=f27e739]: https://axlxzyosgwqx.digital › gcuqtdfnwtufqjencrrinkkr
+              - button "About this result" [ref=f27e745] [cursor=pointer]
+            - generic [ref=f27e752]:
+              - text: Stack 250 chain
+              - emphasis [ref=f27e753]: bombs
+              - text: "? -"
+              - emphasis [ref=f27e754]: Idle Obelisk Miner
+              - text: . Set the value too high accidentally now the value is shown as NaN. EVENTS GUIDE //
+              - emphasis [ref=f27e755]: IDLE OBELISK MINER
+              - text: .
+          - generic [ref=f27e759]:
+            - generic [ref=f27e762]:
+              - link "Cherry bomb obelisk miner. Advanced Guide (Skills ... hohmkoosceva.asia https://hohmkoosceva.asia › crqvohtovhvmsgundfbivumx" [ref=f27e764] [cursor=pointer]:
+                - /url: /goto?url=CAESbQHrOzAVBud-E79eccQ7qevZBi5YZOdKWsbWR7H9OcA12RsOb6jgNpqQQV1s-EQxQzLyxrE4eko_6nWckZVWz1nYXfPDPFZKRP2kBf9QTjGpg0wldmhn_6xJRDPi8FC8vLakDb6JvfBu5rmeNPU
+                - heading "Cherry bomb obelisk miner. Advanced Guide (Skills ..." [level=3] [ref=f27e765]
+                - generic [ref=f27e771]:
+                  - generic [ref=f27e772]: hohmkoosceva.asia
+                  - generic [ref=f27e774]: https://hohmkoosceva.asia › crqvohtovhvmsgundfbivumx
+              - button "About this result" [ref=f27e780] [cursor=pointer]
+            - generic [ref=f27e786]:
+              - generic [ref=f27e787]: 2 days ago —
+              - generic [ref=f27e788]:
+                - text: Stack 250 chain
+                - emphasis [ref=f27e789]: bombs
+                - text: "? -"
+                - emphasis [ref=f27e790]: Idle Obelisk Miner
+                - text: Answers for Android. Last updated September 30, 2026. On this page Workshop -
+                - emphasis [ref=f27e791]: Idle Obelisk Miner
+                - text: .
+              - link "Read more" [ref=f27e792] [cursor=pointer]:
+                - /url: /goto?url=CAESxQEB6zswFQiRAChdPHZHpKT8dk9ddOyK6qd4-w8RQ17kbINLJdBWRKDai1cLu3EVfrLy3cQBOM_zJjFE-tk4HCYZQ6upmzg29SJBhG73FHfjiZ8pq2_TMJX9qXYxzNUojX9p4EimHJiGc5an8C6L7HE5choGWZBgl_dkskaDxgb2WPGKwowIBOul8iI1DuHffZx7ppKycUG8YRd3N6rg7repSCB2BQfRagZfxyAeZgYJWL5jlDwl2cpGJdiJaNVU3zCiD2VPZw
+        - generic [ref=f27e794]:
+          - generic [ref=f27e799]:
+            - heading "People also search for" [level=2] [ref=f27e801]
+            - generic [ref=f27e803]:
+              - generic [ref=f27e804]:
+                - link "Idle obelisk miner how to fire bombs reddit" [ref=f27e808] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+obelisk+miner+how+to+fire+bombs+reddit&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgnEAE
+                - link "Idle Obelisk Miner bomb strategy" [ref=f27e822] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+bomb+strategy&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAg5EAE
+                - link "Idle Obelisk Miner bomb damage" [ref=f27e836] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+bomb+damage&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAg1EAE
+                - link "Idle Obelisk Miner bomb capacity" [ref=f27e850] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+bomb+capacity&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgyEAE
+              - generic [ref=f27e861]:
+                - link "Idle Obelisk Miner battery bomb" [ref=f27e865] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+battery+bomb&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgwEAE
+                - link "Idle obelisk miner Bomb fire all" [ref=f27e879] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+obelisk+miner+Bomb+fire+all&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgvEAE
+                - link "Idle Obelisk Miner auto bomb" [ref=f27e893] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+auto+bomb&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgtEAE
+                - link "Idle Obelisk Miner bomb recharge rate" [ref=f27e907] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&q=Idle+Obelisk+Miner+bomb+recharge+rate&sa=X&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ1QJ6BAgpEAE
+          - navigation [ref=f27e918]:
+            - heading "Page Navigation" [level=1] [ref=f27e919]
+            - text: "1"
+            - link "Page 2" [ref=f27e922] [cursor=pointer]:
+              - /url: /search?q=Idle+Obelisk+Miner+how+to+fire+bombs&sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&ei=xv2_arr5M-fDkPIPn6y90Qw&start=10&sa=N&sstk=AS6-VmJ55Kh8WAq1ya5XSHt3_6qAk7732NGGvFllsZNHhGf2g3ZVOAMXmzZCrRE0ubMfQvbE-TQ4gWi31xxJxnXgTdocfFBjqDdxEQ&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ8tMDegQIQRAE
+              - text: "2"
+            - link "Page 3" [ref=f27e924] [cursor=pointer]:
+              - /url: /search?q=Idle+Obelisk+Miner+how+to+fire+bombs&sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&ei=xv2_arr5M-fDkPIPn6y90Qw&start=20&sa=N&sstk=AS6-VmJ55Kh8WAq1ya5XSHt3_6qAk7732NGGvFllsZNHhGf2g3ZVOAMXmzZCrRE0ubMfQvbE-TQ4gWi31xxJxnXgTdocfFBjqDdxEQ&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ8tMDegQIQRAG
+              - text: "3"
+            - heading [level=2] [ref=f27e926]:
+              - link "Next" [ref=f27e927] [cursor=pointer]:
+                - /url: /search?q=Idle+Obelisk+Miner+how+to+fire+bombs&sca_esv=4d65981f01013b52&sxsrf=APpeQntthEiYYKqg9cIg-GUWj4o_cRJaIw:1790967238858&ei=xv2_arr5M-fDkPIPn6y90Qw&start=10&sa=N&sstk=AS6-VmJ55Kh8WAq1ya5XSHt3_6qAk7732NGGvFllsZNHhGf2g3ZVOAMXmzZCrRE0ubMfQvbE-TQ4gWi31xxJxnXgTdocfFBjqDdxEQ&ved=2ahUKEwi69M3wgJyXAxXnIUQIHR9WL8oQ8NMDegQIQRAI
+        - navigation
+    - contentinfo [ref=f27e930]:
+      - heading "Footer Links" [level=1] [ref=f27e931]
+      - generic [ref=f27e935]:
+        - generic [ref=f27e939]:
+          - button "Laguna Niguel, California - Based on your past activity" [ref=f27e941] [cursor=pointer]:
+            - generic [ref=f27e942]: Laguna Niguel, California
+            - generic [ref=f27e944]:
+              - text: "-"
+              - generic [ref=f27e945]: Based on your past activity
+          - text: "-"
+          - button "Update location" [ref=f27e947] [cursor=pointer]
+        - generic [ref=f27e950]:
+          - link "Help" [ref=f27e951] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=en&fg=1
+          - link "Send feedback" [ref=f27e952] [cursor=pointer]:
+            - /url: "#"
+          - link "Privacy" [ref=f27e953] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=en&fg=1
+          - link "Terms" [ref=f27e954] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=en&fg=1

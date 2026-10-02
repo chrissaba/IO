@@ -1,0 +1,1121 @@
+- generic [active] [ref=f24e1]:
+  - link "Jump to content" [ref=f24e2] [cursor=pointer]:
+    - /url: "#bodyContent"
+  - banner [ref=f24e4]:
+    - generic [ref=f24e5]:
+      - navigation "Site" [ref=f24e6]:
+        - generic "Main menu" [ref=f24e7]:
+          - button "Main menu" [ref=f24e8] [cursor=pointer]
+          - generic [ref=f24e11]: Main menu
+      - link [ref=f24e12] [cursor=pointer]:
+        - /url: /wiki/Obelisk_Miner_Wiki
+        - strong [ref=f24e14]: Idle Obelisk Miner
+    - generic [ref=f24e15]:
+      - search [ref=f24e16]:
+        - generic [ref=f24e19]:
+          - searchbox "Search Idle Obelisk Miner" [ref=f24e22]
+          - button "Search" [ref=f24e24]
+      - navigation "Personal tools" [ref=f24e25]:
+        - link "🌙" [ref=f24e27] [cursor=pointer]:
+          - /url: "#"
+        - generic [ref=f24e28]:
+          - list [ref=f24e31]:
+            - listitem [ref=f24e32]:
+              - link "English" [ref=f24e33] [cursor=pointer]:
+                - /url: "#"
+          - list [ref=f24e38]:
+            - listitem [ref=f24e39]:
+              - link "Create account" [ref=f24e40] [cursor=pointer]:
+                - /url: /wiki/Special:CreateAccount?returnto=Upgrades
+            - listitem [ref=f24e41]:
+              - link "Log in" [ref=f24e42] [cursor=pointer]:
+                - /url: /wiki/Special:UserLogin?returnto=Upgrades
+        - generic "More options" [ref=f24e43]:
+          - button "Personal tools" [ref=f24e44] [cursor=pointer]
+          - generic [ref=f24e47]: Personal tools
+  - generic [ref=f24e49]:
+    - navigation "Contents" [ref=f24e53]:
+      - generic [ref=f24e55]:
+        - generic [ref=f24e56]:
+          - heading "Contents" [level=2] [ref=f24e57]
+          - button "hide" [ref=f24e58] [cursor=pointer]
+        - list [ref=f24e59]:
+          - listitem [ref=f24e60]:
+            - link "Beginning" [ref=f24e61] [cursor=pointer]:
+              - /url: "#"
+          - listitem [ref=f24e63]:
+            - link "World Upgrades" [ref=f24e64] [cursor=pointer]:
+              - /url: "#World_Upgrades"
+            - button "Toggle World Upgrades subsection" [ref=f24e66]
+            - list [ref=f24e69]:
+              - listitem [ref=f24e70]:
+                - link "Damage Calculation" [ref=f24e71] [cursor=pointer]:
+                  - /url: "#Damage_Calculation"
+                - list
+              - listitem [ref=f24e73]:
+                - link "Upgrade Cost" [ref=f24e74] [cursor=pointer]:
+                  - /url: "#Upgrade_Cost"
+                - list
+          - listitem [ref=f24e76]:
+            - link "References" [ref=f24e77] [cursor=pointer]:
+              - /url: "#References"
+            - list
+          - listitem [ref=f24e79]:
+            - link "Navigation" [ref=f24e80] [cursor=pointer]:
+              - /url: "#Navigation"
+            - list
+    - generic [ref=f24e82]:
+      - main [ref=f24e83]:
+        - heading [level=1] [ref=f24e85]:
+          - generic [ref=f24e86]:
+            - text: Upgrades
+            - button "Give feedback" [ref=f24e87] [cursor=pointer]
+        - generic [ref=f24e89]:
+          - navigation "Namespaces" [ref=f24e91]:
+            - generic [ref=f24e92]:
+              - generic:
+                - list:
+                  - listitem [ref=f24e93]:
+                    - link "Page" [ref=f24e94] [cursor=pointer]:
+                      - /url: /wiki/Upgrades
+                  - listitem [ref=f24e96]:
+                    - link "Discussion" [ref=f24e97] [cursor=pointer]:
+                      - /url: /wiki/Talk:Upgrades
+          - generic [ref=f24e99]:
+            - navigation "Views" [ref=f24e100]:
+              - generic [ref=f24e101]:
+                - generic:
+                  - list:
+                    - listitem [ref=f24e102]:
+                      - link "Read" [ref=f24e103] [cursor=pointer]:
+                        - /url: /wiki/Upgrades
+                    - listitem [ref=f24e105]:
+                      - link "Edit (visual)" [ref=f24e106] [cursor=pointer]:
+                        - /url: /wiki/Upgrades?veaction=edit
+                    - listitem [ref=f24e108]:
+                      - link "Edit (source)" [ref=f24e109] [cursor=pointer]:
+                        - /url: /wiki/Upgrades?action=edit
+                    - listitem [ref=f24e111]:
+                      - link "View history" [ref=f24e112] [cursor=pointer]:
+                        - /url: /wiki/Upgrades?action=history
+            - navigation "Page tools" [ref=f24e114]:
+              - generic [ref=f24e115]:
+                - button "Tools" [ref=f24e116] [cursor=pointer]
+                - generic [ref=f24e118] [cursor=pointer]: Tools
+        - navigation "Appearance" [ref=f24e121]:
+          - generic [ref=f24e124]:
+            - generic [ref=f24e125]: Appearance
+            - button "hide" [ref=f24e126] [cursor=pointer]
+        - generic "Upgrades Give feedback" [ref=f24e127]:
+          - generic [ref=f24e130]:
+            - table [ref=f24e131]:
+              - rowgroup [ref=f24e132]:
+                - row "This page is up to date. (v2.2.30)" [ref=f24e133]
+            - figure [ref=f24e135]:
+              - link [ref=f24e136] [cursor=pointer]:
+                - /url: /wiki/File:Upgrades_Button.png
+            - paragraph [ref=f24e138]: Upgrades can be purchased with bars and gold. You can unlock more upgrades by leveling up.
+            - paragraph [ref=f24e139]:
+              - text: Upgrades are lost when
+              - link "prestiging" [ref=f24e140] [cursor=pointer]:
+                - /url: /wiki/Prestige
+              - text: .
+            - generic [ref=f24e141]:
+              - heading "World Upgrades" [level=2] [ref=f24e142]
+              - generic [ref=f24e144]:
+                - text: "["
+                - link "edit" [ref=f24e145] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?veaction=edit&section=1
+                - text: "|"
+                - link "edit source" [ref=f24e146] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?action=edit&section=1
+                - text: "]"
+            - generic [ref=f24e147]:
+              - tablist [ref=f24e149]:
+                - tab "World 1 Upgrades" [selected] [ref=f24e150] [cursor=pointer]
+                - tab "World 2 Upgrades" [ref=f24e151] [cursor=pointer]
+                - tab "World 3 Upgrades" [ref=f24e152] [cursor=pointer]
+                - tab "World 4 Upgrades" [ref=f24e153] [cursor=pointer]
+              - tabpanel "World 1 Upgrades" [ref=f24e155]:
+                - table [ref=f24e156]:
+                  - rowgroup [ref=f24e157]:
+                    - row [ref=f24e158]:
+                      - columnheader "Effect" [ref=f24e159]
+                      - columnheader "Bonus per level" [ref=f24e160]
+                      - columnheader [ref=f24e161]:
+                        - text: Max level
+                        - superscript [ref=f24e162]:
+                          - link "[1]" [ref=f24e163] [cursor=pointer]:
+                            - /url: "#cite_note-cap-1"
+                      - columnheader "Requirement" [ref=f24e164]
+                      - columnheader "Upgrade Cost Type" [ref=f24e165]
+                    - row [ref=f24e166]:
+                      - cell [ref=f24e167]:
+                        - link [ref=f24e170] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Cost.png
+                      - cell "Upgrade Pickaxe" [ref=f24e172]
+                      - cell [ref=f24e173]:
+                        - link "+? damage" [ref=f24e174] [cursor=pointer]:
+                          - /url: "#Damage_Calculation"
+                      - cell "171" [ref=f24e175]
+                      - cell "Level 1" [ref=f24e176]
+                      - cell "varies" [ref=f24e177]
+                    - row [ref=f24e178]:
+                      - cell [ref=f24e179]:
+                        - link [ref=f24e182] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Radius.png
+                      - cell "Pickaxe Radius" [ref=f24e184]
+                      - cell "+8%" [ref=f24e185]
+                      - cell "16" [ref=f24e186]
+                      - cell "Level 4" [ref=f24e187]
+                      - cell [ref=f24e188]:
+                        - link [ref=f24e190] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e192]:
+                      - cell [ref=f24e193]:
+                        - link [ref=f24e196] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Crit_Chance.png
+                      - cell "Pickaxe Crit Chance" [ref=f24e198]
+                      - cell "+2%" [ref=f24e199]
+                      - cell "16" [ref=f24e200]
+                      - cell "Level 8" [ref=f24e201]
+                      - cell "+" [ref=f24e202]:
+                        - link [ref=f24e204] [cursor=pointer]:
+                          - /url: /wiki/File:Tin_Bar.png
+                        - text: +
+                        - link [ref=f24e207] [cursor=pointer]:
+                          - /url: /wiki/File:Copper_Bar.png
+                    - row [ref=f24e209]:
+                      - cell [ref=f24e210]:
+                        - link [ref=f24e213] [cursor=pointer]:
+                          - /url: /wiki/File:Double_Craft_Chance.png
+                      - cell [ref=f24e215]:
+                        - text: Double
+                        - link "Craft Chance" [ref=f24e216] [cursor=pointer]:
+                          - /url: /wiki/Craft#Craft_Chance
+                      - cell "+2%" [ref=f24e217]
+                      - cell "16" [ref=f24e218]
+                      - cell "Level 12" [ref=f24e219]
+                      - cell [ref=f24e220]:
+                        - link [ref=f24e222] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e224]:
+                      - cell [ref=f24e225]:
+                        - link [ref=f24e228] [cursor=pointer]:
+                          - /url: /wiki/File:Triple_Rock_Chance.png
+                      - cell "Triple Rock Chance" [ref=f24e230]
+                      - cell "+1%" [ref=f24e231]
+                      - cell "16" [ref=f24e232]
+                      - cell "Level 16" [ref=f24e233]
+                      - cell [ref=f24e234]:
+                        - link [ref=f24e236] [cursor=pointer]:
+                          - /url: /wiki/File:Mithril_Bar.png
+                    - row [ref=f24e238]:
+                      - cell [ref=f24e239]:
+                        - link [ref=f24e242] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Damage.png
+                      - cell "Bomb Damage" [ref=f24e244]
+                      - cell "+20%" [ref=f24e245]
+                      - cell "16" [ref=f24e246]
+                      - cell "Level 20" [ref=f24e247]
+                      - cell [ref=f24e248]:
+                        - link [ref=f24e250] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e252]:
+                      - cell [ref=f24e253]:
+                        - link [ref=f24e256] [cursor=pointer]:
+                          - /url: /wiki/File:Ore_Sell_Price_Multiplier.png
+                      - cell "Ore Sell Price" [ref=f24e258]
+                      - cell "+10%" [ref=f24e259]
+                      - cell "16" [ref=f24e260]
+                      - cell "Level 24" [ref=f24e261]
+                      - cell [ref=f24e262]:
+                        - link [ref=f24e264] [cursor=pointer]:
+                          - /url: /wiki/File:Adamant_Bar.png
+                    - row [ref=f24e266]:
+                      - cell [ref=f24e267]:
+                        - link [ref=f24e270] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Crit_Damage.png
+                      - cell "Pickaxe Crit Damage" [ref=f24e272]
+                      - cell "+5%" [ref=f24e273]
+                      - cell "11" [ref=f24e274]
+                      - cell "Level 28" [ref=f24e275]
+                      - cell [ref=f24e276]:
+                        - link [ref=f24e278] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e280]:
+                      - cell [ref=f24e281]:
+                        - link [ref=f24e284] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage.png
+                      - cell "Pickaxe Damage" [ref=f24e286]
+                      - cell "+10%" [ref=f24e287]
+                      - cell "16" [ref=f24e288]
+                      - cell "Level 32" [ref=f24e289]
+                      - cell [ref=f24e290]:
+                        - link [ref=f24e292] [cursor=pointer]:
+                          - /url: /wiki/File:Runite_Bar.png
+                    - row [ref=f24e294]:
+                      - cell [ref=f24e295]:
+                        - link [ref=f24e298] [cursor=pointer]:
+                          - /url: /wiki/File:Free_Bomb_Chance.png
+                      - cell "Free Bomb Chance" [ref=f24e300]
+                      - cell "+1%" [ref=f24e301]
+                      - cell "16" [ref=f24e302]
+                      - cell "Level 36" [ref=f24e303]
+                      - cell [ref=f24e304]:
+                        - link [ref=f24e306] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e308]:
+                      - cell [ref=f24e309]:
+                        - link [ref=f24e312] [cursor=pointer]:
+                          - /url: /wiki/File:Upgrade_Gold_Prices.png
+                      - cell "Upgrade Gold Prices" [ref=f24e314]
+                      - cell "-5%" [ref=f24e315]
+                      - cell "16" [ref=f24e316]
+                      - cell "Level 40" [ref=f24e317]
+                      - cell [ref=f24e318]:
+                        - link [ref=f24e320] [cursor=pointer]:
+                          - /url: /wiki/File:Citrine_Bar.png
+                    - row [ref=f24e322]:
+                      - cell [ref=f24e323]:
+                        - link [ref=f24e326] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Crit_Chance.png
+                      - cell "Pickaxe Crit Chance" [ref=f24e328]
+                      - cell "+2%" [ref=f24e329]
+                      - cell "16" [ref=f24e330]
+                      - cell "Level 44" [ref=f24e331]
+                      - cell [ref=f24e332]:
+                        - link [ref=f24e334] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e336]:
+                      - cell [ref=f24e337]:
+                        - link [ref=f24e340] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage.png
+                      - cell "Pickaxe Damage" [ref=f24e342]
+                      - cell "+15%" [ref=f24e343]
+                      - cell "16" [ref=f24e344]
+                      - cell "Level 48" [ref=f24e345]
+                      - cell [ref=f24e346]:
+                        - link [ref=f24e348] [cursor=pointer]:
+                          - /url: /wiki/File:Amethyst_Bar.png
+                    - row [ref=f24e350]:
+                      - cell [ref=f24e351]:
+                        - link [ref=f24e354] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Attack_Speed.png
+                      - cell "Pickaxe Attack Speed" [ref=f24e356]
+                      - cell "+2%" [ref=f24e357]
+                      - cell "16" [ref=f24e358]
+                      - cell "Level 52" [ref=f24e359]
+                      - cell [ref=f24e360]:
+                        - link [ref=f24e362] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e364]:
+                      - cell [ref=f24e365]:
+                        - link [ref=f24e368] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Crit_Damage.png
+                      - cell "Pickaxe Crit Damage" [ref=f24e370]
+                      - cell "+6%" [ref=f24e371]
+                      - cell "11" [ref=f24e372]
+                      - cell "Level 56" [ref=f24e373]
+                      - cell [ref=f24e374]:
+                        - link [ref=f24e376] [cursor=pointer]:
+                          - /url: /wiki/File:Topaz_Bar.png
+                    - row [ref=f24e378]:
+                      - cell [ref=f24e379]:
+                        - link [ref=f24e382] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Recharge_Speed.png
+                      - cell "Bomb Recharge Rate" [ref=f24e384]
+                      - cell "+1%" [ref=f24e385]
+                      - cell "16" [ref=f24e386]
+                      - cell "Level 60" [ref=f24e387]
+                      - cell "+" [ref=f24e388]:
+                        - link [ref=f24e390] [cursor=pointer]:
+                          - /url: /wiki/File:Obsidian_Bar.png
+                        - text: +
+                        - link [ref=f24e393] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e395]:
+                      - cell [ref=f24e396]:
+                        - link [ref=f24e399] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage.png
+                      - cell "Pickaxe Damage" [ref=f24e401]
+                      - cell "+20%" [ref=f24e402]
+                      - cell "16" [ref=f24e403]
+                      - cell "Level 62" [ref=f24e404]
+                      - cell "+" [ref=f24e405]:
+                        - link [ref=f24e407] [cursor=pointer]:
+                          - /url: /wiki/File:Demonite_Bar.png
+                        - text: +
+                        - link [ref=f24e410] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e412]:
+                      - cell [ref=f24e413]:
+                        - link [ref=f24e416] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Damage.png
+                      - cell "Bomb Damage" [ref=f24e418]
+                      - cell "+40%" [ref=f24e419]
+                      - cell "16" [ref=f24e420]
+                      - cell "Level 65" [ref=f24e421]
+                      - cell "+" [ref=f24e422]:
+                        - link [ref=f24e424] [cursor=pointer]:
+                          - /url: /wiki/File:VR-Tin_Bar.png
+                        - text: +
+                        - link [ref=f24e427] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e429]:
+                      - cell [ref=f24e430]:
+                        - link [ref=f24e433] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Crit_Damage.png
+                      - cell "Bomb Crit Damage" [ref=f24e435]
+                      - cell "+8%" [ref=f24e436]
+                      - cell "16" [ref=f24e437]
+                      - cell "Level 68" [ref=f24e438]
+                      - cell "+" [ref=f24e439]:
+                        - link [ref=f24e441] [cursor=pointer]:
+                          - /url: /wiki/File:VR-Amethyst_Bar.png
+                        - text: +
+                        - link [ref=f24e444] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e446]:
+                      - cell [ref=f24e447]:
+                        - link [ref=f24e450] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Super_Crit_Chance.png
+                      - cell "Pickaxe Super Crit Chance" [ref=f24e452]
+                      - cell "+1%" [ref=f24e453]
+                      - cell "16" [ref=f24e454]
+                      - cell "Level 70" [ref=f24e455]
+                      - cell "+" [ref=f24e456]:
+                        - link [ref=f24e458] [cursor=pointer]:
+                          - /url: /wiki/File:VR-Demonite_Bar.png
+                        - text: +
+                        - link [ref=f24e461] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e463]:
+                      - cell [ref=f24e464]:
+                        - link [ref=f24e467] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Attack_Speed.png
+                      - cell "Pickaxe Attack Speed" [ref=f24e469]
+                      - cell "+2%" [ref=f24e470]
+                      - cell "16" [ref=f24e471]
+                      - cell "Level 72" [ref=f24e472]
+                      - cell "+" [ref=f24e473]:
+                        - link [ref=f24e475] [cursor=pointer]:
+                          - /url: /wiki/File:VR-ERROR_Bar.png
+                        - text: +
+                        - link [ref=f24e478] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e480]:
+                      - cell [ref=f24e481]:
+                        - link [ref=f24e484] [cursor=pointer]:
+                          - /url: /wiki/File:Increase_Upgrade_Caps.png
+                      - cell "Increase Upgrade Caps" [ref=f24e486]
+                      - cell "+1 cap" [ref=f24e487]
+                      - cell "3" [ref=f24e488]
+                      - cell "Level 75" [ref=f24e489]
+                      - cell "+" [ref=f24e490]:
+                        - link [ref=f24e492] [cursor=pointer]:
+                          - /url: /wiki/File:Lunarium_Bar.png
+                        - text: +
+                        - link [ref=f24e495] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e497]:
+                      - cell [ref=f24e498]:
+                        - link [ref=f24e501] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage.png
+                      - cell "Pickaxe Damage" [ref=f24e503]
+                      - cell "+28%" [ref=f24e504]
+                      - cell "16" [ref=f24e505]
+                      - cell "Level 78" [ref=f24e506]
+                      - cell "+" [ref=f24e507]:
+                        - link [ref=f24e509] [cursor=pointer]:
+                          - /url: /wiki/File:Earth-C-137_Bar.png
+                        - text: +
+                        - link [ref=f24e512] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e514]:
+                      - cell [ref=f24e515]:
+                        - link [ref=f24e518] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Crit_Damage.png
+                      - cell "Bomb Crit Damage" [ref=f24e520]
+                      - cell "+12%" [ref=f24e521]
+                      - cell "16" [ref=f24e522]
+                      - cell "Level 80" [ref=f24e523]
+                      - cell "+" [ref=f24e524]:
+                        - link [ref=f24e526] [cursor=pointer]:
+                          - /url: /wiki/File:Meteorite_Bar.png
+                        - text: +
+                        - link [ref=f24e529] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e531]:
+                      - cell [ref=f24e532]:
+                        - link [ref=f24e535] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Super_Crit_Damage.png
+                      - cell "Pickaxe Super Crit Damage" [ref=f24e537]
+                      - cell "+10%" [ref=f24e538]
+                      - cell "11" [ref=f24e539]
+                      - cell "Level 82" [ref=f24e540]
+                      - cell "+" [ref=f24e541]:
+                        - link [ref=f24e543] [cursor=pointer]:
+                          - /url: /wiki/File:Singularity_Bar.png
+                        - text: +
+                        - link [ref=f24e546] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e548]:
+                      - cell [ref=f24e549]:
+                        - link [ref=f24e552] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Crit_Chance.png
+                      - cell "Pickaxe Crit Chance" [ref=f24e554]
+                      - cell "+2%" [ref=f24e555]
+                      - cell "16" [ref=f24e556]
+                      - cell "Level 85" [ref=f24e557]
+                      - cell "+" [ref=f24e558]:
+                        - link [ref=f24e560] [cursor=pointer]:
+                          - /url: /wiki/File:Halium_Bar.png
+                        - text: +
+                        - link [ref=f24e563] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e565]:
+                      - cell [ref=f24e566]:
+                        - link [ref=f24e569] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage.png
+                      - cell "Pickaxe Damage" [ref=f24e571]
+                      - cell "+35%" [ref=f24e572]
+                      - cell "21" [ref=f24e573]
+                      - cell "Level 88" [ref=f24e574]
+                      - cell "+" [ref=f24e575]:
+                        - link [ref=f24e577] [cursor=pointer]:
+                          - /url: /wiki/File:Blasphemite_Bar.png
+                        - text: +
+                        - link [ref=f24e580] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e582]:
+                      - cell [ref=f24e583]:
+                        - link [ref=f24e586] [cursor=pointer]:
+                          - /url: /wiki/File:Obelisk_Armor_Reduction.png
+                      - cell "Obelisk Armor" [ref=f24e588]
+                      - cell "-2%" [ref=f24e589]
+                      - cell "16" [ref=f24e590]
+                      - cell "Level 90" [ref=f24e591]
+                      - cell "+" [ref=f24e592]:
+                        - link [ref=f24e594] [cursor=pointer]:
+                          - /url: /wiki/File:Angelite_Bar.png
+                        - text: +
+                        - link [ref=f24e597] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e599]:
+                      - cell [ref=f24e600]:
+                        - link [ref=f24e603] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Ultra_Crit_Chance.png
+                      - cell "Pickaxe Ultra Crit Chance" [ref=f24e605]
+                      - cell "+1%" [ref=f24e606]
+                      - cell "16" [ref=f24e607]
+                      - cell "Level 92" [ref=f24e608]
+                      - cell "+" [ref=f24e609]:
+                        - link [ref=f24e611] [cursor=pointer]:
+                          - /url: /wiki/File:Elysium_Bar.png
+                        - text: +
+                        - link [ref=f24e614] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e616]:
+                      - cell [ref=f24e617]:
+                        - link [ref=f24e620] [cursor=pointer]:
+                          - /url: /wiki/File:Chest_Meter_Gain_Multiplier.png
+                      - cell "Meter Fill Rate" [ref=f24e622]
+                      - cell "+2x" [ref=f24e623]
+                      - cell "16" [ref=f24e624]
+                      - cell "Level 95" [ref=f24e625]
+                      - cell "+" [ref=f24e626]:
+                        - link [ref=f24e628] [cursor=pointer]:
+                          - /url: /wiki/File:Enemite_Bar.png
+                        - text: +
+                        - link [ref=f24e631] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e633]:
+                      - cell [ref=f24e634]:
+                        - link [ref=f24e637] [cursor=pointer]:
+                          - /url: /wiki/File:Bomb_Ultra_Crit_Chance.png
+                      - cell "Bomb Ultra Crit Chance" [ref=f24e639]
+                      - cell "+1%" [ref=f24e640]
+                      - cell "16" [ref=f24e641]
+                      - cell "Level 98" [ref=f24e642]
+                      - cell "+" [ref=f24e643]:
+                        - link [ref=f24e645] [cursor=pointer]:
+                          - /url: /wiki/File:Beepboopium_Bar.png
+                        - text: +
+                        - link [ref=f24e648] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e650]:
+                      - cell [ref=f24e651]:
+                        - link [ref=f24e654] [cursor=pointer]:
+                          - /url: /wiki/File:Triple_Craft_Chance.png
+                      - cell [ref=f24e656]:
+                        - text: Triple
+                        - link "Craft Chance" [ref=f24e657] [cursor=pointer]:
+                          - /url: /wiki/Craft#Craft_Chance
+                      - cell "+1%" [ref=f24e658]
+                      - cell "16" [ref=f24e659]
+                      - cell "Level 100" [ref=f24e660]
+                      - cell "+" [ref=f24e661]:
+                        - link [ref=f24e663] [cursor=pointer]:
+                          - /url: /wiki/File:Radion-73_Bar.png
+                        - text: +
+                        - link [ref=f24e666] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+                    - row [ref=f24e668]:
+                      - cell [ref=f24e669]:
+                        - link [ref=f24e672] [cursor=pointer]:
+                          - /url: /wiki/File:Pickaxe_Damage_Per_Card_Owned.png
+                      - cell "Pickaxe Damage Per Card Owned" [ref=f24e674]
+                      - cell "+1%" [ref=f24e675]
+                      - cell "16" [ref=f24e676]
+                      - cell "Level 102" [ref=f24e677]
+                      - cell "+" [ref=f24e678]:
+                        - link [ref=f24e680] [cursor=pointer]:
+                          - /url: /wiki/File:Cranium_Bar.png
+                        - text: +
+                        - link [ref=f24e683] [cursor=pointer]:
+                          - /url: /wiki/File:Gold_Coin.png
+            - generic [ref=f24e685]:
+              - heading "Damage Calculation" [level=3] [ref=f24e686]
+              - generic [ref=f24e688]:
+                - text: "["
+                - link "edit" [ref=f24e689] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?veaction=edit&section=2
+                - text: "|"
+                - link "edit source" [ref=f24e690] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?action=edit&section=2
+                - text: "]"
+            - paragraph [ref=f24e691]:
+              - text: "The Base Damage amount from \"Upgrade Pickaxe\" can be calculated with the following equation:"
+              - math [ref=f24e694]:
+                - generic [ref=f24e699]:
+                  - generic [ref=f24e700]: Base damage
+                  - generic [ref=f24e702]: =
+                  - generic [ref=f24e704]:
+                    - generic [ref=f24e705]:
+                      - generic [ref=f24e706]: (
+                      - generic [ref=f24e707]: Level
+                      - generic [ref=f24e709]: +
+                      - generic [ref=f24e710]: "1"
+                      - generic [ref=f24e711]: )
+                      - generic [ref=f24e712]: ×
+                      - generic [ref=f24e713]: (
+                      - generic [ref=f24e714]: Level
+                      - generic [ref=f24e716]: +
+                      - generic [ref=f24e717]: "2"
+                      - generic [ref=f24e718]: )
+                    - generic [ref=f24e719]: "2"
+            - generic [ref=f24e721]:
+              - heading "Upgrade Cost" [level=3] [ref=f24e722]
+              - generic [ref=f24e724]:
+                - text: "["
+                - link "edit" [ref=f24e725] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?veaction=edit&section=3
+                - text: "|"
+                - link "edit source" [ref=f24e726] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?action=edit&section=3
+                - text: "]"
+            - paragraph [ref=f24e727]: The cost of an upgrade scales linearly for the first ten levels, then with a linear times exponential formula for every level after.
+            - paragraph [ref=f24e728]: "The cost of the first ten levels can be calculated with the following expression:"
+            - paragraph [ref=f24e729]:
+              - math [ref=f24e732]:
+                - generic [ref=f24e737]:
+                  - generic [ref=f24e738]: Cost
+                  - generic [ref=f24e740]: =
+                  - generic [ref=f24e741]: Base cost
+                  - generic [ref=f24e743]: ×
+                  - generic [ref=f24e744]: "N"
+            - paragraph [ref=f24e746]: "Subsequently, the cost of levels 11 and onward can be calculated with this expression:"
+            - paragraph [ref=f24e747]:
+              - math [ref=f24e750]:
+                - generic [ref=f24e755]:
+                  - generic [ref=f24e756]: Cost
+                  - generic [ref=f24e758]: =
+                  - generic [ref=f24e759]: Base cost
+                  - generic [ref=f24e761]: ×
+                  - generic [ref=f24e762]:
+                    - generic [ref=f24e763]: "1.3"
+                    - generic [ref=f24e764]:
+                      - generic [ref=f24e765]: (
+                      - generic [ref=f24e766]: "N"
+                      - generic [ref=f24e767]: −
+                      - generic [ref=f24e768]: "10"
+                      - generic [ref=f24e769]: )
+                  - generic [ref=f24e770]: ×
+                  - generic [ref=f24e771]: "N"
+            - generic [ref=f24e773]:
+              - heading "References" [level=2] [ref=f24e774]
+              - generic [ref=f24e776]:
+                - text: "["
+                - link "edit" [ref=f24e777] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?veaction=edit&section=4
+                - text: "|"
+                - link "edit source" [ref=f24e778] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?action=edit&section=4
+                - text: "]"
+            - list [ref=f24e780]:
+              - listitem [ref=f24e781]:
+                - generic [ref=f24e782]:
+                  - text: ↑
+                  - superscript [ref=f24e783]:
+                    - 'link "Jump up to: 1.0" [ref=f24e784] [cursor=pointer]':
+                      - /url: "#cite_ref-cap_1-0"
+                      - generic [ref=f24e785]: "Jump up to:"
+                      - text: "1.0"
+                  - superscript [ref=f24e786]:
+                    - link "1.1" [ref=f24e787] [cursor=pointer]:
+                      - /url: "#cite_ref-cap_1-1"
+                  - superscript [ref=f24e788]:
+                    - link "1.2" [ref=f24e789] [cursor=pointer]:
+                      - /url: "#cite_ref-cap_1-2"
+                  - superscript [ref=f24e790]:
+                    - link "1.3" [ref=f24e791] [cursor=pointer]:
+                      - /url: "#cite_ref-cap_1-3"
+                - text: including cap increase upgrades from level 75 and level 160
+            - generic [ref=f24e792]:
+              - heading "Navigation" [level=2] [ref=f24e793]
+              - generic [ref=f24e795]:
+                - text: "["
+                - link "edit" [ref=f24e796] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?veaction=edit&section=5
+                - text: "|"
+                - link "edit source" [ref=f24e797] [cursor=pointer]:
+                  - /url: /wiki/Upgrades?action=edit&section=5
+                - text: "]"
+            - table [ref=f24e798]:
+              - caption [ref=f24e799]:
+                - link "Menu" [ref=f24e800] [cursor=pointer]:
+                  - /url: /wiki/Obelisk_Miner_Wiki#Content
+                - text: "[Collapse]"
+              - rowgroup [ref=f24e801]:
+                - row [ref=f24e802]:
+                  - rowheader "Permanent" [ref=f24e803]
+                  - cell [ref=f24e804]:
+                    - generic [ref=f24e805]:
+                      - text: •
+                      - link "Prestige" [ref=f24e807] [cursor=pointer]:
+                        - /url: /wiki/Prestige
+                      - link "Prestige" [ref=f24e809] [cursor=pointer]:
+                        - /url: /wiki/Prestige
+                    - generic [ref=f24e810]:
+                      - text: •
+                      - link "Drones" [ref=f24e812] [cursor=pointer]:
+                        - /url: /wiki/Drones
+                      - link "Drones" [ref=f24e814] [cursor=pointer]:
+                        - /url: /wiki/Drones
+                    - generic [ref=f24e815]:
+                      - text: •
+                      - link "Chests" [ref=f24e817] [cursor=pointer]:
+                        - /url: /wiki/Chests
+                      - link "Chests" [ref=f24e819] [cursor=pointer]:
+                        - /url: /wiki/Chests
+                    - generic [ref=f24e820]:
+                      - text: •
+                      - link "Chests" [ref=f24e822] [cursor=pointer]:
+                        - /url: /wiki/Chests#Relic_Chests
+                      - link "Relics" [ref=f24e824] [cursor=pointer]:
+                        - /url: /wiki/Chests#Relic_Chests
+                    - generic [ref=f24e825]:
+                      - text: •
+                      - link "Store" [ref=f24e827] [cursor=pointer]:
+                        - /url: /wiki/Store
+                      - link "Store" [ref=f24e829] [cursor=pointer]:
+                        - /url: /wiki/Store
+                    - generic [ref=f24e830]:
+                      - text: •
+                      - link "Workshop" [ref=f24e832] [cursor=pointer]:
+                        - /url: /wiki/Workshop
+                      - link "Workshop" [ref=f24e834] [cursor=pointer]:
+                        - /url: /wiki/Workshop
+                    - generic [ref=f24e835]:
+                      - text: •
+                      - link "Skill-Tree" [ref=f24e837] [cursor=pointer]:
+                        - /url: /wiki/Skill-Tree
+                      - link "Skill-Tree" [ref=f24e839] [cursor=pointer]:
+                        - /url: /wiki/Skill-Tree
+                    - generic [ref=f24e840]:
+                      - text: •
+                      - link "Challenges" [ref=f24e842] [cursor=pointer]:
+                        - /url: /wiki/Challenges
+                      - link "Challenges" [ref=f24e844] [cursor=pointer]:
+                        - /url: /wiki/Challenges
+                    - generic [ref=f24e845]:
+                      - text: •
+                      - link "Cards" [ref=f24e847] [cursor=pointer]:
+                        - /url: /wiki/Cards
+                      - link "Cards" [ref=f24e849] [cursor=pointer]:
+                        - /url: /wiki/Cards
+                    - generic [ref=f24e850]:
+                      - text: •
+                      - link "Pets" [ref=f24e852] [cursor=pointer]:
+                        - /url: /wiki/Pets
+                      - link "Pets" [ref=f24e854] [cursor=pointer]:
+                        - /url: /wiki/Pets
+                    - generic [ref=f24e855]:
+                      - text: •
+                      - link "Construct" [ref=f24e857] [cursor=pointer]:
+                        - /url: /wiki/Construct
+                      - link "Construct" [ref=f24e859] [cursor=pointer]:
+                        - /url: /wiki/Construct
+                    - generic [ref=f24e860]:
+                      - text: •
+                      - link "Stargazing" [ref=f24e862] [cursor=pointer]:
+                        - /url: /wiki/Stargazing
+                      - link "Stargazing" [ref=f24e864] [cursor=pointer]:
+                        - /url: /wiki/Stargazing
+                    - generic [ref=f24e865]:
+                      - text: •
+                      - link "Archaeology" [ref=f24e867] [cursor=pointer]:
+                        - /url: /wiki/Archaeology
+                      - link "Archaeology" [ref=f24e869] [cursor=pointer]:
+                        - /url: /wiki/Archaeology
+                    - generic [ref=f24e870]:
+                      - text: •
+                      - link "Fishing" [ref=f24e872] [cursor=pointer]:
+                        - /url: /wiki/Fishing
+                      - link "Fishing" [ref=f24e874] [cursor=pointer]:
+                        - /url: /wiki/Fishing
+                    - generic [ref=f24e875]:
+                      - text: •
+                      - link "Arcanist" [ref=f24e877] [cursor=pointer]:
+                        - /url: /wiki/Arcanist
+                      - link "Arcanist" [ref=f24e879] [cursor=pointer]:
+                        - /url: /wiki/Arcanist
+                - row [ref=f24e880]:
+                  - rowheader "This Prestige" [ref=f24e881]
+                  - cell [ref=f24e882]:
+                    - generic [ref=f24e883]:
+                      - text: •
+                      - link "Craft" [ref=f24e885] [cursor=pointer]:
+                        - /url: /wiki/Craft
+                      - link "Craft" [ref=f24e887] [cursor=pointer]:
+                        - /url: /wiki/Craft
+                    - generic [ref=f24e888]:
+                      - text: •
+                      - link "Upgrades" [ref=f24e890] [cursor=pointer]:
+                        - /url: /wiki/Upgrades
+                      - text: Upgrades
+                    - generic [ref=f24e892]:
+                      - text: •
+                      - link "Sell" [ref=f24e894] [cursor=pointer]:
+                        - /url: /wiki/Sell
+                      - link "Sell" [ref=f24e896] [cursor=pointer]:
+                        - /url: /wiki/Sell
+                    - generic [ref=f24e897]:
+                      - text: •
+                      - link "Contracts" [ref=f24e899] [cursor=pointer]:
+                        - /url: /wiki/Contracts
+                      - link "Contracts" [ref=f24e901] [cursor=pointer]:
+                        - /url: /wiki/Contracts
+                - row [ref=f24e902]:
+                  - rowheader "Miscellaneous" [ref=f24e903]
+                  - cell [ref=f24e904]:
+                    - generic [ref=f24e905]:
+                      - text: •
+                      - link "Stats" [ref=f24e907] [cursor=pointer]:
+                        - /url: /wiki/Stats
+                      - link "Stats" [ref=f24e909] [cursor=pointer]:
+                        - /url: /wiki/Stats
+                    - generic [ref=f24e910]:
+                      - text: •
+                      - link "Cloud" [ref=f24e912] [cursor=pointer]:
+                        - /url: /wiki/Cloud
+                      - link "Cloud" [ref=f24e914] [cursor=pointer]:
+                        - /url: /wiki/Cloud
+                - row [ref=f24e915]:
+                  - rowheader "Others" [ref=f24e916]
+                  - cell [ref=f24e917]:
+                    - generic [ref=f24e918]:
+                      - text: •
+                      - link "Obelisk" [ref=f24e920] [cursor=pointer]:
+                        - /url: /wiki/Obelisk
+                      - link "Obelisk" [ref=f24e922] [cursor=pointer]:
+                        - /url: /wiki/Obelisk
+                    - generic [ref=f24e923]:
+                      - text: •
+                      - link "Events" [ref=f24e925] [cursor=pointer]:
+                        - /url: /wiki/Events
+                      - link "Events" [ref=f24e927] [cursor=pointer]:
+                        - /url: /wiki/Events
+                    - generic [ref=f24e928]:
+                      - text: •
+                      - generic [ref=f24e929]:
+                        - generic [ref=f24e930]:
+                          - link "Codes" [ref=f24e932] [cursor=pointer]:
+                            - /url: /wiki/Codes
+                          - generic:
+                            - generic:
+                              - link:
+                                - /url: /wiki/File:Gift.png
+                        - link "Codes" [ref=f24e935] [cursor=pointer]:
+                          - /url: /wiki/Codes
+                    - generic [ref=f24e936]:
+                      - text: •
+                      - generic [ref=f24e937]:
+                        - generic [ref=f24e938]:
+                          - link "Founder" [ref=f24e940] [cursor=pointer]:
+                            - /url: /wiki/Founder
+                          - generic:
+                            - generic:
+                              - link:
+                                - /url: /wiki/File:FounderIcon.png
+                        - link "Founder" [ref=f24e943] [cursor=pointer]:
+                          - /url: /wiki/Founder
+                    - generic [ref=f24e944]:
+                      - text: •
+                      - generic [ref=f24e945]:
+                        - generic [ref=f24e946]:
+                          - link "Floors" [ref=f24e948] [cursor=pointer]:
+                            - /url: /wiki/Floors
+                          - generic:
+                            - figure:
+                              - link "Floors":
+                                - /url: /wiki/Floors
+                        - link "Floors" [ref=f24e951] [cursor=pointer]:
+                          - /url: /wiki/Floors
+                    - generic [ref=f24e952]:
+                      - text: •
+                      - generic [ref=f24e953]:
+                        - generic [ref=f24e954]:
+                          - link "Ores" [ref=f24e956] [cursor=pointer]:
+                            - /url: /wiki/Ores
+                          - generic:
+                            - figure:
+                              - link "Ores":
+                                - /url: /wiki/Ores
+                        - link "Ores" [ref=f24e959] [cursor=pointer]:
+                          - /url: /wiki/Ores
+                    - generic [ref=f24e960]:
+                      - text: •
+                      - generic [ref=f24e961]:
+                        - generic [ref=f24e962]:
+                          - link "Veins" [ref=f24e964] [cursor=pointer]:
+                            - /url: /wiki/Veins
+                          - generic:
+                            - figure:
+                              - link "Veins":
+                                - /url: /wiki/Veins
+                        - link "Veins" [ref=f24e967] [cursor=pointer]:
+                          - /url: /wiki/Veins
+                    - generic [ref=f24e968]:
+                      - text: •
+                      - generic [ref=f24e969]:
+                        - generic [ref=f24e970]:
+                          - link "Items" [ref=f24e972] [cursor=pointer]:
+                            - /url: /wiki/Items
+                          - generic:
+                            - figure:
+                              - link "Items":
+                                - /url: /wiki/Items
+                        - link "Items" [ref=f24e975] [cursor=pointer]:
+                          - /url: /wiki/Items
+                    - generic [ref=f24e976]:
+                      - text: •
+                      - generic [ref=f24e977]:
+                        - generic [ref=f24e978]:
+                          - link "Skins" [ref=f24e980] [cursor=pointer]:
+                            - /url: /wiki/Skins
+                          - generic:
+                            - figure:
+                              - link "Skins":
+                                - /url: /wiki/Skins
+                        - link "Skins" [ref=f24e983] [cursor=pointer]:
+                          - /url: /wiki/Skins
+                    - generic [ref=f24e984]:
+                      - text: •
+                      - generic [ref=f24e985]:
+                        - generic [ref=f24e986]:
+                          - link "Stickers" [ref=f24e988] [cursor=pointer]:
+                            - /url: /wiki/Stickers
+                          - generic:
+                            - figure:
+                              - link "Stickers":
+                                - /url: /wiki/Stickers
+                        - link "Stickers" [ref=f24e991] [cursor=pointer]:
+                          - /url: /wiki/Stickers
+                    - generic [ref=f24e992]:
+                      - text: •
+                      - generic [ref=f24e993]:
+                        - generic [ref=f24e994]:
+                          - link "Lootbugs" [ref=f24e996] [cursor=pointer]:
+                            - /url: /wiki/Lootbugs
+                          - generic:
+                            - figure:
+                              - link "Lootbugs":
+                                - /url: /wiki/Lootbugs
+                        - link "Lootbugs" [ref=f24e999] [cursor=pointer]:
+                          - /url: /wiki/Lootbugs
+                    - generic [ref=f24e1000]:
+                      - text: •
+                      - generic [ref=f24e1001]:
+                        - generic [ref=f24e1002]:
+                          - link "Lootfrogs" [ref=f24e1004] [cursor=pointer]:
+                            - /url: /wiki/Lootfrogs
+                          - generic:
+                            - figure:
+                              - link "Lootfrogs":
+                                - /url: /wiki/Lootfrogs
+                        - link "Lootfrogs" [ref=f24e1007] [cursor=pointer]:
+                          - /url: /wiki/Lootfrogs
+                    - generic [ref=f24e1008]:
+                      - text: •
+                      - generic [ref=f24e1009]:
+                        - generic [ref=f24e1010]:
+                          - link "Bombs" [ref=f24e1012] [cursor=pointer]:
+                            - /url: /wiki/Bombs
+                          - generic:
+                            - figure:
+                              - link "Bombs":
+                                - /url: /wiki/Bombs
+                        - link "Bombs" [ref=f24e1015] [cursor=pointer]:
+                          - /url: /wiki/Bombs
+                    - generic [ref=f24e1016]:
+                      - text: •
+                      - generic [ref=f24e1017]:
+                        - generic [ref=f24e1018]:
+                          - link "Offline" [ref=f24e1020] [cursor=pointer]:
+                            - /url: /wiki/Offline
+                          - generic: 
+                        - link "Offline" [ref=f24e1023] [cursor=pointer]:
+                          - /url: /wiki/Offline
+                    - generic [ref=f24e1024]:
+                      - text: •
+                      - generic [ref=f24e1025]:
+                        - generic [ref=f24e1026]:
+                          - link "Pins" [ref=f24e1028] [cursor=pointer]:
+                            - /url: /wiki/Pins
+                          - generic: 
+                        - link "Pins" [ref=f24e1031] [cursor=pointer]:
+                          - /url: /wiki/Pins
+                    - generic [ref=f24e1032]:
+                      - text: •
+                      - generic [ref=f24e1033]:
+                        - generic [ref=f24e1034]:
+                          - link "Calculators" [ref=f24e1036] [cursor=pointer]:
+                            - /url: /wiki/Calculators
+                          - generic: 
+                        - link "Calculators" [ref=f24e1039] [cursor=pointer]:
+                          - /url: /wiki/Calculators
+                    - generic [ref=f24e1040]:
+                      - text: •
+                      - generic [ref=f24e1041]:
+                        - generic [ref=f24e1042]:
+                          - link "Guides" [ref=f24e1044] [cursor=pointer]:
+                            - /url: /wiki/Guides
+                          - generic: 
+                        - link "Guides" [ref=f24e1047] [cursor=pointer]:
+                          - /url: /wiki/Guides
+                    - generic [ref=f24e1048]:
+                      - text: •
+                      - generic [ref=f24e1049]:
+                        - generic [ref=f24e1050]:
+                          - link "Obelisk:FAQ" [ref=f24e1052] [cursor=pointer]:
+                            - /url: /wiki/Obelisk:FAQ
+                          - generic: 
+                        - link "FAQ" [ref=f24e1055] [cursor=pointer]:
+                          - /url: /wiki/Obelisk:FAQ
+                - row [ref=f24e1056]:
+                  - rowheader "Wiki" [ref=f24e1057]
+                  - cell [ref=f24e1058]:
+                    - generic [ref=f24e1059]:
+                      - text: •
+                      - generic [ref=f24e1060]:
+                        - generic [ref=f24e1061]:
+                          - link "Obelisk:Contact" [ref=f24e1063] [cursor=pointer]:
+                            - /url: /wiki/Obelisk:Contact
+                          - generic: 
+                        - link "Contact Us" [ref=f24e1066] [cursor=pointer]:
+                          - /url: /wiki/Obelisk:Contact
+                    - generic [ref=f24e1067]:
+                      - text: •
+                      - generic [ref=f24e1068]:
+                        - generic [ref=f24e1069]:
+                          - link "External Resources" [ref=f24e1071] [cursor=pointer]:
+                            - /url: /wiki/External_Resources
+                          - generic: 
+                        - link "External Resources" [ref=f24e1074] [cursor=pointer]:
+                          - /url: /wiki/External_Resources
+          - generic [ref=f24e1076]:
+            - link "Categories" [ref=f24e1077] [cursor=pointer]:
+              - /url: /wiki/Special:Categories
+            - text: ":"
+            - list [ref=f24e1078]:
+              - listitem [ref=f24e1079]:
+                - link "Pages using Tabber parser tag" [ref=f24e1080] [cursor=pointer]:
+                  - /url: /wiki/Category:Pages_using_Tabber_parser_tag
+              - listitem [ref=f24e1081]:
+                - link "Up to Date" [ref=f24e1082] [cursor=pointer]:
+                  - /url: /wiki/Category:Up_to_Date
+      - generic [ref=f24e1083]:
+        - generic [ref=f24e1084]: Cookies help us deliver our services. By using our services, you agree to our use of cookies.
+        - generic [ref=f24e1087]:
+          - button "More information" [ref=f24e1089] [cursor=pointer]
+          - button "OK" [ref=f24e1091] [cursor=pointer]
+    - contentinfo [ref=f24e1093]:
+      - list [ref=f24e1094]:
+        - listitem [ref=f24e1095]: This page was last edited on 25 September 2026, at 10:12.
+        - listitem [ref=f24e1096]: Content is available under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) unless otherwise noted.
+      - list:
+        - listitem [ref=f24e1097]:
+          - link "Privacy policy" [ref=f24e1098] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Privacy_Policy
+        - listitem [ref=f24e1099]:
+          - link "About Idle Obelisk Miner" [ref=f24e1100] [cursor=pointer]:
+            - /url: /wiki/Project:About
+        - listitem [ref=f24e1101]:
+          - link "Disclaimers" [ref=f24e1102] [cursor=pointer]:
+            - /url: /wiki/Project:General_disclaimer
+        - listitem [ref=f24e1103]:
+          - link "Terms of Use" [ref=f24e1104] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Terms_of_Use
+        - listitem [ref=f24e1105]:
+          - link "Donate to Miraheze" [ref=f24e1106] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Donate
+      - list [ref=f24e1107]:
+        - listitem [ref=f24e1108]:
+          - link [ref=f24e1109] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Miraheze_Meta
+            - img "Hosted by Miraheze" [ref=f24e1110]
+        - listitem [ref=f24e1111]:
+          - link [ref=f24e1112] [cursor=pointer]:
+            - /url: https://creativecommons.org/licenses/by-nc-sa/4.0/
+            - img "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)" [ref=f24e1113]
+        - listitem [ref=f24e1114]:
+          - link [ref=f24e1115] [cursor=pointer]:
+            - /url: https://www.mediawiki.org/
+            - img "Powered by MediaWiki" [ref=f24e1117]
+  - banner [ref=f24e1120]:
+    - generic [ref=f24e1121]:
+      - navigation "Site" [ref=f24e1122]:
+        - generic "Main menu" [ref=f24e1123]:
+          - button "Main menu" [ref=f24e1124] [cursor=pointer]
+          - generic [ref=f24e1127]: Main menu
+      - link [ref=f24e1128] [cursor=pointer]:
+        - /url: /wiki/Obelisk_Miner_Wiki
+        - strong [ref=f24e1130]: Idle Obelisk Miner
+    - generic [ref=f24e1131]:
+      - search [ref=f24e1132]:
+        - generic [ref=f24e1135]:
+          - searchbox "Search Idle Obelisk Miner" [ref=f24e1138]
+          - button "Search" [ref=f24e1140]
+      - navigation "Personal tools" [ref=f24e1141]:
+        - button " Scroll to top" [ref=f24e1142]:
+          - generic [ref=f24e1143]: 
+          - generic [ref=f24e1144]: Scroll to top
+        - link "Discussion" [ref=f24e1145] [cursor=pointer]:
+          - /url: /wiki/Talk:Upgrades
+        - link "Edit (visual)" [ref=f24e1148] [cursor=pointer]:
+          - /url: /wiki/Upgrades?veaction=edit
+        - link "Edit (source)" [ref=f24e1151] [cursor=pointer]:
+          - /url: /wiki/Upgrades?action=edit
+        - link "View history" [ref=f24e1154] [cursor=pointer]:
+          - /url: /wiki/Upgrades?action=history
+        - link "Alerts" [ref=f24e1157] [cursor=pointer]:
+          - /url: undefined
+        - list [ref=f24e1163]:
+          - listitem [ref=f24e1164]:
+            - link "Create account" [ref=f24e1165] [cursor=pointer]:
+              - /url: /wiki/Special:CreateAccount?returnto=Upgrades
+          - listitem [ref=f24e1166]:
+            - link "Log in" [ref=f24e1167] [cursor=pointer]:
+              - /url: /wiki/Special:UserLogin?returnto=Upgrades

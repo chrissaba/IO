@@ -1,0 +1,283 @@
+- generic [active] [ref=f2e1]:
+  - generic:
+    - generic:
+      - link "Skip to main content" [ref=f2e2] [cursor=pointer]
+      - link "Accessibility help" [ref=f2e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=en
+  - generic [ref=f2e8]:
+    - search [ref=f2e9]:
+      - generic [ref=f2e11]:
+        - link "Go to Google Home" [ref=f2e13] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=en&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQPHoECAYQBA
+        - generic [ref=f2e22]:
+          - combobox "Search" [ref=f2e24]: idle obelisk miner beginner guide idle obelisk miner beginner guide
+          - generic [ref=f2e25]:
+            - button "Clear" [ref=f2e29] [cursor=pointer]
+            - generic [ref=f2e34]:
+              - button "Search by voice" [ref=f2e37] [cursor=pointer]
+              - button "Search by image" [ref=f2e42] [cursor=pointer]
+    - generic [ref=f2e45]:
+      - button "Settings" [ref=f2e47] [cursor=pointer]
+      - button "Share" [ref=f2e52] [cursor=pointer]
+      - generic [ref=f2e58]:
+        - button "Google apps" [ref=f2e60] [cursor=pointer]
+        - link "Sign in" [ref=f2e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/search%3Fq%3Didle%2Bobelisk%2Bminer%2Bbeginner%2Bguide%26sei%3De_u_arzfMubCkPIPxoPl6Qs&ec=futura_srp_og_si_72236_p
+  - generic [ref=f2e68]:
+    - navigation [ref=f2e74]:
+      - generic [ref=f2e80]:
+        - list [ref=f2e81]:
+          - listitem [ref=f2e82]:
+            - link "AI Mode" [ref=f2e85] [cursor=pointer]:
+              - /url: /search?q=idle+obelisk+miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=50&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&vsint=&aep=1&ntc=1&cs=0&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQ2J8OegQIGRAD
+          - listitem [ref=f2e89]:
+            - link "All" [disabled] [ref=f2e90]
+          - listitem [ref=f2e93]:
+            - link "Short videos" [ref=f2e94] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=39&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+beginner+guide&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQs6gLegQIHRAB
+          - listitem [ref=f2e97]:
+            - link "Videos" [ref=f2e98] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=vids&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+beginner+guide&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQtKgLegQIHBAB
+          - listitem [ref=f2e101]:
+            - link "Images" [ref=f2e102] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=2&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+beginner+guide&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQtKgLegQIGxAB
+          - listitem [ref=f2e105]:
+            - link "Forums" [ref=f2e106] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=forums&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+beginner+guide&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQs6gLegQIHxAB
+          - listitem [ref=f2e109]:
+            - link "Shopping" [ref=f2e110] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&udm=28&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+beginner+guide&ved=1t:220175&ictx=111
+          - listitem [ref=f2e113]:
+            - button [ref=f2e114] [cursor=pointer]:
+              - generic "More filters" [ref=f2e115]: More
+        - button "Tools" [ref=f2e122] [cursor=pointer]
+    - heading "Search Results" [level=1] [ref=f2e130]
+    - main [ref=f2e136]:
+      - generic [ref=f2e140]:
+        - generic [ref=f2e143]:
+          - heading "Web results" [level=2] [ref=f2e144]
+          - generic [ref=f2e145]:
+            - generic [ref=f2e148]:
+              - 'link "Wanting to try out this game : r/IdleObeliskMiner Reddit · r/IdleObeliskMiner 10+ comments · 3 weeks ago" [ref=f2e150] [cursor=pointer]':
+                - /url: /goto?url=CAESkwEB6zswFQ2rhzySUvFMwTGKTVzyLQskWTvO7xMoYGcPnXIhK26JIf_Mhepc_TWEQm3YzhIb4NX3TWaTFrfVXHDiP4b5NmEgjrWlFD9as23Rm4S8HjrpLH-T7YtVFTZZoawl3AWQirIRdOnOL2sKphYXzrcEuaJ1oDZ8NXftxxKDulchgJZ0x_4hfv-bZbD9-NmLLAw
+                - 'heading "Wanting to try out this game : r/IdleObeliskMiner" [level=3] [ref=f2e151]'
+                - generic [ref=f2e157]:
+                  - generic [ref=f2e158]: Reddit · r/IdleObeliskMiner
+                  - generic [ref=f2e160]: 10+ comments · 3 weeks ago
+              - button "About this result" [ref=f2e166] [cursor=pointer]
+            - generic [ref=f2e172]:
+              - generic [ref=f2e173]:
+                - text: Is there like an introduction or a popular video or a content creator that explains it for
+                - emphasis [ref=f2e174]: beginners
+                - text: "? I just click different stones then go ..."
+              - link "Read more" [ref=f2e175] [cursor=pointer]:
+                - /url: /goto?url=CAES5gEB6zswFcnCHK6QtB3_Tofg0T5XwKOwFHWk9BsMiogcCXTGiv8vyeycXLGWTJqLaRlh5KsMcJ3R-WVphwydK5bTr4Rqc-MUqJLWp5wE4BA8S61WJlXWsSbswoVp5dME3taQhYZNTApZSMVU8CKs0d2QDGm7pW-Z_6cChjinBI59UxzDbvhF5XDPof8xRO6GhfbDuUtFhyupHXFQg0RO9_E4Hs19md4ufY3FOXz6rtgkz7G3dTV42xdjcD2BZ5eqSHoInYfA82lCABnb7m2PT8j1D4t9E1Ut-ggsmnSwWAzUhJWQl0JFEg
+            - generic [ref=f2e178]:
+              - generic [ref=f2e179]:
+                - link [ref=f2e182] [cursor=pointer]:
+                  - /url: /goto?url=CAEShwEB6zswFUjjfMdEHcTmF0tLDQEEeuX84IwWBEDmNMY34yAMR2AYdYbxRRGf7CHySouIgK_NWE8DAq19FpXJLep6jQxCuzXsIDf6graNNBGVUioNtUkrIb0vtfLmJ5MCbbaQfb7QCXjf3x3k0IkFI11t94dRWne2qE7I1qt8oqTg7md2GcIDBIk
+                  - generic [ref=f2e183]:
+                    - text: r/IdleObeliskMiner - Progression
+                    - emphasis [ref=f2e184]: tips
+                - generic [ref=f2e185]: 6 posts
+                - generic [ref=f2e187]: Jul 12, 2026
+              - generic [ref=f2e189]:
+                - link [ref=f2e192] [cursor=pointer]:
+                  - /url: /goto?url=CAESkwEB6zswFV18I6xPivS2gD5KmTjJhDlouwRWQh_Vr_9hNRLKfX_Pa6Z2eChQ2Ok0rXlEyD8jMgAQfajXKP7pYJwfJXTMEa-hUqlyOmH0RpPSbTgdKF2VdHyvWexnFTWCKmIfVjMgOT7Zh6SprBTUKqqSdoNmjpJR24mvTUf99eLUdaSP6edCjSru1MATigZ0WYhJ-q4
+                  - generic [ref=f2e193]:
+                    - text: Any
+                    - emphasis [ref=f2e194]: tips
+                    - text: "for coal generation? : r/"
+                    - emphasis [ref=f2e195]: IdleObeliskMiner
+                - generic [ref=f2e196]: 1 post
+                - generic [ref=f2e198]: Mar 24, 2026
+              - link "More results from www.reddit.com" [ref=f2e203] [cursor=pointer]:
+                - /url: /search?q=idle+obelisk+miner+beginner+guide+site:www.reddit.com&sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQrQIoAnoECA8QAw
+        - generic [ref=f2e204]:
+          - generic [ref=f2e208]:
+            - generic [ref=f2e210]:
+              - heading "Videos" [level=2] [ref=f2e211]
+              - button "About this result" [ref=f2e216] [cursor=pointer]
+            - generic [ref=f2e222]:
+              - generic [ref=f2e228]:
+                - generic [ref=f2e229]:
+                  - link [ref=f2e231] [cursor=pointer]:
+                    - /url: /goto?url=CAESZgHrOzAVyEOLTC3wfUKXrHceGP1n_2IfePC08qnjrDlXA4K1PhUr-_UdlkVtesnptCp45z6FDxd8JXp9SW1g9ILvtr2y4xG_opqLEYtzvz5Eh7W-Ksa11PYaZHOE2yH5O4llh8ehtw
+                    - heading "F2P BEGINNERS GUIDE // LIMBO DISCO YouTube Kosh Jul 19, 2023" [level=3] [ref=f2e232]:
+                      - generic [ref=f2e233]: F2P BEGINNERS GUIDE // LIMBO DISCO
+                      - generic [ref=f2e237]:
+                        - generic [ref=f2e238]:
+                          - text: YouTube
+                          - generic [ref=f2e239]: · Kosh
+                        - generic [ref=f2e240]: Jul 19, 2023
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic [aria-hidden]:
+                            - text: YouTube
+                            - generic: · Kosh
+                      - button "About this result" [ref=f2e244] [cursor=pointer]
+                - button "F2P BEGINNERS GUIDE // LIMBO DISCO by Kosh on YouTube. Play on Google. 16:53" [ref=f2e249] [cursor=pointer]:
+                  - generic [ref=f2e256]: 16:53
+              - generic [ref=f2e267]:
+                - generic [ref=f2e268]:
+                  - generic [ref=f2e269]:
+                    - link [ref=f2e271] [cursor=pointer]:
+                      - /url: /goto?url=CAESZgHrOzAVRR-akiWrr5Y28aOJkGn4llEGJTIU9Xv85QAEMQ0qPZJgY7R2sPVqZQOtIpNM3MkfkVr826HQ5XFs0_GWvb4oE4P88173pw_85Q2AQT8yBnLLXESsezB6ALlaLmu_IKpVog
+                      - heading "EARTH PT.2 F2P // MIGHTY DOOM BEGINNERS GUIDE YouTube Kosh Apr 18, 2023" [level=3] [ref=f2e272]:
+                        - generic [ref=f2e273]: EARTH PT.2 F2P // MIGHTY DOOM BEGINNERS GUIDE
+                        - generic [ref=f2e277]:
+                          - generic [ref=f2e278]:
+                            - text: YouTube
+                            - generic [ref=f2e279]: · Kosh
+                          - generic [ref=f2e280]: Apr 18, 2023
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic [aria-hidden]:
+                              - text: YouTube
+                              - generic: · Kosh
+                        - button "About this result" [ref=f2e284] [cursor=pointer]
+                  - button "EARTH PT.2 F2P // MIGHTY DOOM BEGINNERS GUIDE by Kosh on YouTube. Play on Google. 12:02" [ref=f2e289] [cursor=pointer]:
+                    - generic [ref=f2e299]: 12:02
+                - button "3 key moments in this video" [ref=f2e309] [cursor=pointer]
+            - link "View all videos" [ref=f2e321] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&udm=vids&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&q=idle+obelisk+miner+beginner+guide&sa=X&ved=2ahUKEwiHz9_Y_puXAxWxOEQIHSzUCzcQ8ccDKAJ6BAgjEAU
+              - separator [aria-hidden] [ref=f2e322]
+              - generic [ref=f2e323]: View all
+          - generic [ref=f2e338]:
+            - heading "Thinking" [level=2] [ref=f2e342]
+            - progressbar "Generating" [ref=f2e345]
+          - generic [ref=f2e350]:
+            - generic [ref=f2e353]:
+              - link "obelisk miner wiki pipaloou.com https://pipaloou.com › obelisk-miner-wiki-ready-stock" [ref=f2e355] [cursor=pointer]:
+                - /url: /goto?url=CAESbwHrOzAViEU9kgK3uEuh5P_RUKZIKJJLqjbyGFUKS4YD-iRM3QKVCOD5C56H67wLh3c7ta-CUXjOYgeyHDtFjxp_aE2M-SQQVrRUQYQKzzNIQe1J3xqvhv39uNd7DDV2iRqWI_eZuP-Oc3deAdlMJw
+                - heading "obelisk miner wiki" [level=3] [ref=f2e356]
+                - generic [ref=f2e365]:
+                  - generic [ref=f2e366]: pipaloou.com
+                  - generic [ref=f2e368]: https://pipaloou.com › obelisk-miner-wiki-ready-stock
+              - button "About this result" [ref=f2e374] [cursor=pointer]
+            - generic [ref=f2e380]:
+              - generic [ref=f2e381]: 17 hours ago —
+              - generic [ref=f2e382]:
+                - text: At its heart,
+                - emphasis [ref=f2e383]: Idle Obelisk Miner
+                - text: challenges users to optimize their automated production loops. Players deploy various tiers of miners to break ...
+              - link "Read more" [ref=f2e384] [cursor=pointer]:
+                - /url: /goto?url=CAESzwEB6zswFcOzpYADjc-NVkDJvD2nYkTWPXGJ1AvT4Hqv_prh0bXNVGVIaUkccxebs8a0L67eqnYr_61RowUqBwmRONNDmW5n_2dCg3Muzqtg_4Hh7IDCeQr440RMU17D46Cyx9GLM-46js88sFaH_qJ93my-TqvXbc828Zts5gmv6ssa48RkfVD6BRuKpHYGizYCDWPu_MRqKqFpymmhyUrnMxtnxuEGVubUtsmG0b7eIadK1geQ9IGUbdlwCl5-MNDVGM5UtV1IfVifrE-caYo
+            - generic [ref=f2e386]:
+              - generic [ref=f2e387]: $272.00
+              - text: ·
+              - generic [ref=f2e388]: In stock
+          - generic [ref=f2e394]:
+            - generic [ref=f2e397]:
+              - link "obelisk miner floor clear requirement innofind.ch https://innofind.ch › human-rights-churaka-shazenkoho" [ref=f2e399] [cursor=pointer]:
+                - /url: /goto?url=CAESgwEB6zswFfOBGBU81qiimtxOcAkAzZWvrcgA13ychqggXlIkXKcvv-geR7ZBqr3bE9kekRLYjEW0iyxRcUail2zPJOKQbM9czXsp6uNBZskF75O7sawtpoCpC80fIvJI6FgStFTPcSqaV9LuWd_4eYG5I2wo9Bp11WvzOgac0zu4dsurQg
+                - heading "obelisk miner floor clear requirement" [level=3] [ref=f2e400]
+                - generic [ref=f2e409]:
+                  - generic [ref=f2e410]: innofind.ch
+                  - generic [ref=f2e412]: https://innofind.ch › human-rights-churaka-shazenkoho
+              - button "About this result" [ref=f2e418] [cursor=pointer]
+            - generic [ref=f2e424]:
+              - generic [ref=f2e425]: 2 days ago —
+              - generic [ref=f2e426]:
+                - text: Least complicated and easy to get
+                - emphasis [ref=f2e427]: Ultimate Beginners Guide for Idle Obelisk Miner
+                - text: "- mobile game and the way to play it on the PC. Beginner ..."
+              - link "Read more" [ref=f2e428] [cursor=pointer]:
+                - /url: /goto?url=CAES4AEB6zswFVbjixMlO24UDfWoIUOjgYuwqHboKqhb6OYJWyHkDMl1aBEF3L-WNisWKVtqWb-3-S3UI5jgoL6XPJNmfjxbrqPykW-ae4NtJwSWIABQaXPj7o8c2URPGzzPb0AWYIqtYEj_q5NxZMH2JIpR_DLvJHaxodBENP9aTFFLdZlcfCAnQgeWK-f2umrpk9JfY6aZKUoGMroItUtabSJdA3vANpsCKXPVN2AAqPXxoD_vkSDoIEvg4FKUpFFVhvlGXVlartnfGkYCBG5ZWj5WWrLv5DT_u5f8sn3mK7H3MQ
+          - generic [ref=f2e432]:
+            - generic [ref=f2e435]:
+              - link "construction obelisk miner dekidscoconbypyjamahuisje.be https://dekidscoconbypyjamahuisje.be › amphtml › local" [ref=f2e437] [cursor=pointer]:
+                - /url: /goto?url=CAESnAEB6zswFRc3VeW1r0PH7jmy6YkE60TAPeGSx7EYGctTy4XXwz5G1is4DUR9YAhX8J0s2M7aITgSy1kW2m7p0bnkiTlYVL63h5qoV9LDK7kZsEMgW-5pduAZIVeWSkEHcpX0SI5D-ECHmzWGmjyXVpQ5lBzslVdlfL8IfHLDod2lDsshB9gsBepxm1TPzNCH9qPXkYWuzlBu5fM2n7k
+                - heading "construction obelisk miner" [level=3] [ref=f2e438]
+                - generic [ref=f2e444]:
+                  - generic [ref=f2e445]: dekidscoconbypyjamahuisje.be
+                  - generic [ref=f2e447]: https://dekidscoconbypyjamahuisje.be › amphtml › local
+              - button "About this result" [ref=f2e453] [cursor=pointer]
+            - generic [ref=f2e459]:
+              - generic [ref=f2e460]: 17 hours ago —
+              - generic [ref=f2e461]:
+                - text: Least complicated and easy to get
+                - emphasis [ref=f2e462]: Ultimate Beginners Guide for Idle Obelisk Miner
+                - text: "- mobile game and the way to play it on the PC. Beginner ..."
+              - link "Read more" [ref=f2e463] [cursor=pointer]:
+                - /url: /goto?url=CAES-QEB6zswFY7aLrYrYNG1F6HJ7Brl0NhnAayQ4grEUFWFDmu8J2MTU-x9B1OYkBq2OcGfcj9sdRPiBWY442Xi3noHvKtmo0-g7pqs-aRkhrd42zkryUMOHaSNEmVpIP7ObSjo9jrQnFIfQP085EKxwdrXDYY7FsUX9xEr4ZDvbz_xRWej-5Fdrp7Sj0Rso2PVEHTN_roS9JF9q5bnLQGyoi-LRpZQ9Q8i-rCe0bF8JOQDupj92SjQHKFViMVKdm1V_N66aet7zPTQDo_zwMrYs0mfgafIw1dWZN_-2wt6zTvyq1BoyKFdSQRgIRr1IvdvRual3UcoFsFXWKE
+            - list [ref=f2e465]:
+              - listitem [ref=f2e466]:
+                - 'link "Stock Market: Trump Vs..." [ref=f2e467] [cursor=pointer]':
+                  - /url: /goto?url=CAESzQEB6zswFULmEB-ISsGGlHLYBktnd7dQnJReNoMTQXZiPOD8309I2BxJr1bsx-a4SYa9OrTXh5A8OSYnjzkDEHl3XTVKmP1JwHRMx2l3JSp4pnKMYpUc5yxqZPOmeKRqqlcNLhsRxWtaDmubjsS5_xDX-IXupI0QnyzSyu9biGNU8W7EJxV8BPjRNIfsTpDvrFtatxg40iAXTJsdV-yBk9kEnqUYF7pLBT1Y9O0ygCxLUZqAcj_Gm_cOfeAB0uUa8VVFj98l0H87-yhPlEAF
+              - listitem [ref=f2e470]:
+                - link "Investor Sentiment And..." [ref=f2e471] [cursor=pointer]:
+                  - /url: /goto?url=CAES3QEB6zswFaVx1EhQJsgHYqwaGcAaSYFvZyktqxSOBT5USfdvBsVnG9njmL8ZXB2xB00luO7N4tNSM3DCLWKrb6vTwr4jcwMoj3yuz9EVzVZRkaVkDLdMRFgFEcrqL0UT7-GkIZatZgQ4gi4svc7Qfr9zDU-aaCfG7KbKDBxBRAKm11Yp_JZijejDl2VGPwW_iyTTVc618mXGKhrMYP_VZSy_5anNAoFhpYPXVBCM1nanshAYPpJ9NOpZgXM5uJDW0sBqdYlIVPcKPzesiCW2kO1UPYprVSenEtbdpmxXWg
+              - listitem [ref=f2e474]:
+                - link "Bottom Line" [ref=f2e475] [cursor=pointer]:
+                  - /url: /goto?url=CAESsgEB6zswFYpWPSr9Woa1kpQL0pAENIsxK_QN4y1KVLPiY2i9jWaQ6eoD-FfMOfcxdpwPj4RkyJJznfoG45uEsCvrwDKEd-t-m0ww7Slgez_U7zkuq7vxOtqfGNGpu61SCsgE3uAELwauLqOOrNlz8II49oR7tCoJNXRJ7kkrEOJj1yIdq0H7m-A7vsxJiaumiImUB5i-UqNaNNIFcA265gvUJfoi4Xuao8jLE1SEMmbBYAt7
+          - generic [ref=f2e481]:
+            - heading "Images" [level=2] [ref=f2e485]
+            - generic [ref=f2e489]:
+              - generic [ref=f2e493] [cursor=pointer]:
+                - 'link "Tips for a beginner? : r/IdleObeliskMiner Reddit" [ref=f2e494]':
+                  - /url: /goto?url=CAESigEB6zswFY7LFoI6-0_pd9K_x1LLG2KGUWC_Tl0myf-vaf4g2-ajlzA8yQ7uN_GvkoA5rpfJjdn6_F9pbnUkVtZSnrPFjhMG6gaDc7fIt5n5mhI6x3viFwl_YY9dwJwnVWI4SG1KYRygwiy1JywGPLcbKuJgB5sDXLZqYvPUhLCvS-WA5Amm-ZFQvTs
+                - button [ref=f2e496]:
+                  - 'img "Tips for a beginner? : r/IdleObeliskMiner" [ref=f2e498]'
+                - generic [ref=f2e500]:
+                  - generic [ref=f2e502]: "Tips for a beginner? : r/IdleObeliskMiner"
+                  - generic [ref=f2e503]:
+                    - generic [ref=f2e505]: Reddit
+                    - button "About this result" [ref=f2e515]
+              - generic [ref=f2e523] [cursor=pointer]:
+                - link "Any tips on what i should focus? Never searched for stuff ... Reddit" [ref=f2e524]:
+                  - /url: /goto?url=CAESpQEB6zswFbB7-amGCUGsU3CH9uuIA5CmWhKwHJkIv96-P0HeG17kgn07qASO0M_LObNjr8Vvay_oz4cfYVmWaASI2dRoQqb_V8za_wvZdGs98JxFakgWg62d0LzJM1Qo1_762UgziyCCg06Ed9Hj3Zx9gBsj7IPa9O-eul_yln6mKT2YnUbNXTRKAEnmLhGXdB3qtthmMOhW5WMwIM3cWhT82dKWg9g
+                - button [ref=f2e526]:
+                  - img "Any tips on what i should focus? Never searched for stuff ..." [ref=f2e528]
+                - generic [ref=f2e530]:
+                  - generic [ref=f2e532]: Any tips on what i should focus? Never searched for stuff ...
+                  - generic [ref=f2e533]:
+                    - generic [ref=f2e535]: Reddit
+                    - button "About this result" [ref=f2e545]
+              - generic [ref=f2e553] [cursor=pointer]:
+                - link "F2P BEGINNERS GUIDE // LIMBO DISCO YouTube" [ref=f2e554]:
+                  - /url: /goto?url=CAESZgHrOzAVyEOLTC3wfUKXrHceGP1n_2IfePC08qnjrDlXA4K1PhUr-_UdlkVtesnptCp45z6FDxd8JXp9SW1g9ILvtr2y4xG_opqLEYtzvz5Eh7W-Ksa11PYaZHOE2yH5O4llh8ehtw
+                - button [ref=f2e556]:
+                  - img "F2P BEGINNERS GUIDE // LIMBO DISCO" [ref=f2e558]
+                - generic [ref=f2e560]:
+                  - generic [ref=f2e562]: F2P BEGINNERS GUIDE // LIMBO DISCO
+                  - generic [ref=f2e563]:
+                    - generic [ref=f2e565]: YouTube
+                    - button "About this result" [ref=f2e575]
+            - button "Show more images" [ref=f2e581] [cursor=pointer]:
+              - separator [aria-hidden] [ref=f2e582]
+      - generic [ref=f2e589]:
+        - generic [ref=f2e590]:
+          - heading "Notices about Filtered Results" [level=2] [ref=f2e591]
+          - paragraph [ref=f2e593]:
+            - generic [ref=f2e594]:
+              - text: In order to show you the most relevant results, we have omitted some entries very similar to the 6 already displayed.If you like, you can
+              - link "repeat the search with the omitted results included" [ref=f2e595] [cursor=pointer]:
+                - /url: /search?q=idle+obelisk+miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnvkNFrH7Mt8Ens9UwNy0SbUgraTsA:1790966651973&filter=0
+              - text: .
+        - navigation
+      - navigation
+    - contentinfo [ref=f2e596]:
+      - heading "Footer Links" [level=1] [ref=f2e597]
+      - generic [ref=f2e601]:
+        - generic [ref=f2e605]:
+          - button "Laguna Niguel, California - From your IP address" [ref=f2e607] [cursor=pointer]:
+            - generic [ref=f2e608]: Laguna Niguel, California
+            - generic [ref=f2e610]:
+              - text: "-"
+              - generic [ref=f2e611]: From your IP address
+          - text: "-"
+          - button "Update location" [ref=f2e613] [cursor=pointer]
+        - generic [ref=f2e616]:
+          - link "Help" [ref=f2e617] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=en&fg=1
+          - link "Send feedback" [ref=f2e618] [cursor=pointer]:
+            - /url: "#"
+          - link "Privacy" [ref=f2e619] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=en&fg=1
+          - link "Terms" [ref=f2e620] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=en&fg=1

@@ -1,0 +1,285 @@
+- generic [active] [ref=f2e1]:
+  - generic:
+    - generic:
+      - link "Skip to main content" [ref=f2e2] [cursor=pointer]
+      - link "Accessibility help" [ref=f2e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=en
+  - generic [ref=f2e8]:
+    - search [ref=f2e9]:
+      - generic [ref=f2e11]:
+        - link "Go to Google Home" [ref=f2e13] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=en&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQPHoECAYQBA
+        - generic [ref=f2e22]:
+          - combobox "Search" [ref=f2e24]: Idle Obelisk Miner beginner guide Idle Obelisk Miner beginner guide
+          - generic [ref=f2e25]:
+            - button "Clear" [ref=f2e29] [cursor=pointer]
+            - generic [ref=f2e34]:
+              - button "Search by voice" [ref=f2e37] [cursor=pointer]
+              - button "Search by image" [ref=f2e42] [cursor=pointer]
+    - generic [ref=f2e45]:
+      - button "Settings" [ref=f2e47] [cursor=pointer]
+      - button "Share" [ref=f2e52] [cursor=pointer]
+      - generic [ref=f2e58]:
+        - button "Google apps" [ref=f2e60] [cursor=pointer]
+        - link "Sign in" [ref=f2e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/search%3Fq%3DIdle%2BObelisk%2BMiner%2Bbeginner%2Bguide%26sei%3D8fu_arT0EcbFkPIPgu3I-Q4&ec=futura_srp_og_si_72236_p
+  - generic [ref=f2e68]:
+    - navigation [ref=f2e74]:
+      - generic [ref=f2e80]:
+        - list [ref=f2e81]:
+          - listitem [ref=f2e82]:
+            - link "AI Mode" [ref=f2e85] [cursor=pointer]:
+              - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=50&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&vsint=&aep=1&ntc=1&cs=0&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ2J8OegQIFxAD
+          - listitem [ref=f2e89]:
+            - link "All" [disabled] [ref=f2e90]
+          - listitem [ref=f2e93]:
+            - link "Short videos" [ref=f2e94] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=39&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+beginner+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQs6gLegQIGhAB
+          - listitem [ref=f2e97]:
+            - link "Videos" [ref=f2e98] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=vids&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+beginner+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQtKgLegQIHRAB
+          - listitem [ref=f2e101]:
+            - link "Images" [ref=f2e102] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=2&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+beginner+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQtKgLegQIGRAB
+          - listitem [ref=f2e105]:
+            - link "Forums" [ref=f2e106] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=forums&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+beginner+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQs6gLegQIHBAB
+          - listitem [ref=f2e109]:
+            - link "Shopping" [ref=f2e110] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&udm=28&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=Idle+Obelisk+Miner+beginner+guide&ved=1t:220175&ictx=111
+          - listitem [ref=f2e113]:
+            - button [ref=f2e114] [cursor=pointer]:
+              - generic "More filters" [ref=f2e115]: More
+        - button "Tools" [ref=f2e122] [cursor=pointer]
+    - heading "Search Results" [level=1] [ref=f2e130]
+    - main [ref=f2e136]:
+      - generic [ref=f2e140]:
+        - generic [ref=f2e143]:
+          - heading "Web results" [level=2] [ref=f2e144]
+          - generic [ref=f2e145]:
+            - generic [ref=f2e148]:
+              - link "Guides/Progression Guide - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Progression_Guide" [ref=f2e150] [cursor=pointer]:
+                - /url: /goto?url=CAESdQHrOzAVxV393gZ2rj1Pcwtlpkhcz7zeoGCTi10PJK-RG4QmbrcbV0T5lVGp0DsRzhnWdWvzgph9DsL8OMad6KScWLUzSnqCgSWSNciC2uO51G21o0hB0mRVM8dSRsRq8tTknnhfxaBBbHjM4CJY3KhvqLlnNA
+                - heading "Guides/Progression Guide - Idle Obelisk Miner Wiki" [level=3] [ref=f2e151]
+                - generic [ref=f2e157]:
+                  - generic [ref=f2e158]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e160]: https://shminer.miraheze.org › wiki › Progression_Guide
+              - button "About this result" [ref=f2e166] [cursor=pointer]
+            - link [aria-hidden] [ref=f2e173] [cursor=pointer]:
+              - /url: /goto?url=CAESdQHrOzAVxV393gZ2rj1Pcwtlpkhcz7zeoGCTi10PJK-RG4QmbrcbV0T5lVGp0DsRzhnWdWvzgph9DsL8OMad6KScWLUzSnqCgSWSNciC2uO51G21o0hB0mRVM8dSRsRq8tTknnhfxaBBbHjM4CJY3KhvqLlnNA
+            - generic [ref=f2e177]:
+              - generic [ref=f2e178]: Sep 24, 2026 —
+              - generic [ref=f2e179]:
+                - text: Ensure that you are signed into the Checkbox.
+                - emphasis [ref=f2e180]: Enter all Codes
+                - text: . Gifts get better with higher Obelisk level. Unlock the bombs in the Workshop and ...
+        - generic [ref=f2e181]:
+          - generic [ref=f2e185]:
+            - generic [ref=f2e188]:
+              - link "Tips Needed for Newbie Miner — Resource Gains, ... Reddit · r/IdleObeliskMiner 30+ comments · 1 year ago" [ref=f2e190] [cursor=pointer]:
+                - /url: /goto?url=CAESogEB6zswFYj3DR_B86qoe7dtjE-dx0P-4-WMBmDDt4amhHbQa5Smxxw65sFMvw6SqZ-N0qGIDBSraS3sypkHfipZowkZ-FvgoB0Q9z_LOMH4AV9aHoL0MKwPZkxP7j4jceHjOl3wEGVqHGcCV4tggScIdOzoffCHhlyv-5utjlRb3Kn1cDv6jhDcAg3OO7_b8s7p67OAf6FhI-_evQ1GkWIGzJ4
+                - heading "Tips Needed for Newbie Miner — Resource Gains, ..." [level=3] [ref=f2e191]
+                - generic [ref=f2e197]:
+                  - generic [ref=f2e198]: Reddit · r/IdleObeliskMiner
+                  - generic [ref=f2e200]: 30+ comments · 1 year ago
+              - button "About this result" [ref=f2e206] [cursor=pointer]
+            - generic [ref=f2e213]:
+              - text: the best way is to go to as high of a floor as you can comfortably one shot a floor with a Bomb, then set your EXP bomb to auto. Each
+              - emphasis [ref=f2e214]: obelisk
+              - text: ...
+            - generic [ref=f2e217]:
+              - generic [ref=f2e218]:
+                - link [ref=f2e221] [cursor=pointer]:
+                  - /url: /goto?url=CAESpAEB6zswFaMmatATGZFkbOZRAMw4PVXHtKy4zts06PZdIDZlxUZG7eLFOjzvSnwMuzpa-eARs4q0Q4wnaGkLJrOoVcV78iep1Xk0mtgNf9gzVVI2eroKYADFMtWVj9BtSG-Gc0TLMOm7UzfzY-WAXp4uG9cfbX-hu1kGKq-JNAja5T24IA6kqzfn6P1Pk6ZNbt6PJe0txYClUIWbjj7QrgLr5T3GVQ
+                  - generic [ref=f2e222]:
+                    - text: Just started yesterday, what
+                    - emphasis [ref=f2e223]: beginner
+                    - text: mistakes should ...
+                - generic [ref=f2e224]: 25 answers
+                - generic [ref=f2e226]: Dec 26, 2025
+              - generic [ref=f2e228]:
+                - link [ref=f2e231] [cursor=pointer]:
+                  - /url: /goto?url=CAESpwEB6zswFRO2sKFItwOOrekXv3AVBVY2v_XBjfvKa-XUiuLnRIRUu_WfREHvezhOvnVGBAKsGzfOEapeRdZdrgtkk6by0D4zI_GhewOwHHRIBRpUiCaogECUsmNGObAmImPDI05xOw12p-_8IWqQkqwyUY15tLtIsfbg0cn7tYtqffLiL4JM5OEbCDyqUQf_8JviqFy_oC-1BSX9OhgQ03RyXZvDM4UJjQ
+                  - generic [ref=f2e232]:
+                    - text: Hey! Just installed the game, do you have any
+                    - emphasis [ref=f2e233]: tips
+                    - text: for ...
+                - generic [ref=f2e234]: 58 answers
+                - generic [ref=f2e236]: Jul 14, 2026
+              - link "More results from www.reddit.com" [ref=f2e241] [cursor=pointer]:
+                - /url: /search?q=Idle+Obelisk+Miner+beginner+guide+site:www.reddit.com&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQrQIoAnoECCQQAw
+          - generic [ref=f2e248]:
+            - generic [ref=f2e251]:
+              - link "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER YouTube · Kosh 45K+ views · 2 years ago" [ref=f2e253] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVAiaxAwAEk2tJfQaSERk6p629iJqvhThZWr9oO-e0XXHgZdPDK1ZaUNY1C7gVOmWmOo87tJHnD5JoPE0MeEyAg6WG-eYped5cJFL3lyEAYCNA8J7eRB_skXM8YUHd7dDcqg
+                - heading "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER" [level=3] [ref=f2e254]
+                - generic [ref=f2e260]:
+                  - generic [ref=f2e261]: YouTube · Kosh
+                  - generic [ref=f2e263]: 45K+ views · 2 years ago
+              - button "About this result" [ref=f2e269] [cursor=pointer]
+            - generic [ref=f2e274]:
+              - button "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER by Kosh on YouTube. Play on Google. 29:18" [ref=f2e275] [cursor=pointer]:
+                - generic [ref=f2e276]: 29:18
+              - generic [ref=f2e292]: Least complicated and easy to get Ultimate Beginners Guide for Idle Obelisk Miner - mobile game and the way to play it on the PC.
+            - button "12 key moments in this video" [ref=f2e298] [cursor=pointer]
+          - generic [ref=f2e314]:
+            - generic [ref=f2e317]:
+              - link "Get the right Start! Tips and Tricks for New Players // Idle ... YouTube · Kosh Idle 10.1K+ views · 3 years ago" [ref=f2e319] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVmQbH1RWH03oH4QSpARnJWs6DVG7ER5R8W32hFXrcB5ebRjwRurlnYDdxy4PO9X9lW6FyUZdcWsKcT8YH76bOxJWLzaO6FHh7Twb7u0QrldLKebzjX8iKYC4PR8U2Jb8CEw
+                - heading "Get the right Start! Tips and Tricks for New Players // Idle ..." [level=3] [ref=f2e320]
+                - generic [ref=f2e326]:
+                  - generic [ref=f2e327]: YouTube · Kosh Idle
+                  - generic [ref=f2e329]: 10.1K+ views · 3 years ago
+              - button "About this result" [ref=f2e335] [cursor=pointer]
+            - generic [ref=f2e340]:
+              - button "Get the right Start! Tips and Tricks for New Players // Idle ... by Kosh Idle on YouTube. Play on Google. 13:00" [ref=f2e341] [cursor=pointer]:
+                - generic [ref=f2e342]: 13:00
+              - generic [ref=f2e358]: Beginner-friendly guide that will help you to understand the game basics, figure out how game works and what will be your easiest way to ...
+            - button "7 key moments in this video" [ref=f2e364] [cursor=pointer]
+          - generic [ref=f2e377]:
+            - generic [ref=f2e380]:
+              - link "Guides - Idle Obelisk Miner Wiki - Miraheze Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Guides" [ref=f2e382] [cursor=pointer]:
+                - /url: /goto?url=CAESYwHrOzAVBEiWKdkNOGxsgpf1xjjTMGchzQLz0aMDFbnBzvG6ini8H6Z4DoGDn5kN8ASEIphTJNFeysigXifa1OlK8TvumyEpUg1oqeTOBk2-NpEfo4d0-bkjD1_Kg46fb0bXVg
+                - heading "Guides - Idle Obelisk Miner Wiki - Miraheze" [level=3] [ref=f2e383]
+                - generic [ref=f2e389]:
+                  - generic [ref=f2e390]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e392]: https://shminer.miraheze.org › wiki › Guides
+              - button "About this result" [ref=f2e398] [cursor=pointer]
+            - generic [ref=f2e404]:
+              - generic [ref=f2e405]: Sep 19, 2026 —
+              - generic [ref=f2e406]:
+                - emphasis [ref=f2e407]: Page containing all of the guides currently available on the wiki
+                - text: . For other useful calculators, spreadsheets and simulators, ...
+          - generic [ref=f2e414]:
+            - generic [ref=f2e417]:
+              - link "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ... YouTube · Kosh 42.6K+ views · 2 years ago" [ref=f2e419] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVqDvCBQjoK7qvkaqrUIi22WhxWiRBRETP2TYS7ML-eVBAjJIzn3Paa0xufsueBCEHWh_MfNVoKTBjJdW3CguXWCgstl1xX0XNzAv50YElVZo2xfCHmXd0DEfIbPA2f3JkAA
+                - heading "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ..." [level=3] [ref=f2e420]
+                - generic [ref=f2e426]:
+                  - generic [ref=f2e427]: YouTube · Kosh
+                  - generic [ref=f2e429]: 42.6K+ views · 2 years ago
+              - button "About this result" [ref=f2e435] [cursor=pointer]
+            - generic [ref=f2e440]:
+              - button "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ... by Kosh on YouTube. Play on Google. 18:46" [ref=f2e441] [cursor=pointer]:
+                - generic [ref=f2e442]: 18:46
+              - generic [ref=f2e458]: Least complicated and easy to get Advanced Guide for Idle Obelisk Miner - mobile game and the way to play it on the PC. Beginner-friendly guide ...
+            - button "10 key moments in this video" [ref=f2e464] [cursor=pointer]
+          - generic [ref=f2e477]:
+            - generic [ref=f2e480]:
+              - link "Guides/Gem Spending Guide - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Gem_Spending_..." [ref=f2e482] [cursor=pointer]:
+                - /url: /goto?url=CAESdgHrOzAV4MXc-huSaE2iPQGDXqUbYoFwEgZClLImQKG2XbFuSswVkj0-YSOgAvvIt-SxRt4TNskRiBXxY5rXlZar2Gi6tfYD65w7CmWHd1Q4h_1LU15J2OWNrdenCeVjHi658-oFMhZAvcoTPmRiKbmdTeyP2KQ
+                - heading "Guides/Gem Spending Guide - Idle Obelisk Miner Wiki" [level=3] [ref=f2e483]
+                - generic [ref=f2e489]:
+                  - generic [ref=f2e490]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e492]: https://shminer.miraheze.org › wiki › Gem_Spending_...
+              - button "About this result" [ref=f2e498] [cursor=pointer]
+            - generic [ref=f2e504]:
+              - generic [ref=f2e505]: 6 days ago —
+              - generic [ref=f2e506]:
+                - text: This guide is currently under heavy construction. You will need
+                - emphasis [ref=f2e507]: level 5 Minos from Archaeology
+                - text: Buy 2x Speed from Loot Bug & 10x Bomb Speed … ...
+          - generic [ref=f2e514]:
+            - generic [ref=f2e517]:
+              - link "EVENTS GUIDE // IDLE OBELISK MINER YouTube · Kosh 9.8K+ views · 1 year ago" [ref=f2e519] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVn7bykrMZcE6o7mgIbpuwkWoPhFxv9rUVtZGbxjjjLoZF7I6AHXXAPCvfg5O-JlQudFFRFNPQqBiIrP3vvySRAaeCXEeGi1ALiz6kHkALFCMo3xLBgcf9dw4ubOVSSw1FPA
+                - heading "EVENTS GUIDE // IDLE OBELISK MINER" [level=3] [ref=f2e520]
+                - generic [ref=f2e526]:
+                  - generic [ref=f2e527]: YouTube · Kosh
+                  - generic [ref=f2e529]: 9.8K+ views · 1 year ago
+              - button "About this result" [ref=f2e535] [cursor=pointer]
+            - generic [ref=f2e540]:
+              - button "EVENTS GUIDE // IDLE OBELISK MINER by Kosh on YouTube. Play on Google. 17:59" [ref=f2e541] [cursor=pointer]:
+                - generic [ref=f2e542]: 17:59
+              - generic [ref=f2e558]: Beginner-friendly guide that will help you to understand the game basics, figure out how game works and what will be your easiest way to ...
+            - button "9 key moments in this video" [ref=f2e564] [cursor=pointer]
+          - generic [ref=f2e577]:
+            - generic [ref=f2e580]:
+              - link "r/IdleObeliskMiner Reddit · r/IdleObeliskMiner 21.4K+ followers" [ref=f2e582] [cursor=pointer]:
+                - /url: /goto?url=CAESZQHrOzAV1HDXHSGXkUHpOdVljdbsBLHkXWChJg4tBqHtFqIBjBHYfww2ffuyCYJdG6trtAp2RZdCSIECpWng59-wmluZv4tz5U_XFC7srHkUjpAwvliAgKf5DigP1Z6fo9rx4hZh
+                - heading "r/IdleObeliskMiner" [level=3] [ref=f2e583]
+                - generic [ref=f2e589]:
+                  - generic [ref=f2e590]: Reddit · r/IdleObeliskMiner
+                  - generic [ref=f2e592]: 21.4K+ followers
+              - button "About this result" [ref=f2e598] [cursor=pointer]
+            - generic [ref=f2e605]:
+              - text: "r/IdleObeliskMiner:"
+              - emphasis [ref=f2e606]: Official Subreddit for Idle Obelisk Miner
+              - text: "! Our Discord (60k+ Members!): https://discord.gg/rB4kBfWtKd."
+          - generic [ref=f2e613]:
+            - generic [ref=f2e616]:
+              - link "How to play Idle Obelisk Miner on PC YouTube · TigerSam24 2.2K+ views · 2 months ago" [ref=f2e618] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVQLQwFlWYejDNoy1XFf9GgJmwdSzDFOPEE_iP9L4kdzOUVLWpRrFsVFguvQ7HD_TJZ0dJIV_-1bwsTp5KQOgI4sb7z1ZZ5D4PYD4uKR57i5b4Gofr1WNhAaghBfSlzI0Vpg
+                - heading "How to play Idle Obelisk Miner on PC" [level=3] [ref=f2e619]
+                - generic [ref=f2e625]:
+                  - generic [ref=f2e626]: YouTube · TigerSam24
+                  - generic [ref=f2e628]: 2.2K+ views · 2 months ago
+              - button "About this result" [ref=f2e634] [cursor=pointer]
+            - generic [ref=f2e639]:
+              - button "How to play Idle Obelisk Miner on PC by TigerSam24 on YouTube. Play on Google. 3:04" [ref=f2e640] [cursor=pointer]:
+                - generic [ref=f2e641]: 3:04
+              - generic [ref=f2e657]: ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) // IDLE OBELISK MINER ... ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER. Kosh•44K views.
+      - generic [ref=f2e660]:
+        - generic [ref=f2e665]:
+          - heading "People also search for" [level=2] [ref=f2e667]
+          - generic [ref=f2e669]:
+            - generic [ref=f2e670]:
+              - link "Idle obelisk miner beginner guide reddit" [ref=f2e674] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+obelisk+miner+beginner+guide+reddit&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAgtEAE
+              - link "Idle Obelisk Miner Skill tree guide" [ref=f2e688] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+Skill+tree+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAgwEAE
+              - link "Idle Obelisk Miner progression Guide" [ref=f2e702] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+progression+Guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAg1EAE
+              - link "Idle Obelisk Miner gem spending guide" [ref=f2e716] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+gem+spending+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAgvEAE
+            - generic [ref=f2e727]:
+              - link "Idle Obelisk Miner when to prestige" [ref=f2e731] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+when+to+prestige&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAgxEAE
+              - link "Idle Obelisk Miner guide" [ref=f2e745] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAg2EAE
+              - link "Idle Obelisk Miner prestige guide" [ref=f2e759] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+prestige+guide&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAgyEAE
+              - link "Idle Obelisk Miner codes" [ref=f2e773] [cursor=pointer]:
+                - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&q=Idle+Obelisk+Miner+codes&sa=X&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ1QJ6BAg0EAE
+        - navigation [ref=f2e784]:
+          - heading "Page Navigation" [level=1] [ref=f2e785]
+          - text: "1"
+          - link "Page 2" [ref=f2e788] [cursor=pointer]:
+            - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=10&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8tMDegQIKhAE
+            - text: "2"
+          - link "Page 3" [ref=f2e790] [cursor=pointer]:
+            - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=20&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8tMDegQIKhAG
+            - text: "3"
+          - link "Page 4" [ref=f2e792] [cursor=pointer]:
+            - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=30&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8tMDegQIKhAI
+            - text: "4"
+          - link "Page 5" [ref=f2e794] [cursor=pointer]:
+            - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=40&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8tMDegQIKhAK
+            - text: "5"
+          - link "Page 6" [ref=f2e796] [cursor=pointer]:
+            - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=50&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8tMDegQIKhAM
+            - text: "6"
+          - heading [level=2] [ref=f2e798]:
+            - link "Next" [ref=f2e799] [cursor=pointer]:
+              - /url: /search?q=Idle+Obelisk+Miner+beginner+guide&sca_esv=4d65981f01013b52&sxsrf=APpeQnsGHS7HbYIwjsuag7sDA0vd2F2WEQ:1790966769659&ei=8fu_as6QJ4vHkPIPlrzxqQo&start=10&sa=N&sstk=AS6-VmJ64GO-SZvCHgBaJhwbGzdn5ox9VaJXGe-NqZ_5L8z4iTwqAHpjKOen2Dc5JUqw1rryLnidEFjUwOIyyQjyW9v82Imppy9nPQ&ved=2ahUKEwiOze-Q_5uXAxWLI0QIHRZePKUQ8NMDegQIKhAO
+      - navigation
+    - contentinfo [ref=f2e802]:
+      - heading "Footer Links" [level=1] [ref=f2e803]
+      - generic [ref=f2e807]:
+        - generic [ref=f2e811]:
+          - button "Laguna Niguel, California - From your IP address" [ref=f2e813] [cursor=pointer]:
+            - generic [ref=f2e814]: Laguna Niguel, California
+            - generic [ref=f2e816]:
+              - text: "-"
+              - generic [ref=f2e817]: From your IP address
+          - text: "-"
+          - button "Update location" [ref=f2e819] [cursor=pointer]
+        - generic [ref=f2e822]:
+          - link "Help" [ref=f2e823] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=en&fg=1
+          - link "Send feedback" [ref=f2e824] [cursor=pointer]:
+            - /url: "#"
+          - link "Privacy" [ref=f2e825] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=en&fg=1
+          - link "Terms" [ref=f2e826] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=en&fg=1

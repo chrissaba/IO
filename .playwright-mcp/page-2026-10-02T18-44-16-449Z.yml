@@ -1,0 +1,519 @@
+- generic [active] [ref=f9e1]:
+  - link "Skip to content" [ref=f9e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=f9e4]:
+    - paragraph [ref=f9e5]: Explore current collections and review delivery details before ordering
+    - generic [ref=f9e6]:
+      - link "Shipping information" [ref=f9e7] [cursor=pointer]:
+        - /url: /shipping/
+      - link "Returns policy" [ref=f9e8] [cursor=pointer]:
+        - /url: /returns/
+      - link "Customer support" [ref=f9e9] [cursor=pointer]:
+        - /url: /support/
+  - banner [ref=f9e10]:
+    - generic [ref=f9e11]:
+      - link "pipaloou home" [ref=f9e12] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f9e13]: S
+        - generic [ref=f9e14]:
+          - strong [ref=f9e15]: pipaloou
+          - generic [ref=f9e16]: Curated goods and useful guides
+      - search [ref=f9e17]:
+        - generic [ref=f9e18]: Search products
+        - searchbox "Search products" [ref=f9e19]
+        - button "Search" [ref=f9e20] [cursor=pointer]
+      - generic [ref=f9e21]:
+        - link "○ Sign in" [ref=f9e22] [cursor=pointer]:
+          - /url: /login/
+          - generic [ref=f9e23]: ○
+          - generic [ref=f9e24]: Sign in
+        - link "♡ Wishlist" [ref=f9e25] [cursor=pointer]:
+          - /url: /wishlist/
+          - generic [ref=f9e26]: ♡
+          - generic [ref=f9e27]: Wishlist
+        - link "▱ Cart 0" [ref=f9e28] [cursor=pointer]:
+          - /url: /cart/
+          - generic [ref=f9e29]: ▱
+          - generic [ref=f9e30]: Cart
+          - generic [ref=f9e31]: "0"
+    - generic [ref=f9e33]:
+      - link "☷ All products" [ref=f9e34] [cursor=pointer]:
+        - /url: /shop/
+        - generic [ref=f9e35]: ☷
+        - text: All products
+      - navigation "Main navigation" [ref=f9e36]:
+        - link "Home" [ref=f9e37] [cursor=pointer]:
+          - /url: /
+        - link "dippers real name" [ref=f9e38] [cursor=pointer]:
+          - /url: /category/dippers-real-name/
+        - link "snooty meaning" [ref=f9e39] [cursor=pointer]:
+          - /url: /category/snooty-meaning/
+        - link "cnc meaning machine" [ref=f9e40] [cursor=pointer]:
+          - /url: /category/cnc-meaning-machine/
+        - link "Collections" [ref=f9e41] [cursor=pointer]:
+          - /url: /collections/
+        - link "Guides" [ref=f9e42] [cursor=pointer]:
+          - /url: /blog/
+      - link "Need help?" [ref=f9e43] [cursor=pointer]:
+        - /url: /contact/
+  - navigation "Breadcrumb" [ref=f9e44]:
+    - generic [ref=f9e45]:
+      - link "Home" [ref=f9e46] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f9e47]: /
+      - link "Shop" [ref=f9e48] [cursor=pointer]:
+        - /url: /shop/
+      - generic [ref=f9e49]: /
+      - link "dippers real name" [ref=f9e50] [cursor=pointer]:
+        - /url: /category/dippers-real-name/
+      - generic [ref=f9e51]: /
+      - generic [ref=f9e52]: obelisk miner wiki
+  - main [ref=f9e53]:
+    - generic [ref=f9e55]:
+      - generic [ref=f9e56]:
+        - generic [ref=f9e57]:
+          - button [ref=f9e58] [cursor=pointer]:
+            - img "obelisk miner wiki main view" [ref=f9e59]
+          - button [ref=f9e60] [cursor=pointer]:
+            - img "obelisk miner wiki detail view" [ref=f9e61]
+          - button [ref=f9e62] [cursor=pointer]:
+            - img "obelisk miner wiki alternate view" [ref=f9e63]
+          - button [ref=f9e64] [cursor=pointer]:
+            - img "obelisk miner wiki collection view" [ref=f9e65]
+        - img "obelisk miner wiki" [ref=f9e67]
+      - generic [ref=f9e68]:
+        - paragraph [ref=f9e69]: Obelisk Miner
+        - heading "obelisk miner wiki" [level=1] [ref=f9e70]
+        - paragraph [ref=f9e71]: mining. This tier list is made by early-mid game players. We encourage people to make their own and tag us ! Make yours here
+        - generic [ref=f9e72]:
+          - generic [aria-hidden] [ref=f9e73]: ☆ ☆ ☆ ☆ ☆
+          - generic [ref=f9e74]: Customer feedback appears when verified reviews are available
+        - generic [ref=f9e75]:
+          - strong [ref=f9e76]: $272.00 USD
+          - generic [ref=f9e77]: Display price for this product selection.
+          - generic [ref=f9e78]: 98 in stock
+        - generic [ref=f9e79]:
+          - generic [ref=f9e80]:
+            - generic [ref=f9e81]: Choose an option
+            - link "Selection guide" [ref=f9e82] [cursor=pointer]:
+              - /url: /faq/
+          - generic [ref=f9e83]:
+            - button "Standard" [ref=f9e84]
+            - button "Classic" [ref=f9e85]
+            - button "Modern" [ref=f9e86]
+        - generic [ref=f9e87]:
+          - generic [ref=f9e88]:
+            - generic [ref=f9e89]: Style
+            - generic [ref=f9e90]: ready stock
+          - generic [ref=f9e91]:
+            - button "Primary" [ref=f9e92]
+            - button "Light" [ref=f9e93]
+            - button "Dark" [ref=f9e94]
+        - generic [ref=f9e95]:
+          - generic [ref=f9e96]:
+            - button "Decrease quantity" [ref=f9e97] [cursor=pointer]: −
+            - textbox "Quantity" [ref=f9e98]: "1"
+            - button "Increase quantity" [ref=f9e99] [cursor=pointer]: +
+          - button "Add to cart" [ref=f9e100] [cursor=pointer]
+        - button "Buy now" [ref=f9e101] [cursor=pointer]
+        - generic [ref=f9e102]:
+          - link "Shipping information → Destinations, timing and cost details" [ref=f9e103] [cursor=pointer]:
+            - /url: /shipping/
+            - strong [ref=f9e104]: Shipping information →
+            - generic [ref=f9e105]: Destinations, timing and cost details
+          - link "Returns and refunds → Eligibility and request guidance" [ref=f9e106] [cursor=pointer]:
+            - /url: /returns/
+            - strong [ref=f9e107]: Returns and refunds →
+            - generic [ref=f9e108]: Eligibility and request guidance
+          - link "Warranty guidance → Coverage information and support" [ref=f9e109] [cursor=pointer]:
+            - /url: /warranty/
+            - strong [ref=f9e110]: Warranty guidance →
+            - generic [ref=f9e111]: Coverage information and support
+          - link "Ask a question → Contact options and customer assistance" [ref=f9e112] [cursor=pointer]:
+            - /url: /contact/
+            - strong [ref=f9e113]: Ask a question →
+            - generic [ref=f9e114]: Contact options and customer assistance
+        - generic [ref=f9e115]:
+          - generic [ref=f9e116]: ✓
+          - text: Review order, policy and payment information before confirming a purchase
+    - generic [ref=f9e118]:
+      - tablist [ref=f9e119]:
+        - button "Description" [ref=f9e120] [cursor=pointer]
+        - button "Product details" [ref=f9e121] [cursor=pointer]
+        - button "Shipping & returns" [ref=f9e122] [cursor=pointer]
+        - button "Care & support" [ref=f9e123] [cursor=pointer]
+      - article [ref=f9e125]:
+        - heading "About obelisk miner wiki" [level=2] [ref=f9e126]
+        - heading "Introduction to Idle Obelisk Miner and Its Unique Genesis" [level=2] [ref=f9e127]
+        - text: Least complicated and easy to get Advanced Guide for Idle Obelisk Miner - mobile game and the way to play it on the PC.
+        - paragraph [ref=f9e128]:
+          - strong [ref=f9e129]: Idle Obelisk Miner
+          - text: stands as a fascinating anomaly in the modern
+          - strong [ref=f9e130]: mobile game
+          - text: and
+          - strong [ref=f9e131]: incremental game
+          - text: ecosystem. Developed as an indie
+          - strong [ref=f9e132]: clicker game
+          - text: with a distinct
+          - strong [ref=f9e133]: DOS-style
+          - text: visual aesthetic reminiscent of 1995 computing, the title broke conventional monetization norms. Abandoning mandatory advertisements, intrusive tutorials, and heavy venture-backed funding, the developer engineered a viral phenomenon that achieved a remarkable
+          - strong [ref=f9e134]: $100K/Day
+          - text: revenue milestone purely through voluntary support and player retention. Within this comprehensive
+          - strong [ref=f9e135]: obelisk miner wiki
+          - text: ", players can dissect the foundational mechanics, advanced progression routes, and deep strategic loops required to master the title across"
+          - strong [ref=f9e136]: Android
+          - text: ","
+          - strong [ref=f9e137]: iOS
+          - text: ", and platforms emulated via"
+          - strong [ref=f9e138]: PC
+          - text: .
+        - paragraph [ref=f9e139]:
+          - text: The core gameplay loop centers on breaking
+          - strong [ref=f9e140]: rocks
+          - text: ","
+          - strong [ref=f9e141]: glowing crystals
+          - text: ", and massive monoliths, crafting refined"
+          - strong [ref=f9e142]: bars
+          - text: ", and navigating an extraordinarily complex"
+          - strong [ref=f9e143]: upgrade tree
+          - text: . Unlike traditional superficial clickers, the title scales exponentially, introducing layered systems such as
+          - strong [ref=f9e144]: prestige
+          - text: ","
+          - strong [ref=f9e145]: cards
+          - text: ","
+          - strong [ref=f9e146]: pets
+          - text: ", and time-limited seasonal structures like the"
+          - strong [ref=f9e147]: Easter Event 2024
+          - text: .
+        - paragraph [ref=f9e148]: "---"
+        - 'heading "Core Game Least complicated and easy to get Beginners Guide for Idle Obelisk Miner mobile game. Beginner-friendly guide that will help you play Mechanics: Mining, Crafting, and Resource Management" [level=2] [ref=f9e149]'
+        - paragraph [ref=f9e150]:
+          - text: At its heart,
+          - strong [ref=f9e151]: Idle Obelisk Miner
+          - text: challenges users to optimize their automated production loops. Players deploy various tiers of
+          - strong [ref=f9e152]: miners
+          - text: to break down Is Idle Obelisk Miner the next hidden gem in the idle/incremental genre? I spent some time with it, and here's my quick review. mineral deposits, generating raw materials that are subsequently processed into crafted
+          - strong [ref=f9e153]: bars
+          - text: .
+        - paragraph
+        - heading "Resource Progression Loop" [level=3] [ref=f9e154]
+        - paragraph
+        - paragraph [ref=f9e155]:
+          - text: "1."
+          - strong [ref=f9e156]: "Extraction:"
+          - text: Miners automatically target active obelisks and rock formations. Higher rarity miners possess specific damage multipliers, attack speeds, and elemental attributes.
+        - paragraph [ref=f9e157]:
+          - text: "2."
+          - strong [ref=f9e158]: "Refining:"
+          - text: Raw ores collected from active nodes are fed into processing loops to forge upgraded construction materials.
+        - paragraph [ref=f9e159]:
+          - text: "3."
+          - strong [ref=f9e160]: "Reinvestment:"
+          - text: Processed materials fund the massive
+          - strong [ref=f9e161]: upgrade tree
+          - text: ", unlocking passive income boosts, damage scaling, and automation features."
+        - paragraph [ref=f9e162]:
+          - text: Understanding the balance between active play—such as hunting for the elusive
+          - strong [ref=f9e163]: drone
+          - text: —and passive idling is vital for long-term progression. Active engagement yields substantial bonuses through strategic tapping, precise timing of temporary boosts, and active management of utility items.
+        - paragraph [ref=f9e164]: "---"
+        - 'heading "Strategic Deep Dive: Advanced Progression Systems" [level=2] [ref=f9e165]'
+        - paragraph [ref=f9e166]: As players transition from the early-game phase into the mid- and late-game loops, mechanical complexity expands exponentially. Mastering the hidden math and resource synergies separates casual players from elite progressionists.
+        - paragraph
+        - heading "The Plat Strat and Efficiency Metrics" [level=3] [ref=f9e167]
+        - paragraph
+        - paragraph [ref=f9e168]:
+          - text: Advanced communit Find the Drone! y-driven strategies, notably the
+          - strong [ref=f9e169]: Plat Strat
+          - text: ", dictate optimal resource allocation for platinum and high-tier mineral harvesting. By timing specific milestone upgrades alongside multi-tiered multipliers, players can bypass typical progression walls."
+        - paragraph
+        - heading "Cards, Pets, and Prestige Loops" [level=3] [ref=f9e170]
+        - paragraph
+        - paragraph [ref=f9e171]:
+          - text: "*"
+          - strong [ref=f9e172]: "Cards:"
+          - text: Collecting and upgrading various game
+          - strong [ref=f9e173]: cards
+          - text: grants permanent and temporary passive buffs to critical strike chance, mining How to play Idle Obelisk Miner on PC speed, and material yield.
+        - paragraph [ref=f9e174]:
+          - text: "*"
+          - strong [ref=f9e175]: "Pets:"
+          - text: The
+          - strong [ref=f9e176]: petlife
+          - text: mechanic introduces companion entities that provide multiplicative boosts to overall productivity, automated rock damage, and resource drop rates.
+        - paragraph [ref=f9e177]:
+          - text: "*"
+          - strong [ref=f9e178]: "Prestige:"
+          - text: Resetting primary progress through the
+          - strong [ref=f9e179]: prestige
+          - text: mechanic rewards players with rare tokens. These tokens are spent on permanent legacy upgrades that drastically accelerate subsequent playthrough iterations over a
+          - strong [ref=f9e180]: 6month
+          - text: to
+          - strong [ref=f9e181]: 12month
+          - text: timeline.
+        - paragraph [ref=f9e182]: "---"
+        - 'heading "Equipment and Combat Tier Lists: Bombs and Utilities" [level=2] [ref=f9e183]'
+        - paragraph [ref=f9e184]: Navigating high-health enemy nodes and dense mineral formations requires strict optimizatio Least complicated and easy to get Automation Guide for Idle Obelisk Miner - mobile game. Beginner-friendly guide that will help n of offensive utility items.
+        - paragraph
+        - heading "Bomb Tier List and Utility" [level=3] [ref=f9e185]
+        - paragraph
+        - paragraph [ref=f9e186]:
+          - text: Explosives play a critical role in clearing dense health Playing Obelisk Miner For 1 Hour pools efficient Idle Obelisk Miner | Short Review | Zero Ads, 100% Rocks Addiction (or maybe not) ly. The community
+          - strong [ref=f9e187]: bomb tier list
+          - text: "ranks tactical explosives based on damage-per-second output and area-of-effect utility:"
+        - paragraph [ref=f9e188]:
+          - text: "*"
+          - strong [ref=f9e189]: "Cherry Bombs:"
+          - text: Highly sought after for their burst damage capabilities,
+          - strong [ref=f9e190]: cherry bombs
+          - text: "are frequently deploye Idle Obelisk Miner Gameplay Walkthrough Part 1 (Android, IOS) Android: d during boss waves and high-HP monster encounters where standard miner DPS falls short."
+        - paragraph [ref=f9e191]:
+          - text: "*"
+          - strong [ref=f9e192]: "Monster HP Scaling:"
+          - text: As players dig deeper into the obelisk, monster health pools scale exponentially, requiring synchronized deployment of high-tier explosives and max-level miners.
+        - paragraph [ref=f9e193]: "---"
+        - heading "Live Operations, Events, and Community-Driven Lore" [level=2] [ref=f9e194]
+        - paragraph [ref=f9e195]: The developers maintain high player retention through continuous content updates, holiday deployments, and community-driven engagement.
+        - paragraph
+        - heading "Seasonal Events" [level=3] [ref=f9e196]
+        - paragraph
+        - paragraph [ref=f9e197]:
+          - text: Special events, such as the
+          - strong [ref=f9e198]: Idle Obelisk Miner Easter Event 2024
+          - text: (subtitled *"Attack of the eggs!"*), introduce event-exclusive currencies, limited-time bosses, and unique aesthetic rewards. Participating in these events requires understanding specialized event guides to maximize token acquisition bef This is an idle / incremental / clicker game about mining rocks, crafting bars and progressing through vast upgrade trees to ore the event window closes.
+        - paragraph
+        - heading "Lore and Community Culture" [level=3] [ref=f9e199]
+        - paragraph
+        - paragraph [ref=f9e200]:
+          - text: Despite its minimalist visual presentation, the community has constructed a rich humorous lore around the title, complete with inside jokes regarding the
+          - strong [ref=f9e201]: top 10 villains of Idle Obelisk Miner
+          - text: . Players share custom tier lists, speedrun strategies via platforms like
+          - strong [ref=f9e202]: beacons.ai/chonthavy
+          - text: ", and redeem promotional"
+          - strong [ref=f9e203]: gift codes
+          - text: released across social channels to jumpstart their progress.
+        - paragraph [ref=f9e204]: "---"
+        - 'heading "Cross-Platform Play: Running on PC and Mobile Integration" [level=2] [ref=f9e205]'
+        - paragraph [ref=f9e206]:
+          - text: While natively designed for
+          - strong [ref=f9e207]: Android
+          - text: and
+          - strong [ref=f9e208]: iOS
+          - text: touchscreens, a significa Attack of the eggs! nt portion of the user base prefers
+          - strong [ref=f9e209]: playing on PC and automation
+          - text: .
+        - paragraph
+        - heading "How to Play on PC" [level=3] [ref=f9e210]
+        - paragraph
+        - paragraph [ref=f9e211]:
+          - text: To experience the title on a desktop environment using mouse controls, players typically download the official
+          - strong [ref=f9e212]: Google Play Store
+          - text: "desktop client or utilize reputable Android emulators. Playing on PC offers distinct advanta ⛏️ One Guy, No Ads, No Tutorial, 0K/Day: The Idle Obelisk Miner Story ges for long-term idling, macro setup, and managing auxiliary automation tools without draining mobile battery health."
+        - paragraph [ref=f9e213]:
+          - text: By combining meticulous resource management, strategic card loadouts, optimal prestige timing, and community-tested strategies from this
+          - strong [ref=f9e214]: obelisk miner wiki
+          - text: ", players can efficiently conquer the deepest layers of the obelisk and master one of the most compelling indie incremental titles of the decade."
+        - generic [ref=f9e215]:
+          - generic [ref=f9e216]: Updated Oct 2, 2026 2:44 PM
+          - generic [ref=f9e217]: "Topic: mining"
+    - generic [ref=f9e219]:
+      - generic [ref=f9e220]:
+        - generic [ref=f9e221]:
+          - paragraph [ref=f9e222]: Editorial context
+          - heading "Reviewed product guidance" [level=2] [ref=f9e223]
+        - link "Editorial standards →" [ref=f9e224] [cursor=pointer]:
+          - /url: /authors/
+      - generic [ref=f9e225]:
+        - generic [ref=f9e226]: g
+        - generic [ref=f9e227]:
+          - heading [level=3] [ref=f9e228]:
+            - link "Benjamin Edwards" [ref=f9e229] [cursor=pointer]:
+              - /url: /author/Benjamin Edwards/
+          - paragraph [ref=f9e230]: covers luxury fashion and lifestyle items with detailed product analysis through platforms like Facebook and Pinterest
+    - generic [ref=f9e232]:
+      - generic [ref=f9e233]:
+        - generic [ref=f9e234]:
+          - paragraph [ref=f9e235]: More to explore
+          - heading "Related products and topics" [level=2] [ref=f9e236]
+        - link "Browse all →" [ref=f9e237] [cursor=pointer]:
+          - /url: /shop/
+      - generic [ref=f9e238]:
+        - article [ref=f9e239]:
+          - link [ref=f9e240] [cursor=pointer]:
+            - /url: /name-of-the-moon-ready-stock/
+            - img "name of the moon" [ref=f9e241]
+          - generic [ref=f9e242]:
+            - generic [ref=f9e243]: Related choice
+            - heading [level=3] [ref=f9e244]:
+              - link "name of the moon" [ref=f9e245] [cursor=pointer]:
+                - /url: /name-of-the-moon-ready-stock/
+            - paragraph [ref=f9e246]: Black, blue, harvest and supermoon; CNN meteorologist Jennifer Gray explains what full and new moons' names mean.
+            - generic [ref=f9e247]:
+              - generic [ref=f9e248]:
+                - strong [ref=f9e249]: $454.00
+                - generic [ref=f9e250]: 22 in stock · USD
+              - link "View →" [ref=f9e251] [cursor=pointer]:
+                - /url: /name-of-the-moon-ready-stock/
+        - article [ref=f9e252]:
+          - link [ref=f9e253] [cursor=pointer]:
+            - /url: /undeclared-tv-show-classic-design/
+            - img "undeclared tv show" [ref=f9e254]
+          - generic [ref=f9e255]:
+            - generic [ref=f9e256]: Related choice
+            - heading [level=3] [ref=f9e257]:
+              - link "undeclared tv show" [ref=f9e258] [cursor=pointer]:
+                - /url: /undeclared-tv-show-classic-design/
+            - paragraph [ref=f9e259]: From the episode Eric Visits Again, where Eric chases Steven after he finds out that Steven had intercourse with Lizzie.
+            - generic [ref=f9e260]:
+              - generic [ref=f9e261]:
+                - strong [ref=f9e262]: $485.00
+                - generic [ref=f9e263]: 27 in stock · USD
+              - link "View →" [ref=f9e264] [cursor=pointer]:
+                - /url: /undeclared-tv-show-classic-design/
+        - article [ref=f9e265]:
+          - link [ref=f9e266] [cursor=pointer]:
+            - /url: /one-word-movie-names-premium-item/
+            - img "one word movie names" [ref=f9e267]
+          - generic [ref=f9e268]:
+            - generic [ref=f9e269]: Related choice
+            - heading [level=3] [ref=f9e270]:
+              - link "one word movie names" [ref=f9e271] [cursor=pointer]:
+                - /url: /one-word-movie-names-premium-item/
+            - paragraph [ref=f9e272]: Vince Blight (Bill Hader) hosts "What's That Name?" where contestants (John Mulaney, Cecily Strong) easily remember the names ...
+            - generic [ref=f9e273]:
+              - generic [ref=f9e274]:
+                - strong [ref=f9e275]: $401.00
+                - generic [ref=f9e276]: 61 in stock · USD
+              - link "View →" [ref=f9e277] [cursor=pointer]:
+                - /url: /one-word-movie-names-premium-item/
+        - article [ref=f9e278]:
+          - link [ref=f9e279] [cursor=pointer]:
+            - /url: /bite-your-tongue-meaning-close-match/
+            - img "bite your tongue meaning" [ref=f9e280]
+          - generic [ref=f9e281]:
+            - generic [ref=f9e282]: Related choice
+            - heading [level=3] [ref=f9e283]:
+              - link "bite your tongue meaning" [ref=f9e284] [cursor=pointer]:
+                - /url: /bite-your-tongue-meaning-close-match/
+            - paragraph [ref=f9e285]: What would you think if somebody told you to bite your tongue? This has a special meaning in American English. Watch this ...
+            - generic [ref=f9e286]:
+              - generic [ref=f9e287]:
+                - strong [ref=f9e288]: $151.00
+                - generic [ref=f9e289]: 10 in stock · USD
+              - link "View →" [ref=f9e290] [cursor=pointer]:
+                - /url: /bite-your-tongue-meaning-close-match/
+    - generic [ref=f9e292]:
+      - generic [ref=f9e293]:
+        - generic [ref=f9e294]:
+          - paragraph [ref=f9e295]: Product questions
+          - heading "Frequently asked questions" [level=2] [ref=f9e296]
+        - link "More help →" [ref=f9e297] [cursor=pointer]:
+          - /url: /faq/
+      - generic [ref=f9e298]:
+        - button "Get the right Start! Tips and Tricks for New Players // Idle Obelisk Miner Beginners Guide +" [ref=f9e300] [cursor=pointer]:
+          - generic [ref=f9e301]: Get the right Start! Tips and Tricks for New Players // Idle Obelisk Miner Beginners Guide
+          - generic [ref=f9e302]: +
+        - button "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) // IDLE OBELISK MINER +" [ref=f9e304] [cursor=pointer]:
+          - generic [ref=f9e305]: ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) // IDLE OBELISK MINER
+          - generic [ref=f9e306]: +
+        - button "How to do the Plat Strat - Idle Obelisk Miner +" [ref=f9e308] [cursor=pointer]:
+          - generic [ref=f9e309]: How to do the Plat Strat - Idle Obelisk Miner
+          - generic [ref=f9e310]: +
+        - button "PLAY ON PC + AUTOMATION // IDLE OBELISK MINER +" [ref=f9e312] [cursor=pointer]:
+          - generic [ref=f9e313]: PLAY ON PC + AUTOMATION // IDLE OBELISK MINER
+          - generic [ref=f9e314]: +
+  - generic [ref=f9e316]:
+    - generic [ref=f9e317]:
+      - heading "Updates from pipaloou" [level=2] [ref=f9e318]
+      - paragraph [ref=f9e319]: Receive collection news, practical guides and store information.
+    - generic [ref=f9e320]:
+      - generic [ref=f9e321]: Email address
+      - textbox "Email address" [ref=f9e322]
+      - button "Subscribe" [ref=f9e323]
+  - contentinfo [ref=f9e324]:
+    - generic [ref=f9e325]:
+      - generic [ref=f9e326]:
+        - link "S pipaloou Curated goods and useful guides" [ref=f9e327] [cursor=pointer]:
+          - /url: /
+          - generic [ref=f9e328]: S
+          - generic [ref=f9e329]:
+            - strong [ref=f9e330]: pipaloou
+            - generic [ref=f9e331]: Curated goods and useful guides
+        - paragraph [ref=f9e332]: Explore product information, related collections and practical guidance designed to support informed choices.
+        - generic [ref=f9e333]:
+          - generic [ref=f9e334]: VISA
+          - generic [ref=f9e335]: Mastercard
+          - generic [ref=f9e336]: PayPal
+          - generic [ref=f9e337]: Secure checkout
+      - generic [ref=f9e338]:
+        - heading "Shop" [level=2] [ref=f9e339]
+        - navigation [ref=f9e340]:
+          - link "All products" [ref=f9e341] [cursor=pointer]:
+            - /url: /shop/
+          - link "dippers real name" [ref=f9e342] [cursor=pointer]:
+            - /url: /category/dippers-real-name/
+          - link "snooty meaning" [ref=f9e343] [cursor=pointer]:
+            - /url: /category/snooty-meaning/
+          - link "cnc meaning machine" [ref=f9e344] [cursor=pointer]:
+            - /url: /category/cnc-meaning-machine/
+          - link "Collections" [ref=f9e345] [cursor=pointer]:
+            - /url: /collections/
+      - generic [ref=f9e346]:
+        - heading "Account" [level=2] [ref=f9e347]
+        - navigation [ref=f9e348]:
+          - link "Sign in" [ref=f9e349] [cursor=pointer]:
+            - /url: /login/
+          - link "Create account" [ref=f9e350] [cursor=pointer]:
+            - /url: /register/
+          - link "Shopping cart" [ref=f9e351] [cursor=pointer]:
+            - /url: /cart/
+          - link "Checkout" [ref=f9e352] [cursor=pointer]:
+            - /url: /checkout/
+          - link "Orders" [ref=f9e353] [cursor=pointer]:
+            - /url: /orders/
+          - link "Track order" [ref=f9e354] [cursor=pointer]:
+            - /url: /trackorder/
+      - generic [ref=f9e355]:
+        - heading "Customer care" [level=2] [ref=f9e356]
+        - navigation [ref=f9e357]:
+          - link "Shipping" [ref=f9e358] [cursor=pointer]:
+            - /url: /shipping/
+          - link "Returns" [ref=f9e359] [cursor=pointer]:
+            - /url: /returns/
+          - link "Refund policy" [ref=f9e360] [cursor=pointer]:
+            - /url: /refund/
+          - link "Warranty" [ref=f9e361] [cursor=pointer]:
+            - /url: /warranty/
+          - link "FAQ" [ref=f9e362] [cursor=pointer]:
+            - /url: /faq/
+          - link "Support" [ref=f9e363] [cursor=pointer]:
+            - /url: /support/
+      - generic [ref=f9e364]:
+        - heading "Company" [level=2] [ref=f9e365]
+        - navigation [ref=f9e366]:
+          - link "About" [ref=f9e367] [cursor=pointer]:
+            - /url: /about/
+          - link "Authors" [ref=f9e368] [cursor=pointer]:
+            - /url: /authors/
+          - link "Contact" [ref=f9e369] [cursor=pointer]:
+            - /url: /contact/
+          - link "Privacy" [ref=f9e370] [cursor=pointer]:
+            - /url: /privacy/
+          - link "Terms" [ref=f9e371] [cursor=pointer]:
+            - /url: /terms/
+          - link "Sitemap" [ref=f9e372] [cursor=pointer]:
+            - /url: /sitemap.xml
+    - generic [ref=f9e373]:
+      - generic [ref=f9e374]: © 2026 pipaloou.com. All rights reserved.
+      - generic [ref=f9e375]: Information reviewed and updated Oct 2, 2026 2:44 PM
+  - complementary "Shopping cart" [ref=f9e376]:
+    - generic [ref=f9e377]:
+      - heading "Your cart" [level=2] [ref=f9e378]
+      - button "Close cart" [ref=f9e379]: ×
+    - generic [ref=f9e380]:
+      - generic [ref=f9e381]: ▱
+      - heading "Your cart is empty" [level=3] [ref=f9e382]
+      - paragraph [ref=f9e383]: Browse the collection to find products that interest you.
+      - link "Continue shopping" [ref=f9e384] [cursor=pointer]:
+        - /url: /shop/
+  - status

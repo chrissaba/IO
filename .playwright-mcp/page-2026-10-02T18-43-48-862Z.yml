@@ -1,0 +1,401 @@
+- generic [active] [ref=f2e1]:
+  - generic:
+    - generic:
+      - link "Skip to main content" [ref=f2e2] [cursor=pointer]
+      - link "Accessibility help" [ref=f2e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=en
+  - generic [ref=f2e8]:
+    - search [ref=f2e9]:
+      - generic [ref=f2e11]:
+        - link "Go to Google Home" [ref=f2e13] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=en&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQPHoECAYQBA
+        - generic [ref=f2e22]:
+          - combobox "Search" [ref=f2e24]: idle obelisk miner how to upgrade pickaxe intro task idle obelisk miner how to upgrade pickaxe intro task
+          - generic [ref=f2e25]:
+            - button "Clear" [ref=f2e29] [cursor=pointer]
+            - generic [ref=f2e34]:
+              - button "Search by voice" [ref=f2e37] [cursor=pointer]
+              - button "Search by image" [ref=f2e42] [cursor=pointer]
+    - generic [ref=f2e45]:
+      - button "Settings" [ref=f2e47] [cursor=pointer]
+      - button "Share" [ref=f2e52] [cursor=pointer]
+      - generic [ref=f2e58]:
+        - button "Google apps" [ref=f2e60] [cursor=pointer]
+        - link "Sign in" [ref=f2e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/search%3Fq%3Didle%2Bobelisk%2Bminer%2Bhow%2Bto%2Bupgrade%2Bpickaxe%2Bintro%2Btask%26sei%3DY_u_aqXLL6TIkPIP6e25wQc&ec=futura_srp_og_si_72236_p
+  - generic [ref=f2e68]:
+    - navigation [ref=f2e74]:
+      - generic [ref=f2e80]:
+        - list [ref=f2e81]:
+          - listitem [ref=f2e82]:
+            - link "AI Mode" [ref=f2e85] [cursor=pointer]:
+              - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=50&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&vsint=&aep=1&ntc=1&cs=0&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ2J8OegQIFRAD
+          - listitem [ref=f2e89]:
+            - link "All" [disabled] [ref=f2e90]
+          - listitem [ref=f2e93]:
+            - link "Short videos" [ref=f2e94] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=39&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQs6gLegQIGhAB
+          - listitem [ref=f2e97]:
+            - link "Videos" [ref=f2e98] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=vids&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQtKgLegQIFxAB
+          - listitem [ref=f2e101]:
+            - link "Images" [ref=f2e102] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=2&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQtKgLegQIGBAB
+          - listitem [ref=f2e105]:
+            - link "Forums" [ref=f2e106] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=forums&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQs6gLegQIGRAB
+          - listitem [ref=f2e109]:
+            - link "Shopping" [ref=f2e110] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&udm=28&fbs=ABfTbFVyMZGZf1hfvX9uKjN_-G8cqu7ocb7U6ah0xpkIrGMK4LpKPoHZrc4HVz9uOAATjT2whS8aQNdsb1nn47m_ZQdHB9gC5QFbkMU5k-hNOkzSdtH4CZUBbfeXR09jNyERwWUhT_5NH3huoI5pAHOXdwF_iOVUkFiI7uC5ZQAcY75JAGb_d8LQz1IOzeAWrXUQch5pGvTnF-hejMajxsknjtWRY5PQKA&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&ved=1t:220175&ictx=111
+          - listitem [ref=f2e113]:
+            - button [ref=f2e114] [cursor=pointer]:
+              - generic "More filters" [ref=f2e115]: More
+        - button "Tools" [ref=f2e122] [cursor=pointer]
+    - heading "Search Results" [level=1] [ref=f2e129]
+    - generic [ref=f2e134]:
+      - generic [ref=f2e153]:
+        - heading "Thinking" [level=2] [ref=f2e157]
+        - progressbar "Generating" [ref=f2e160]
+      - main [ref=f2e162]:
+        - generic [ref=f2e166]:
+          - generic [ref=f2e169]:
+            - heading "Web results" [level=2] [ref=f2e170]
+            - generic [ref=f2e171]:
+              - generic [ref=f2e174]:
+                - link "Having a really tough time figuring out how to buff Pickaxe ... Reddit · r/IdleObeliskMiner 7 comments · 5 months ago" [ref=f2e176] [cursor=pointer]:
+                  - /url: /goto?url=CAESpQEB6zswFXUW8JQaM_gAK0_FIl1U0_nD7RKg2E_2vz_gEeLJ7Cy9bLioHyBYo2IqUB5XLURlwdiwa0JaJJB8CHaH7dOHAeFkOFpheLto8KJYym8W4hy9DS85tE6bpYaVxD9wwlO75bfLOKafCpDEZ9f5H9GKxLVOyljw90ljy1cC9ZbtVI35YhyRHkcsW_dLi6E6STqSIJ4wgUR2KlOJ5sZgyrilQ3c
+                  - heading "Having a really tough time figuring out how to buff Pickaxe ..." [level=3] [ref=f2e177]
+                  - generic [ref=f2e183]:
+                    - generic [ref=f2e184]: Reddit · r/IdleObeliskMiner
+                    - generic [ref=f2e186]: 7 comments · 5 months ago
+                - button "About this result" [ref=f2e192] [cursor=pointer]
+              - generic [ref=f2e198]:
+                - generic [ref=f2e199]:
+                  - text: I'm stuck on an
+                  - emphasis [ref=f2e200]: obelisk
+                  - text: "- I (seemingly) can't"
+                  - emphasis [ref=f2e201]: upgrade
+                  - text: my
+                  - emphasis [ref=f2e202]: pickaxe
+                  - text: damage anymore. r/
+                  - emphasis [ref=f2e203]: IdleObeliskMiner
+                  - text: "- [SPOILERS?] I'm stuck on an"
+                  - emphasis [ref=f2e204]: obelisk
+                  - text: "-."
+                - link "Read more" [ref=f2e205] [cursor=pointer]:
+                  - /url: /goto?url=CAESgwIB6zswFbScT45nvYuLSQzyqEjp3cLGhXXQ12zErFqkCxABpolCt7xlAGkrvqIxZCtnNpWzsBBCQCdI2MkHSuXmuCfHhXvMamLzMMN37L5j_neWjyCPJeuJzvQqqoetV_LRWJwKEDg_FMujT5m8bDjvRMEusufs2ajMikNbHV9Xx29eo6qv1GL-KGkJ03_daD6Czem4H4FM0irOrPGjPCTtJ5G_Bwi54j9zYztpyuDlWTZpg4Zo9L_TcXhSrd-yeDtqP4qq8e1nOwjCW79tElSNmkSlTvPwAIAT7M8msvxOg8U91fVceqvljqrsZYihSjnVIgBdjcgPlEXKugiBklDAqRZZ
+              - generic [ref=f2e208]:
+                - generic [ref=f2e209]:
+                  - link [ref=f2e212] [cursor=pointer]:
+                    - /url: /goto?url=CAESpwEB6zswFSSW7SyVHSz6hzs3PxYmM_vLVE8z_31xegAUwponYmvngXx7QpoNL2r7vmcg7u6T3S4UoqXY1v8e4M3O_glo9m5HprtTcVUodXh0a1F3uoMAT_BNvtdnj7XAeFcj6vhKdl693yOyyOISpVWLkrZ9NmZFVJtSo1cxDE39XrssJyIuuQ86-S0yO667DyUtP_qhu-ArMnvox_ye3wX5HenbR5K86Q
+                    - generic [ref=f2e213]:
+                      - text: I (seemingly) can't
+                      - emphasis [ref=f2e214]: upgrade
+                      - text: my
+                      - emphasis [ref=f2e215]: pickaxe
+                      - text: damage ... - Reddit
+                  - generic [ref=f2e216]: 31 posts
+                  - generic [ref=f2e218]: Jun 8, 2026
+                - generic [ref=f2e220]:
+                  - link [ref=f2e223] [cursor=pointer]:
+                    - /url: /goto?url=CAESpAEB6zswFUHv1y7prMoU6gBPvEXB4DWHeKhktsE8fkOlchAEVJgtysu1WD6jPohdDeYAI7OJQmYUoXwKakKwmTX6jEKsR4iSpCGO_NkNOSRiS15Cj6dptsC29Oq5BobN6pzBGDL1nH-xqZWbMQMHaS-wzROEqjrdSmAkEwpOPnb7N5EAFMcm35x8Z4Lq9MeanQV8y1X5O2MbFPOF_NfIZrfVWy0i7A
+                    - generic [ref=f2e224]:
+                      - text: How do I increase my
+                      - emphasis [ref=f2e225]: pickaxe
+                      - text: damage? i need reach 595no
+                  - generic [ref=f2e226]: 12 posts
+                  - generic [ref=f2e228]: Sep 23, 2026
+                - link "More results from www.reddit.com" [ref=f2e233] [cursor=pointer]:
+                  - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task+site:www.reddit.com&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQrQIoAnoECB8QAw
+              - generic [ref=f2e235]:
+                - text: "Missing: task ‎| Show results with:"
+                - link "task" [ref=f2e236] [cursor=pointer]:
+                  - /url: /search?sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+%22task%22&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ5t4CegQIIhAB
+          - generic [ref=f2e240]:
+            - generic [ref=f2e243]:
+              - link "Guides/Progression Guide - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Progression_Guide" [ref=f2e245] [cursor=pointer]:
+                - /url: /goto?url=CAESdQHrOzAV8eVsPBt_gxUlfNwVQArdiG69YwB2eSyf6FnZkU0hHYHQXHv8smvDZ07Sq2LyhV2pTwVxdzViIKBqnJCYUp4DFljWAa96miTDmaMYzHyumH3HBrHhVxyAu1TkqE7KGjXBQ7l6seybcj9M1-2TppEVOQ
+                - heading "Guides/Progression Guide - Idle Obelisk Miner Wiki" [level=3] [ref=f2e246]
+                - generic [ref=f2e252]:
+                  - generic [ref=f2e253]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e255]: https://shminer.miraheze.org › wiki › Progression_Guide
+              - button "About this result" [ref=f2e261] [cursor=pointer]
+            - generic [ref=f2e267]:
+              - generic [ref=f2e268]: Sep 24, 2026 —
+              - generic [ref=f2e269]:
+                - text: If you're struggling to reach
+                - emphasis [ref=f2e270]: Obelisk
+                - text: 17, work on Prestige, the
+                - emphasis [ref=f2e271]: Pickaxe
+                - text: Damage
+                - emphasis [ref=f2e272]: upgrade
+                - text: in the Store, Upgrades and Contracts. At
+                - emphasis [ref=f2e273]: Obelisk
+                - text: 17 you ...
+              - link "Read more" [ref=f2e274] [cursor=pointer]:
+                - /url: /goto?url=CAESyAEB6zswFU3znYyAncuxSKfr9DtHFYxP4j8h_I_XZT3JxEdOwvvjXdQP8BnDBzxMSR5HLyppy3gmnG6so5G1lUAeQxHKHcHxD3DIlnnhHekXWiXfChOPCffM_z5pORV01DjQNil3BuO6-VJwyDu0ZnBUOjy3dYo-Ldq6H6G3p__mw4UG7z_VW7vkva2oMTmf313hRd9J59xkzNEvoSNlcDF4CNL7ZjjzCj0PuaAWi_guB-0PGMWQUgIL32XH3sRxQQ-bpG_-oq5fVg
+            - link [aria-hidden] [ref=f2e277] [cursor=pointer]:
+              - /url: /goto?url=CAESdQHrOzAV8eVsPBt_gxUlfNwVQArdiG69YwB2eSyf6FnZkU0hHYHQXHv8smvDZ07Sq2LyhV2pTwVxdzViIKBqnJCYUp4DFljWAa96miTDmaMYzHyumH3HBrHhVxyAu1TkqE7KGjXBQ7l6seybcj9M1-2TppEVOQ
+          - generic [ref=f2e284]:
+            - heading "People also ask" [level=2] [ref=f2e286]
+            - generic [ref=f2e287]:
+              - button "How do you upgrade your pickaxe?" [ref=f2e293] [cursor=pointer]
+              - button "How often should you prestige in idle obelisk miner?" [ref=f2e307] [cursor=pointer]
+              - button "Does pickaxe damage affect drones in Obelisk Miner?" [ref=f2e321] [cursor=pointer]
+              - button "How can I upgrade my drones in Idle Obelisk Miner?" [ref=f2e335] [cursor=pointer]
+          - generic [ref=f2e346]:
+            - generic [ref=f2e348]:
+              - heading "Videos" [level=2] [ref=f2e349]
+              - button "About this result" [ref=f2e354] [cursor=pointer]
+            - generic [ref=f2e360]:
+              - generic [ref=f2e367]:
+                - generic [ref=f2e368]:
+                  - link [ref=f2e370] [cursor=pointer]:
+                    - /url: /goto?url=CAESZgHrOzAVkVFPt48vmxB2Atn3Wy3bCqnLl_FDphgtqTJx_0U2Ry8aKvFmIAtg5lnmWVen326DVG566fZSFRsV6zhcGL5o81ZmRpgNVA4VFwtSJlE4FZL2i1OZVnJ79Hg5Uv7N-twxGw
+                    - heading "Idle Obelisk Miner Gameplay Part 1 - Intro Tasks YouTube Hagagames Gameplay Sep 16, 2025" [level=3] [ref=f2e371]:
+                      - generic [ref=f2e372]: Idle Obelisk Miner Gameplay Part 1 - Intro Tasks
+                      - generic [ref=f2e376]:
+                        - generic [ref=f2e377]:
+                          - text: YouTube
+                          - generic [ref=f2e378]: · Hagagames Gameplay
+                        - generic [ref=f2e379]: Sep 16, 2025
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic [aria-hidden]:
+                            - text: YouTube
+                            - generic: · Hagagames Gameplay
+                      - button "About this result" [ref=f2e383] [cursor=pointer]
+                - button "Idle Obelisk Miner Gameplay Part 1 - Intro Tasks by Hagagames Gameplay on YouTube. Play on Google. 14:48" [ref=f2e388] [cursor=pointer]:
+                  - generic [ref=f2e398]: 14:48
+              - generic [ref=f2e410]:
+                - generic [ref=f2e411]:
+                  - generic [ref=f2e412]:
+                    - link [ref=f2e414] [cursor=pointer]:
+                      - /url: /goto?url=CAESZgHrOzAVfAcE5njnnnScdiBa-G-m1Pfb_CexdFp2fJcK49vM8NBdDYeTEazVZVqBNkTFrDd938O5PcdTDPDYMnLs40Pq4J7oW1Oh5GEWoMWqrZgKE055w-VoR4oirdX32tqSm_338A
+                      - heading "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ... YouTube Kosh Sep 28, 2024" [level=3] [ref=f2e415]:
+                        - generic [ref=f2e416]: ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ...
+                        - generic [ref=f2e420]:
+                          - generic [ref=f2e421]:
+                            - text: YouTube
+                            - generic [ref=f2e422]: · Kosh
+                          - generic [ref=f2e423]: Sep 28, 2024
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic [aria-hidden]:
+                              - text: YouTube
+                              - generic: · Kosh
+                        - button "About this result" [ref=f2e427] [cursor=pointer]
+                  - button "ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) ... by Kosh on YouTube. Play on Google. 18:46" [ref=f2e432] [cursor=pointer]:
+                    - generic [ref=f2e442]: 18:46
+                - button "10 key moments in this video" [ref=f2e453] [cursor=pointer]
+              - generic [ref=f2e468]:
+                - generic [ref=f2e469]:
+                  - generic [ref=f2e470]:
+                    - link [ref=f2e472] [cursor=pointer]:
+                      - /url: /goto?url=CAESZgHrOzAV5t8bRVG7TaikuXLw8aATSzhyDfFaofb0SkgQ-D9PSRBfCjrIF7Ka5W7IagVQwTPlTE7fc7LNnxgaTgaddCH0Wf1_-a0142i8y5FFJM8bWKwnNBFHoeIpGgnbY973MJZ26g
+                      - heading "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER YouTube Kosh Sep 17, 2024" [level=3] [ref=f2e473]:
+                        - generic [ref=f2e474]: ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER
+                        - generic [ref=f2e478]:
+                          - generic [ref=f2e479]:
+                            - text: YouTube
+                            - generic [ref=f2e480]: · Kosh
+                          - generic [ref=f2e481]: Sep 17, 2024
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic [aria-hidden]:
+                              - text: YouTube
+                              - generic: · Kosh
+                        - button "About this result" [ref=f2e485] [cursor=pointer]
+                  - button "ULTIMATE BEGINNERS GUIDE // IDLE OBELISK MINER by Kosh on YouTube. Play on Google. 29:18" [ref=f2e490] [cursor=pointer]:
+                    - generic [ref=f2e500]: 29:18
+                - button "12 key moments in this video" [ref=f2e511] [cursor=pointer]
+              - generic [ref=f2e526]:
+                - generic [ref=f2e527]:
+                  - generic [ref=f2e528]:
+                    - link [ref=f2e530] [cursor=pointer]:
+                      - /url: /goto?url=CAESbAHrOzAVVW3aNyrNdQisbKV_jWH0BJQNBpE-Ju1TvuUOT6SYHSnZEry8Ht3PxgnqhxjRb84up1boPb7YG3LU07szmwsCUFIip_P_tp5Xy8j2eUtTIwU-Yk9yoDBFVWZMo__XpmZUqY9mPTkYqA
+                      - heading "Obelisk Miner GamePlay Walkthrough PART 2 PRESTIGE YouTube Tomek Games and Science May 20, 2026" [level=3] [ref=f2e531]:
+                        - generic [ref=f2e532]: Obelisk Miner GamePlay Walkthrough PART 2 PRESTIGE
+                        - generic [ref=f2e536]:
+                          - generic [ref=f2e537]:
+                            - text: YouTube
+                            - generic [ref=f2e538]: · Tomek Games and Science
+                          - generic [ref=f2e539]: May 20, 2026
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic [aria-hidden]:
+                              - text: YouTube
+                              - generic: · Tomek Games and Science
+                        - button "About this result" [ref=f2e543] [cursor=pointer]
+                  - button "Obelisk Miner GamePlay Walkthrough PART 2 PRESTIGE by Tomek Games and Science on YouTube. Play on Google. 27:09. Start time is 2 minutes. Segment duration is 2 minutes" [ref=f2e548] [cursor=pointer]:
+                    - generic [ref=f2e554]: 2m
+                - button "From 2 minutes.Prestige in Obelisk Miner by reaching level 20+, which resets your level and gold but earns you prestige points to summon artifacts." [ref=f2e569] [cursor=pointer]:
+                  - generic [ref=f2e571]: Prestige in Obelisk Miner by reaching level 20+, which resets your level and gold but earns you prestige points to summon artifacts.
+            - link "View all videos" [ref=f2e576] [cursor=pointer]:
+              - /url: /search?sca_esv=4d65981f01013b52&udm=vids&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sa=X&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8ccDKAJ6BAhFEAU
+              - separator [aria-hidden] [ref=f2e577]
+              - generic [ref=f2e578]: View all
+          - generic [ref=f2e585]:
+            - heading "Web results" [level=2] [ref=f2e586]
+            - generic [ref=f2e587]:
+              - generic [ref=f2e590]:
+                - link "Upgrades - Obelisk Miner Wiki - Fandom Fandom https://obeliskminer.fandom.com › wiki › Upgrades" [ref=f2e592] [cursor=pointer]:
+                  - /url: /goto?url=CAESaAHrOzAVQ9Mk0d51VwpS08GwRoKyfEgPnPtt482fW1a6PWbSY32I_FLbWUTmffXUZQvXcTtiVCbYYtbXsmtCPXrlDxxro58ancsieqzsqPg_-xBWZIqYhWgcN2tL2bUBDS5fCgFcTDSs
+                  - heading "Upgrades - Obelisk Miner Wiki - Fandom" [level=3] [ref=f2e593]
+                  - generic [ref=f2e599]:
+                    - generic [ref=f2e600]: Fandom
+                    - generic [ref=f2e602]: https://obeliskminer.fandom.com › wiki › Upgrades
+                - button "About this result" [ref=f2e608] [cursor=pointer]
+              - generic [ref=f2e615]:
+                - emphasis [ref=f2e616]: Upgrades can be purchased with bars and money
+                - text: . You can unlock more upgrades by leveling. Upgrades are lost when prestiging. The Base Damage amount from ...
+          - generic [ref=f2e620]:
+            - generic [ref=f2e623]:
+              - link "Upgrades - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Upgrades" [ref=f2e625] [cursor=pointer]:
+                - /url: /goto?url=CAESZQHrOzAVTh2bgKByiFvLcLygH0AEg4eZX4qUvHPo340FSroCQZ8NY_2YZeX0zjIB6TdVk6pG5sJV-ySM3B_ZwHwAA1GKb4RDs4fmwYQNy6ZCx7vepK2aVn-tYEzhLUC5NDc37sS9
+                - heading "Upgrades - Idle Obelisk Miner Wiki" [level=3] [ref=f2e626]
+                - generic [ref=f2e632]:
+                  - generic [ref=f2e633]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e635]: https://shminer.miraheze.org › wiki › Upgrades
+              - button "About this result" [ref=f2e641] [cursor=pointer]
+            - generic [ref=f2e648]:
+              - emphasis [ref=f2e649]: Upgrades can be purchased with bars and gold
+              - text: . You can unlock more upgrades by leveling up. Upgrades are lost when prestiging.
+          - generic [ref=f2e653]:
+            - generic [ref=f2e656]:
+              - 'link "Upgrading pickaxe: simple steps and requirements Facebook https://www.facebook.com › groups › posts" [ref=f2e658] [cursor=pointer]':
+                - /url: /goto?url=CAESggEB6zswFWtvMOng4h6Uu7dItjCKzxvPiSmmSn_WNb6kTOXIZjuKbuhkEnR621Imybrc9vkR0Gyr_oxFJhgomeUzuJmwk0KAWSCK_nzJGpfIb-AGOm_ZTwBQaYvfIDKXdDKe9rOMdab9f6Jbhex2pYdRm_VYoV5HeWOWPrW8h15Sdbmm
+                - 'heading "Upgrading pickaxe: simple steps and requirements" [level=3] [ref=f2e659]'
+                - generic [ref=f2e665]:
+                  - generic [ref=f2e666]: Facebook
+                  - generic [ref=f2e668]: https://www.facebook.com › groups › posts
+              - button "About this result" [ref=f2e674] [cursor=pointer]
+            - generic [ref=f2e680]:
+              - generic [ref=f2e681]: Feb 18, 2025 —
+              - generic [ref=f2e682]:
+                - text: You need a spike
+                - emphasis [ref=f2e683]: pickaxe
+                - text: to
+                - emphasis [ref=f2e684]: upgrade
+                - text: to iron
+                - emphasis [ref=f2e685]: pickaxe
+                - text: but in order to
+                - emphasis [ref=f2e686]: upgrade
+                - text: you need pyrite. ... quest to get the
+                - emphasis [ref=f2e687]: upgrade
+                - text: . So please, someone, ...
+              - link "Read more" [ref=f2e688] [cursor=pointer]:
+                - /url: /goto?url=CAESmQIB6zswFZJbBeBnMm_dOhY6Ezm_e2NVLb55lik_fkxohdtgaq4niTTlBg4z-zLPAgS3gSoe769-tBxWxTk2sPaWEj7pjjVf3TMuhJ1Om3K5Pn3xlHNvAx2rhRBJFvlu9jzKTp63LkuwZV6Wk7aEpYtd00QoG6NdQUwORDx4-VBCQdkhjaqGpx_Pqt-wk6cHFfiV3vd9n8PQ_305yLlM7--62RCl-Z27Xsn-hNDGpgcyXUgHOaByhOPZYmwd7nxbro4VxOzOpbr29lRFqhsC3lgaaYL4aY6TPRus0mq4HDqCX93x9E-1XRQG5ha5zijA1ZqQ2Jp1D0hNJwTiYP2EdlHB0jHli5p9G-PTgRrhbAKZ7VT6R9VjyGqDpA
+          - generic [ref=f2e695]:
+            - generic [ref=f2e698]:
+              - link "Obelisk Miner GamePlay Walkthrough PART 1 YouTube · Tomek Games and Science 350+ views · 5 months ago" [ref=f2e700] [cursor=pointer]:
+                - /url: /goto?url=CAESZgHrOzAVnJq3RAUZ4gu3ntfLdJMPqaKEbknl3UHPOHqSAg7aHEgrRgrl-1YorhiRKQiT2soUeRVmN1NJ2_Zuvj1wAv5Twt7y9mPRwCWRedDxLCTUiJkPZbshcBNTTsq9VQlF5Nf6mw
+                - heading "Obelisk Miner GamePlay Walkthrough PART 1" [level=3] [ref=f2e701]
+                - generic [ref=f2e707]:
+                  - generic [ref=f2e708]: YouTube · Tomek Games and Science
+                  - generic [ref=f2e710]: 350+ views · 5 months ago
+              - button "About this result" [ref=f2e716] [cursor=pointer]
+            - generic [ref=f2e721]:
+              - button "Obelisk Miner GamePlay Walkthrough PART 1 by Tomek Games and Science on YouTube. Play on Google. 21:56" [ref=f2e722] [cursor=pointer]:
+                - generic [ref=f2e723]: 21:56
+              - generic [ref=f2e737]: ADVANCED GUIDE (SKILLS, PROGRESSION, MULTIPLIERS) // IDLE OBELISK MINER. Kosh•42K views · 29:18 · Go to channel Kosh · ULTIMATE BEGINNERS ...
+            - generic [ref=f2e739]: "Missing: pickaxe ‎task"
+          - generic [ref=f2e744]:
+            - generic [ref=f2e747]:
+              - link "world 4 quests idle obelisk miner erlebnishof-moossee.ch https://erlebnishof-moossee.ch › news › articles" [ref=f2e749] [cursor=pointer]:
+                - /url: /goto?url=CAESdAHrOzAViz3X9RPFjxCfhhejz3fVJECPz2SdVf1ffC8UAgVsqrd1nuBdzn-QjprMMjSII984fBXzXaGTz4e-0I0M7Ld1PQoHTKWZw7KvZLiIWIShEuEkRw4zn7IiBOCvdw3W_CubQhWJLG2kR2lo09x4w3eS
+                - heading "world 4 quests idle obelisk miner" [level=3] [ref=f2e750]
+                - generic [ref=f2e759]:
+                  - generic [ref=f2e760]: erlebnishof-moossee.ch
+                  - generic [ref=f2e762]: https://erlebnishof-moossee.ch › news › articles
+              - button "About this result" [ref=f2e768] [cursor=pointer]
+            - generic [ref=f2e774]:
+              - generic [ref=f2e775]: Oct 31, 2025 —
+              - generic [ref=f2e776]:
+                - text: Split
+                - emphasis [ref=f2e777]: upgrade
+                - text: unlocks so that
+                - emphasis [ref=f2e778]: obelisks
+                - text: either increase max level of upgrades or that another minor
+                - emphasis [ref=f2e779]: upgrade
+                - text: is unlocked per ore tier so that ...
+              - link "Read more" [ref=f2e780] [cursor=pointer]:
+                - /url: /goto?url=CAESzgEB6zswFYgjJOW-lzJ0KbJ7X8B37GoNsb9wTc3Zr2iLDrWB4RzI8HbJvG0b2DnvLecmn95Bolg8oI1QDkGWp0cghj9cLznDwsYwZYZq0QP1-C7NWzoikdmKIMY7VjULUa-0QdjUUE6_8loZqVe82fSz7p-K3U9v65fr_JZa_PjTif9UXnAwU8cnSRwXvyGs5EDv9vZr_KMRiXyOPa-YbpIVf_BmlOESNmlN0ZxkTB7W_MEIGzoYk3DGkkkv0N27cGCItY3QnNND_EHfPheoaA
+          - generic [ref=f2e784]:
+            - generic [ref=f2e787]:
+              - link "Stats/Pickaxe - Idle Obelisk Miner Wiki Idle Obelisk Miner Wiki https://shminer.miraheze.org › wiki › Stats › Pickaxe" [ref=f2e789] [cursor=pointer]:
+                - /url: /goto?url=CAESagHrOzAVN6Vse8BLzdgud4HjSeYV_fdSXkx5VSqBVrj_1xKmy30LVxbISCUsJ7TsYppBCu4QdunHO73M3xP79b3agBsTRxKNFr0J-E_sgashGdGcOpgAfS9zl_nSTTv_mEjd_Td5jjrsnSc
+                - heading "Stats/Pickaxe - Idle Obelisk Miner Wiki" [level=3] [ref=f2e790]
+                - generic [ref=f2e796]:
+                  - generic [ref=f2e797]: Idle Obelisk Miner Wiki
+                  - generic [ref=f2e799]: https://shminer.miraheze.org › wiki › Stats › Pickaxe
+              - button "About this result" [ref=f2e805] [cursor=pointer]
+            - generic [ref=f2e811]:
+              - generic [ref=f2e812]:
+                - emphasis [ref=f2e813]: Upgrade Pickaxe
+                - text: · Runite Damage Upgrade · Amethyst Damage Upgrade · Demonite Damage Upgrade · Earth-C-137 Damage Upgrade · Blasphemite Damage Upgrade · Cranium ...
+              - link "Read more" [ref=f2e814] [cursor=pointer]:
+                - /url: /goto?url=CAESfAHrOzAVmGdhEiYicztQdMkVWtvA0mGygMWn33VO9gQpzXrKsjaX94bu9EXLNIRZQrjCqdJlV_sfzCVoaDDbN4045y4TwIBpY31ly7IMkG1eHtCSAHZ4QvrZYLLqShznDgJEwfwfQqqRs0tlTzw325V7xVbpE2D_Jp1uD00
+            - generic [ref=f2e815]: "Missing: intro ‎task"
+        - navigation [ref=f2e819]:
+          - heading "Page Navigation" [level=1] [ref=f2e820]
+          - text: "1"
+          - link "Page 2" [ref=f2e823] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=10&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAE
+            - text: "2"
+          - link "Page 3" [ref=f2e825] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=20&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAG
+            - text: "3"
+          - link "Page 4" [ref=f2e827] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=30&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAI
+            - text: "4"
+          - link "Page 5" [ref=f2e829] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=40&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAK
+            - text: "5"
+          - link "Page 6" [ref=f2e831] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=50&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAM
+            - text: "6"
+          - link "Page 7" [ref=f2e833] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=60&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAO
+            - text: "7"
+          - link "Page 8" [ref=f2e835] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=70&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAQ
+            - text: "8"
+          - link "Page 9" [ref=f2e837] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=80&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAS
+            - text: "9"
+          - link "Page 10" [ref=f2e839] [cursor=pointer]:
+            - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=90&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8tMDegQIJhAU
+            - text: "10"
+          - heading [level=2] [ref=f2e841]:
+            - link "Next" [ref=f2e842] [cursor=pointer]:
+              - /url: /search?q=idle+obelisk+miner+how+to+upgrade+pickaxe+intro+task&sca_esv=4d65981f01013b52&sxsrf=APpeQns_sUz1QB5GuILKxBoMmEFZ6W5Iyg:1790966628044&ei=ZPu_aox6_MOQ8g_-maSRDg&start=10&sa=N&sstk=AS6-VmL12mRIGhuUM-sHtBxZwM3mydNrTrXPs4knvoYZryG6rfRxb6K9TuTmBt0kHLaXxYR-vg3QTHhg_dnBMEh-GytcQWkVmkhAUQ&ved=2ahUKEwiMvKvN_puXAxX8IUQIHf4MKeIQ8NMDegQIJhAW
+        - navigation
+    - contentinfo [ref=f2e845]:
+      - heading "Footer Links" [level=1] [ref=f2e846]
+      - generic [ref=f2e850]:
+        - generic [ref=f2e854]:
+          - button "Laguna Niguel, California - From your IP address" [ref=f2e856] [cursor=pointer]:
+            - generic [ref=f2e857]: Laguna Niguel, California
+            - generic [ref=f2e859]:
+              - text: "-"
+              - generic [ref=f2e860]: From your IP address
+          - text: "-"
+          - button "Update location" [ref=f2e862] [cursor=pointer]
+        - generic [ref=f2e865]:
+          - link "Help" [ref=f2e866] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=en&fg=1
+          - link "Send feedback" [ref=f2e867] [cursor=pointer]:
+            - /url: "#"
+          - link "Privacy" [ref=f2e868] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=en&fg=1
+          - link "Terms" [ref=f2e869] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=en&fg=1

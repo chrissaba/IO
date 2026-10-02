@@ -1,0 +1,830 @@
+- generic [active] [ref=f7e1]:
+  - link "Jump to content" [ref=f7e2] [cursor=pointer]:
+    - /url: "#bodyContent"
+  - banner [ref=f7e4]:
+    - generic [ref=f7e5]:
+      - navigation "Site" [ref=f7e6]:
+        - generic "Main menu" [ref=f7e7]:
+          - button "Main menu" [ref=f7e8] [cursor=pointer]
+          - generic [ref=f7e11]: Main menu
+      - link [ref=f7e12] [cursor=pointer]:
+        - /url: /wiki/Obelisk_Miner_Wiki
+        - strong [ref=f7e14]: Idle Obelisk Miner
+    - generic [ref=f7e15]:
+      - search [ref=f7e16]:
+        - generic [ref=f7e19]:
+          - searchbox "Search Idle Obelisk Miner" [ref=f7e22]
+          - button "Search" [ref=f7e24]
+      - navigation "Personal tools" [ref=f7e25]:
+        - link "🌙" [ref=f7e27] [cursor=pointer]:
+          - /url: "#"
+        - generic [ref=f7e28]:
+          - list [ref=f7e31]:
+            - listitem [ref=f7e32]:
+              - link "English" [ref=f7e33] [cursor=pointer]:
+                - /url: "#"
+          - list [ref=f7e38]:
+            - listitem [ref=f7e39]:
+              - link "Create account" [ref=f7e40] [cursor=pointer]:
+                - /url: /wiki/Special:CreateAccount?returnto=Guides%2FHow+to+play+on+PC
+            - listitem [ref=f7e41]:
+              - link "Log in" [ref=f7e42] [cursor=pointer]:
+                - /url: /wiki/Special:UserLogin?returnto=Guides%2FHow+to+play+on+PC
+        - generic "More options" [ref=f7e43]:
+          - button "Personal tools" [ref=f7e44] [cursor=pointer]
+          - generic [ref=f7e47]: Personal tools
+  - generic [ref=f7e49]:
+    - navigation "Contents" [ref=f7e53]:
+      - generic [ref=f7e55]:
+        - generic [ref=f7e56]:
+          - heading "Contents" [level=2] [ref=f7e57]
+          - button "hide" [ref=f7e58] [cursor=pointer]
+        - list [ref=f7e59]:
+          - listitem [ref=f7e60]:
+            - link "Beginning" [ref=f7e61] [cursor=pointer]:
+              - /url: "#"
+          - listitem [ref=f7e63]:
+            - link "Installing Google Play Games" [ref=f7e64] [cursor=pointer]:
+              - /url: "#Installing_Google_Play_Games"
+            - list
+          - listitem [ref=f7e66]:
+            - link "Installing Idle Obelisk Miner" [ref=f7e67] [cursor=pointer]:
+              - /url: "#Installing_Idle_Obelisk_Miner"
+            - list
+          - listitem [ref=f7e69]:
+            - 'link "Alternative Method: BlueStacks (Apple Devices)" [ref=f7e70] [cursor=pointer]':
+              - /url: "#Alternative_Method:_BlueStacks_(Apple_Devices)"
+            - list
+          - listitem [ref=f7e72]:
+            - link "Linking Your Progress" [ref=f7e73] [cursor=pointer]:
+              - /url: "#Linking_Your_Progress"
+            - list
+          - listitem [ref=f7e75]:
+            - link "PC Advantages" [ref=f7e76] [cursor=pointer]:
+              - /url: "#PC_Advantages"
+            - list
+          - listitem [ref=f7e78]:
+            - link "Troubleshooting" [ref=f7e79] [cursor=pointer]:
+              - /url: "#Troubleshooting"
+            - button "Toggle Troubleshooting subsection" [expanded] [ref=f7e81]
+            - list [ref=f7e84]:
+              - listitem [ref=f7e85]:
+                - link "Google Play Games Does Not Install" [ref=f7e86] [cursor=pointer]:
+                  - /url: "#Google_Play_Games_Does_Not_Install"
+                - list
+              - listitem [ref=f7e88]:
+                - link "Game Progress Did Not Transfer" [ref=f7e89] [cursor=pointer]:
+                  - /url: "#Game_Progress_Did_Not_Transfer"
+                - list
+          - listitem [ref=f7e91]:
+            - link "Requirements" [ref=f7e92] [cursor=pointer]:
+              - /url: "#Requirements"
+            - list
+          - listitem [ref=f7e94]:
+            - link "Video Tutorial" [ref=f7e95] [cursor=pointer]:
+              - /url: "#Video_Tutorial"
+            - list
+          - listitem [ref=f7e97]:
+            - link "Navigation" [ref=f7e98] [cursor=pointer]:
+              - /url: "#Navigation"
+            - list
+    - generic [ref=f7e100]:
+      - main [ref=f7e101]:
+        - heading [level=1] [ref=f7e103]:
+          - generic [ref=f7e104]:
+            - text: Guides/How to play on PC
+            - button "Give feedback" [ref=f7e105] [cursor=pointer]
+        - generic [ref=f7e107]:
+          - navigation "Namespaces" [ref=f7e109]:
+            - generic [ref=f7e110]:
+              - generic:
+                - list:
+                  - listitem [ref=f7e111]:
+                    - link "Page" [ref=f7e112] [cursor=pointer]:
+                      - /url: /wiki/Guides/How_to_play_on_PC
+                  - listitem [ref=f7e114]:
+                    - link "Discussion" [ref=f7e115] [cursor=pointer]:
+                      - /url: /wiki/Talk:Guides/How_to_play_on_PC?action=edit&redlink=1
+          - generic [ref=f7e117]:
+            - navigation "Views" [ref=f7e118]:
+              - generic [ref=f7e119]:
+                - generic:
+                  - list:
+                    - listitem [ref=f7e120]:
+                      - link "Read" [ref=f7e121] [cursor=pointer]:
+                        - /url: /wiki/Guides/How_to_play_on_PC
+                    - listitem [ref=f7e123]:
+                      - link "Edit (visual)" [ref=f7e124] [cursor=pointer]:
+                        - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit
+                    - listitem [ref=f7e126]:
+                      - link "Edit (source)" [ref=f7e127] [cursor=pointer]:
+                        - /url: /wiki/Guides/How_to_play_on_PC?action=edit
+                    - listitem [ref=f7e129]:
+                      - link "View history" [ref=f7e130] [cursor=pointer]:
+                        - /url: /wiki/Guides/How_to_play_on_PC?action=history
+            - navigation "Page tools" [ref=f7e132]:
+              - generic [ref=f7e133]:
+                - button "Tools" [ref=f7e134] [cursor=pointer]
+                - generic [ref=f7e136] [cursor=pointer]: Tools
+        - navigation "Appearance" [ref=f7e139]:
+          - generic [ref=f7e142]:
+            - generic [ref=f7e143]: Appearance
+            - button "hide" [ref=f7e144] [cursor=pointer]
+        - generic "Guides/How to play on PC Give feedback" [ref=f7e145]:
+          - generic [ref=f7e149]:
+            - text: <
+            - link "Guides" [ref=f7e151] [cursor=pointer]:
+              - /url: /wiki/Guides
+          - generic [ref=f7e152]:
+            - table [ref=f7e155]:
+              - rowgroup [ref=f7e156]:
+                - row [ref=f7e157]:
+                  - cell [ref=f7e158]:
+                    - link [ref=f7e161] [cursor=pointer]:
+                      - /url: /wiki/File:Dino_Default.png
+                  - rowheader "Guides These guides are created and updated by community members. They may contain out-of-date, biased or inaccurate information." [ref=f7e163]:
+                    - text: Guides
+                    - generic [ref=f7e164]: These guides are created and updated by community members. They may contain out-of-date, biased or inaccurate information.
+            - generic [ref=f7e165]:
+              - paragraph [ref=f7e166]: This guide explains how to install and play Idle Obelisk Miner on PC using Google Play Games (Beta). An alternative method using BlueStacks is also available for players on Apple devices. Playing Idle Obelisk Miner on PC allows you to use a larger screen, better controls, and keep the game running more comfortably while farming.
+              - generic [ref=f7e167]:
+                - heading "Installing Google Play Games" [level=2] [ref=f7e168]
+                - generic [ref=f7e170]:
+                  - text: "["
+                  - link "edit" [ref=f7e171] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=1
+                  - text: "|"
+                  - link "edit source" [ref=f7e172] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=1
+                  - text: "]"
+              - list [ref=f7e173]:
+                - listitem [ref=f7e174]:
+                  - text: "Go to the official Google Play Games website:"
+                  - link "Download Google Play Games" [ref=f7e175] [cursor=pointer]:
+                    - /url: https://play.google.com/googleplaygames/?hl=en
+                  - text: .
+                - listitem [ref=f7e176]: Download and install Google Play Games (Beta).
+                - listitem [ref=f7e177]: Open the application and sign in with your Google account.
+                - listitem [ref=f7e178]: Complete the setup process and allow any required permissions.
+              - generic [ref=f7e179]:
+                - heading "Installing Idle Obelisk Miner" [level=2] [ref=f7e180]
+                - generic [ref=f7e182]:
+                  - text: "["
+                  - link "edit" [ref=f7e183] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=2
+                  - text: "|"
+                  - link "edit source" [ref=f7e184] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=2
+                  - text: "]"
+              - list [ref=f7e185]:
+                - listitem [ref=f7e186]: Open Google Play Games.
+                - listitem [ref=f7e187]: Search for Idle Obelisk Miner.
+                - listitem [ref=f7e188]: Select the game and press Install.
+                - listitem [ref=f7e189]: Wait for the installation to complete.
+                - listitem [ref=f7e190]: Launch the game from Google Play Games.
+              - generic [ref=f7e191]:
+                - 'heading "Alternative Method: BlueStacks (Apple Devices)" [level=2] [ref=f7e192]'
+                - generic [ref=f7e194]:
+                  - text: "["
+                  - link "edit" [ref=f7e195] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=3
+                  - text: "|"
+                  - link "edit source" [ref=f7e196] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=3
+                  - text: "]"
+              - paragraph [ref=f7e197]: If you are using an Apple device, Google Play Games is not available. Instead, you can use an Android emulator such as BlueStacks to play Idle Obelisk Miner.
+              - list [ref=f7e198]:
+                - listitem [ref=f7e199]: Download and install BlueStacks from the official website.
+                - listitem [ref=f7e200]: Open BlueStacks and sign in with your Google account.
+                - listitem [ref=f7e201]: Open the Google Play Store inside BlueStacks.
+                - listitem [ref=f7e202]: Search for Idle Obelisk Miner.
+                - listitem [ref=f7e203]: Install the game and launch it.
+              - paragraph [ref=f7e204]: "Note: Make sure you use the same Google account connected to your game progress if you want to access an existing save."
+              - generic [ref=f7e205]:
+                - heading "Linking Your Progress" [level=2] [ref=f7e206]
+                - generic [ref=f7e208]:
+                  - text: "["
+                  - link "edit" [ref=f7e209] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=4
+                  - text: "|"
+                  - link "edit source" [ref=f7e210] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=4
+                  - text: "]"
+              - paragraph [ref=f7e211]: Before switching devices, make sure your progress is saved.
+              - table [ref=f7e212]:
+                - rowgroup [ref=f7e213]:
+                  - row [ref=f7e214]:
+                    - columnheader "Situation" [ref=f7e215]
+                    - columnheader "Action" [ref=f7e216]
+                  - row [ref=f7e217]:
+                    - cell "Already playing on mobile" [ref=f7e218]
+                    - cell "Make sure your account is linked before installing on PC" [ref=f7e219]
+                  - row [ref=f7e220]:
+                    - cell "Starting fresh" [ref=f7e221]
+                    - cell "You can begin a new save directly on PC" [ref=f7e222]
+              - paragraph [ref=f7e223]: "Important: Use the same account on both devices to access your existing progress."
+              - generic [ref=f7e224]:
+                - heading "PC Advantages" [level=2] [ref=f7e225]
+                - generic [ref=f7e227]:
+                  - text: "["
+                  - link "edit" [ref=f7e228] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=5
+                  - text: "|"
+                  - link "edit source" [ref=f7e229] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=5
+                  - text: "]"
+              - paragraph [ref=f7e230]: "Playing on PC can make certain parts of the game easier:"
+              - list [ref=f7e231]:
+                - listitem [ref=f7e232]: Larger screen for managing upgrades and menus
+                - listitem [ref=f7e233]: Easier navigation through cards, statues, and contracts
+                - listitem [ref=f7e234]: More comfortable for long farming sessions
+                - listitem [ref=f7e235]: Better visibility when following guides
+                - listitem [ref=f7e236]: Easier multitasking while the game is running
+              - generic [ref=f7e237]:
+                - heading "Troubleshooting" [level=2] [ref=f7e238]
+                - generic [ref=f7e240]:
+                  - text: "["
+                  - link "edit" [ref=f7e241] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=6
+                  - text: "|"
+                  - link "edit source" [ref=f7e242] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=6
+                  - text: "]"
+              - generic [ref=f7e243]:
+                - heading "Google Play Games Does Not Install" [level=3] [ref=f7e244]
+                - generic [ref=f7e246]:
+                  - text: "["
+                  - link "edit" [ref=f7e247] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=7
+                  - text: "|"
+                  - link "edit source" [ref=f7e248] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=7
+                  - text: "]"
+              - paragraph [ref=f7e249]: "Try:"
+              - list [ref=f7e250]:
+                - listitem [ref=f7e251]: Restarting your PC
+                - listitem [ref=f7e252]: Checking that virtualization is enabled
+                - listitem [ref=f7e253]: Updating Windows
+                - listitem [ref=f7e254]: Ensuring enough storage space is available
+              - generic [ref=f7e255]:
+                - heading "Game Progress Did Not Transfer" [level=3] [ref=f7e256]
+                - generic [ref=f7e258]:
+                  - text: "["
+                  - link "edit" [ref=f7e259] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=8
+                  - text: "|"
+                  - link "edit source" [ref=f7e260] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=8
+                  - text: "]"
+              - paragraph [ref=f7e261]: "Check:"
+              - list [ref=f7e262]:
+                - listitem [ref=f7e263]: You are signed into the same Google account
+                - listitem [ref=f7e264]: Your original save was properly linked
+                - listitem [ref=f7e265]: The game has finished syncing
+              - generic [ref=f7e266]:
+                - heading "Requirements" [level=2] [ref=f7e267]
+                - generic [ref=f7e269]:
+                  - text: "["
+                  - link "edit" [ref=f7e270] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=9
+                  - text: "|"
+                  - link "edit source" [ref=f7e271] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=9
+                  - text: "]"
+              - table [ref=f7e272]:
+                - rowgroup [ref=f7e273]:
+                  - row [ref=f7e274]:
+                    - columnheader "#" [ref=f7e275]
+                    - columnheader "Requirement" [ref=f7e276]
+                  - row [ref=f7e277]:
+                    - cell "1" [ref=f7e278]
+                    - cell "Windows 10 (v2004 or newer) or Windows 11" [ref=f7e279]
+                  - row [ref=f7e280]:
+                    - cell "2" [ref=f7e281]
+                    - cell "SSD with at least 10 GB of available space" [ref=f7e282]
+                  - row [ref=f7e283]:
+                    - cell "3" [ref=f7e284]
+                    - cell "8 GB RAM recommended" [ref=f7e285]
+                  - row [ref=f7e286]:
+                    - cell "4" [ref=f7e287]
+                    - cell "Hardware virtualization enabled in BIOS (ON by default)" [ref=f7e288]
+                  - row [ref=f7e289]:
+                    - cell "5" [ref=f7e290]
+                    - cell "A Google account" [ref=f7e291]
+              - generic [ref=f7e292]:
+                - heading "Video Tutorial" [level=2] [ref=f7e293]
+                - generic [ref=f7e295]:
+                  - text: "["
+                  - link "edit" [ref=f7e296] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=10
+                  - text: "|"
+                  - link "edit source" [ref=f7e297] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=10
+                  - text: "]"
+              - figure [ref=f7e298]:
+                - button "Load video YouTube" [ref=f7e302] [cursor=pointer]:
+                  - generic [ref=f7e303]: Load video
+                  - generic [ref=f7e304]: YouTube
+              - generic [ref=f7e306]:
+                - heading "Navigation" [level=2] [ref=f7e307]
+                - generic [ref=f7e309]:
+                  - text: "["
+                  - link "edit" [ref=f7e310] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit&section=11
+                  - text: "|"
+                  - link "edit source" [ref=f7e311] [cursor=pointer]:
+                    - /url: /wiki/Guides/How_to_play_on_PC?action=edit&section=11
+                  - text: "]"
+              - table [ref=f7e312]:
+                - caption [ref=f7e313]:
+                  - link "Guides" [ref=f7e314] [cursor=pointer]:
+                    - /url: /wiki/Guides
+                  - button "[Collapse]" [expanded] [ref=f7e315] [cursor=pointer]
+                - rowgroup [ref=f7e316]:
+                  - row [ref=f7e317]:
+                    - rowheader "General" [ref=f7e318]
+                    - cell "• Archaeology • Cards • Cherry Bomb • DerSucher Noob Arch • Events • Gem Spending • Grainbow Strategy • How to play on PC • Platinize Statues • Progression • Working With ExportStats" [ref=f7e319]:
+                      - generic [ref=f7e320]:
+                        - text: •
+                        - link "Archaeology" [ref=f7e321] [cursor=pointer]:
+                          - /url: /wiki/Guides/Archaeology_Guide
+                      - generic [ref=f7e322]:
+                        - text: •
+                        - link "Cards" [ref=f7e323] [cursor=pointer]:
+                          - /url: /wiki/Guides/Cards
+                      - generic [ref=f7e324]:
+                        - text: •
+                        - link "Cherry Bomb" [ref=f7e325] [cursor=pointer]:
+                          - /url: /wiki/Guides/Cherry_Bomb_Guide
+                      - generic [ref=f7e326]:
+                        - text: •
+                        - link "DerSucher Noob Arch" [ref=f7e327] [cursor=pointer]:
+                          - /url: /wiki/Guides/DerSucher_Noob_Arch_Guide
+                      - generic [ref=f7e328]:
+                        - text: •
+                        - link "Events" [ref=f7e329] [cursor=pointer]:
+                          - /url: /wiki/Guides/Events_Guide
+                      - generic [ref=f7e330]:
+                        - text: •
+                        - link "Gem Spending" [ref=f7e331] [cursor=pointer]:
+                          - /url: /wiki/Guides/Gem_Spending_Guide
+                      - generic [ref=f7e332]:
+                        - text: •
+                        - link "Grainbow Strategy" [ref=f7e333] [cursor=pointer]:
+                          - /url: /wiki/Guides/Grainbow_Strategy
+                      - generic [ref=f7e334]: • How to play on PC
+                      - generic [ref=f7e335]:
+                        - text: •
+                        - link "Platinize Statues" [ref=f7e336] [cursor=pointer]:
+                          - /url: /wiki/Guides/Platinize_Statues
+                      - generic [ref=f7e337]:
+                        - text: •
+                        - link "Progression" [ref=f7e338] [cursor=pointer]:
+                          - /url: /wiki/Guides/Progression_Guide
+                      - generic [ref=f7e339]:
+                        - text: •
+                        - link "Working With ExportStats" [ref=f7e340] [cursor=pointer]:
+                          - /url: /wiki/Guides/Working_With_ExportStats
+              - table [ref=f7e341]:
+                - caption [ref=f7e342]:
+                  - link "Menu" [ref=f7e343] [cursor=pointer]:
+                    - /url: /wiki/Obelisk_Miner_Wiki#Content
+                  - button "[Collapse]" [expanded] [ref=f7e344] [cursor=pointer]
+                - rowgroup [ref=f7e345]:
+                  - row [ref=f7e346]:
+                    - rowheader "Permanent" [ref=f7e347]
+                    - cell [ref=f7e348]:
+                      - generic [ref=f7e349]:
+                        - text: •
+                        - link "Prestige" [ref=f7e351] [cursor=pointer]:
+                          - /url: /wiki/Prestige
+                        - link "Prestige" [ref=f7e353] [cursor=pointer]:
+                          - /url: /wiki/Prestige
+                      - generic [ref=f7e354]:
+                        - text: •
+                        - link "Drones" [ref=f7e356] [cursor=pointer]:
+                          - /url: /wiki/Drones
+                        - link "Drones" [ref=f7e358] [cursor=pointer]:
+                          - /url: /wiki/Drones
+                      - generic [ref=f7e359]:
+                        - text: •
+                        - link "Chests" [ref=f7e361] [cursor=pointer]:
+                          - /url: /wiki/Chests
+                        - link "Chests" [ref=f7e363] [cursor=pointer]:
+                          - /url: /wiki/Chests
+                      - generic [ref=f7e364]:
+                        - text: •
+                        - link "Chests" [ref=f7e366] [cursor=pointer]:
+                          - /url: /wiki/Chests#Relic_Chests
+                        - link "Relics" [ref=f7e368] [cursor=pointer]:
+                          - /url: /wiki/Chests#Relic_Chests
+                      - generic [ref=f7e369]:
+                        - text: •
+                        - link "Store" [ref=f7e371] [cursor=pointer]:
+                          - /url: /wiki/Store
+                        - link "Store" [ref=f7e373] [cursor=pointer]:
+                          - /url: /wiki/Store
+                      - generic [ref=f7e374]:
+                        - text: •
+                        - link "Workshop" [ref=f7e376] [cursor=pointer]:
+                          - /url: /wiki/Workshop
+                        - link "Workshop" [ref=f7e378] [cursor=pointer]:
+                          - /url: /wiki/Workshop
+                      - generic [ref=f7e379]:
+                        - text: •
+                        - link "Skill-Tree" [ref=f7e381] [cursor=pointer]:
+                          - /url: /wiki/Skill-Tree
+                        - link "Skill-Tree" [ref=f7e383] [cursor=pointer]:
+                          - /url: /wiki/Skill-Tree
+                      - generic [ref=f7e384]:
+                        - text: •
+                        - link "Challenges" [ref=f7e386] [cursor=pointer]:
+                          - /url: /wiki/Challenges
+                        - link "Challenges" [ref=f7e388] [cursor=pointer]:
+                          - /url: /wiki/Challenges
+                      - generic [ref=f7e389]:
+                        - text: •
+                        - link "Cards" [ref=f7e391] [cursor=pointer]:
+                          - /url: /wiki/Cards
+                        - link "Cards" [ref=f7e393] [cursor=pointer]:
+                          - /url: /wiki/Cards
+                      - generic [ref=f7e394]:
+                        - text: •
+                        - link "Pets" [ref=f7e396] [cursor=pointer]:
+                          - /url: /wiki/Pets
+                        - link "Pets" [ref=f7e398] [cursor=pointer]:
+                          - /url: /wiki/Pets
+                      - generic [ref=f7e399]:
+                        - text: •
+                        - link "Construct" [ref=f7e401] [cursor=pointer]:
+                          - /url: /wiki/Construct
+                        - link "Construct" [ref=f7e403] [cursor=pointer]:
+                          - /url: /wiki/Construct
+                      - generic [ref=f7e404]:
+                        - text: •
+                        - link "Stargazing" [ref=f7e406] [cursor=pointer]:
+                          - /url: /wiki/Stargazing
+                        - link "Stargazing" [ref=f7e408] [cursor=pointer]:
+                          - /url: /wiki/Stargazing
+                      - generic [ref=f7e409]:
+                        - text: •
+                        - link "Archaeology" [ref=f7e411] [cursor=pointer]:
+                          - /url: /wiki/Archaeology
+                        - link "Archaeology" [ref=f7e413] [cursor=pointer]:
+                          - /url: /wiki/Archaeology
+                      - generic [ref=f7e414]:
+                        - text: •
+                        - link "Fishing" [ref=f7e416] [cursor=pointer]:
+                          - /url: /wiki/Fishing
+                        - link "Fishing" [ref=f7e418] [cursor=pointer]:
+                          - /url: /wiki/Fishing
+                      - generic [ref=f7e419]:
+                        - text: •
+                        - link "Arcanist" [ref=f7e421] [cursor=pointer]:
+                          - /url: /wiki/Arcanist
+                        - link "Arcanist" [ref=f7e423] [cursor=pointer]:
+                          - /url: /wiki/Arcanist
+                  - row [ref=f7e424]:
+                    - rowheader "This Prestige" [ref=f7e425]
+                    - cell [ref=f7e426]:
+                      - generic [ref=f7e427]:
+                        - text: •
+                        - link "Craft" [ref=f7e429] [cursor=pointer]:
+                          - /url: /wiki/Craft
+                        - link "Craft" [ref=f7e431] [cursor=pointer]:
+                          - /url: /wiki/Craft
+                      - generic [ref=f7e432]:
+                        - text: •
+                        - link "Upgrades" [ref=f7e434] [cursor=pointer]:
+                          - /url: /wiki/Upgrades
+                        - link "Upgrades" [ref=f7e436] [cursor=pointer]:
+                          - /url: /wiki/Upgrades
+                      - generic [ref=f7e437]:
+                        - text: •
+                        - link "Sell" [ref=f7e439] [cursor=pointer]:
+                          - /url: /wiki/Sell
+                        - link "Sell" [ref=f7e441] [cursor=pointer]:
+                          - /url: /wiki/Sell
+                      - generic [ref=f7e442]:
+                        - text: •
+                        - link "Contracts" [ref=f7e444] [cursor=pointer]:
+                          - /url: /wiki/Contracts
+                        - link "Contracts" [ref=f7e446] [cursor=pointer]:
+                          - /url: /wiki/Contracts
+                  - row [ref=f7e447]:
+                    - rowheader "Miscellaneous" [ref=f7e448]
+                    - cell [ref=f7e449]:
+                      - generic [ref=f7e450]:
+                        - text: •
+                        - link "Stats" [ref=f7e452] [cursor=pointer]:
+                          - /url: /wiki/Stats
+                        - link "Stats" [ref=f7e454] [cursor=pointer]:
+                          - /url: /wiki/Stats
+                      - generic [ref=f7e455]:
+                        - text: •
+                        - link "Cloud" [ref=f7e457] [cursor=pointer]:
+                          - /url: /wiki/Cloud
+                        - link "Cloud" [ref=f7e459] [cursor=pointer]:
+                          - /url: /wiki/Cloud
+                  - row [ref=f7e460]:
+                    - rowheader "Others" [ref=f7e461]
+                    - cell [ref=f7e462]:
+                      - generic [ref=f7e463]:
+                        - text: •
+                        - link "Obelisk" [ref=f7e465] [cursor=pointer]:
+                          - /url: /wiki/Obelisk
+                        - link "Obelisk" [ref=f7e467] [cursor=pointer]:
+                          - /url: /wiki/Obelisk
+                      - generic [ref=f7e468]:
+                        - text: •
+                        - link "Events" [ref=f7e470] [cursor=pointer]:
+                          - /url: /wiki/Events
+                        - link "Events" [ref=f7e472] [cursor=pointer]:
+                          - /url: /wiki/Events
+                      - generic [ref=f7e473]:
+                        - text: •
+                        - generic [ref=f7e474]:
+                          - generic [ref=f7e475]:
+                            - link "Codes" [ref=f7e477] [cursor=pointer]:
+                              - /url: /wiki/Codes
+                            - generic:
+                              - generic:
+                                - link:
+                                  - /url: /wiki/File:Gift.png
+                          - link "Codes" [ref=f7e480] [cursor=pointer]:
+                            - /url: /wiki/Codes
+                      - generic [ref=f7e481]:
+                        - text: •
+                        - generic [ref=f7e482]:
+                          - generic [ref=f7e483]:
+                            - link "Founder" [ref=f7e485] [cursor=pointer]:
+                              - /url: /wiki/Founder
+                            - generic:
+                              - generic:
+                                - link:
+                                  - /url: /wiki/File:FounderIcon.png
+                          - link "Founder" [ref=f7e488] [cursor=pointer]:
+                            - /url: /wiki/Founder
+                      - generic [ref=f7e489]:
+                        - text: •
+                        - generic [ref=f7e490]:
+                          - generic [ref=f7e491]:
+                            - link "Floors" [ref=f7e493] [cursor=pointer]:
+                              - /url: /wiki/Floors
+                            - generic:
+                              - figure:
+                                - link "Floors":
+                                  - /url: /wiki/Floors
+                          - link "Floors" [ref=f7e496] [cursor=pointer]:
+                            - /url: /wiki/Floors
+                      - generic [ref=f7e497]:
+                        - text: •
+                        - generic [ref=f7e498]:
+                          - generic [ref=f7e499]:
+                            - link "Ores" [ref=f7e501] [cursor=pointer]:
+                              - /url: /wiki/Ores
+                            - generic:
+                              - figure:
+                                - link "Ores":
+                                  - /url: /wiki/Ores
+                          - link "Ores" [ref=f7e504] [cursor=pointer]:
+                            - /url: /wiki/Ores
+                      - generic [ref=f7e505]:
+                        - text: •
+                        - generic [ref=f7e506]:
+                          - generic [ref=f7e507]:
+                            - link "Veins" [ref=f7e509] [cursor=pointer]:
+                              - /url: /wiki/Veins
+                            - generic:
+                              - figure:
+                                - link "Veins":
+                                  - /url: /wiki/Veins
+                          - link "Veins" [ref=f7e512] [cursor=pointer]:
+                            - /url: /wiki/Veins
+                      - generic [ref=f7e513]:
+                        - text: •
+                        - generic [ref=f7e514]:
+                          - generic [ref=f7e515]:
+                            - link "Items" [ref=f7e517] [cursor=pointer]:
+                              - /url: /wiki/Items
+                            - generic:
+                              - figure:
+                                - link "Items":
+                                  - /url: /wiki/Items
+                          - link "Items" [ref=f7e520] [cursor=pointer]:
+                            - /url: /wiki/Items
+                      - generic [ref=f7e521]:
+                        - text: •
+                        - generic [ref=f7e522]:
+                          - generic [ref=f7e523]:
+                            - link "Skins" [ref=f7e525] [cursor=pointer]:
+                              - /url: /wiki/Skins
+                            - generic:
+                              - figure:
+                                - link "Skins":
+                                  - /url: /wiki/Skins
+                          - link "Skins" [ref=f7e528] [cursor=pointer]:
+                            - /url: /wiki/Skins
+                      - generic [ref=f7e529]:
+                        - text: •
+                        - generic [ref=f7e530]:
+                          - generic [ref=f7e531]:
+                            - link "Stickers" [ref=f7e533] [cursor=pointer]:
+                              - /url: /wiki/Stickers
+                            - generic:
+                              - figure:
+                                - link "Stickers":
+                                  - /url: /wiki/Stickers
+                          - link "Stickers" [ref=f7e536] [cursor=pointer]:
+                            - /url: /wiki/Stickers
+                      - generic [ref=f7e537]:
+                        - text: •
+                        - generic [ref=f7e538]:
+                          - generic [ref=f7e539]:
+                            - link "Lootbugs" [ref=f7e541] [cursor=pointer]:
+                              - /url: /wiki/Lootbugs
+                            - generic:
+                              - figure:
+                                - link "Lootbugs":
+                                  - /url: /wiki/Lootbugs
+                          - link "Lootbugs" [ref=f7e544] [cursor=pointer]:
+                            - /url: /wiki/Lootbugs
+                      - generic [ref=f7e545]:
+                        - text: •
+                        - generic [ref=f7e546]:
+                          - generic [ref=f7e547]:
+                            - link "Lootfrogs" [ref=f7e549] [cursor=pointer]:
+                              - /url: /wiki/Lootfrogs
+                            - generic:
+                              - figure:
+                                - link "Lootfrogs":
+                                  - /url: /wiki/Lootfrogs
+                          - link "Lootfrogs" [ref=f7e552] [cursor=pointer]:
+                            - /url: /wiki/Lootfrogs
+                      - generic [ref=f7e553]:
+                        - text: •
+                        - generic [ref=f7e554]:
+                          - generic [ref=f7e555]:
+                            - link "Bombs" [ref=f7e557] [cursor=pointer]:
+                              - /url: /wiki/Bombs
+                            - generic:
+                              - figure:
+                                - link "Bombs":
+                                  - /url: /wiki/Bombs
+                          - link "Bombs" [ref=f7e560] [cursor=pointer]:
+                            - /url: /wiki/Bombs
+                      - generic [ref=f7e561]:
+                        - text: •
+                        - generic [ref=f7e562]:
+                          - generic [ref=f7e563]:
+                            - link "Offline" [ref=f7e565] [cursor=pointer]:
+                              - /url: /wiki/Offline
+                            - generic: 
+                          - link "Offline" [ref=f7e568] [cursor=pointer]:
+                            - /url: /wiki/Offline
+                      - generic [ref=f7e569]:
+                        - text: •
+                        - generic [ref=f7e570]:
+                          - generic [ref=f7e571]:
+                            - link "Pins" [ref=f7e573] [cursor=pointer]:
+                              - /url: /wiki/Pins
+                            - generic: 
+                          - link "Pins" [ref=f7e576] [cursor=pointer]:
+                            - /url: /wiki/Pins
+                      - generic [ref=f7e577]:
+                        - text: •
+                        - generic [ref=f7e578]:
+                          - generic [ref=f7e579]:
+                            - link "Calculators" [ref=f7e581] [cursor=pointer]:
+                              - /url: /wiki/Calculators
+                            - generic: 
+                          - link "Calculators" [ref=f7e584] [cursor=pointer]:
+                            - /url: /wiki/Calculators
+                      - generic [ref=f7e585]:
+                        - text: •
+                        - generic [ref=f7e586]:
+                          - generic [ref=f7e587]:
+                            - link "Guides" [ref=f7e589] [cursor=pointer]:
+                              - /url: /wiki/Guides
+                            - generic: 
+                          - link "Guides" [ref=f7e592] [cursor=pointer]:
+                            - /url: /wiki/Guides
+                      - generic [ref=f7e593]:
+                        - text: •
+                        - generic [ref=f7e594]:
+                          - generic [ref=f7e595]:
+                            - link "Obelisk:FAQ" [ref=f7e597] [cursor=pointer]:
+                              - /url: /wiki/Obelisk:FAQ
+                            - generic: 
+                          - link "FAQ" [ref=f7e600] [cursor=pointer]:
+                            - /url: /wiki/Obelisk:FAQ
+                  - row [ref=f7e601]:
+                    - rowheader "Wiki" [ref=f7e602]
+                    - cell [ref=f7e603]:
+                      - generic [ref=f7e604]:
+                        - text: •
+                        - generic [ref=f7e605]:
+                          - generic [ref=f7e606]:
+                            - link "Obelisk:Contact" [ref=f7e608] [cursor=pointer]:
+                              - /url: /wiki/Obelisk:Contact
+                            - generic: 
+                          - link "Contact Us" [ref=f7e611] [cursor=pointer]:
+                            - /url: /wiki/Obelisk:Contact
+                      - generic [ref=f7e612]:
+                        - text: •
+                        - generic [ref=f7e613]:
+                          - generic [ref=f7e614]:
+                            - link "External Resources" [ref=f7e616] [cursor=pointer]:
+                              - /url: /wiki/External_Resources
+                            - generic: 
+                          - link "External Resources" [ref=f7e619] [cursor=pointer]:
+                            - /url: /wiki/External_Resources
+          - generic [ref=f7e621]:
+            - link "Categories" [ref=f7e622] [cursor=pointer]:
+              - /url: /wiki/Special:Categories
+            - text: ":"
+            - list [ref=f7e623]:
+              - listitem [ref=f7e624]:
+                - link "Pages using DynamicPageList4 parser function" [ref=f7e625] [cursor=pointer]:
+                  - /url: /wiki/Category:Pages_using_DynamicPageList4_parser_function
+              - listitem [ref=f7e626]:
+                - link "Pages using DynamicPageList4" [ref=f7e627] [cursor=pointer]:
+                  - /url: /wiki/Category:Pages_using_DynamicPageList4
+              - listitem [ref=f7e628]:
+                - link "Guides" [ref=f7e629] [cursor=pointer]:
+                  - /url: /wiki/Category:Guides
+      - generic [ref=f7e630]:
+        - generic [ref=f7e631]: Cookies help us deliver our services. By using our services, you agree to our use of cookies.
+        - generic [ref=f7e634]:
+          - button "More information" [ref=f7e636] [cursor=pointer]
+          - button "OK" [ref=f7e638] [cursor=pointer]
+    - contentinfo [ref=f7e640]:
+      - list [ref=f7e641]:
+        - listitem [ref=f7e642]: This page was last edited on 14 July 2026, at 10:29.
+        - listitem [ref=f7e643]: Content is available under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) unless otherwise noted.
+      - list:
+        - listitem [ref=f7e644]:
+          - link "Privacy policy" [ref=f7e645] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Privacy_Policy
+        - listitem [ref=f7e646]:
+          - link "About Idle Obelisk Miner" [ref=f7e647] [cursor=pointer]:
+            - /url: /wiki/Project:About
+        - listitem [ref=f7e648]:
+          - link "Disclaimers" [ref=f7e649] [cursor=pointer]:
+            - /url: /wiki/Project:General_disclaimer
+        - listitem [ref=f7e650]:
+          - link "Terms of Use" [ref=f7e651] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Terms_of_Use
+        - listitem [ref=f7e652]:
+          - link "Donate to Miraheze" [ref=f7e653] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Donate
+      - list [ref=f7e654]:
+        - listitem [ref=f7e655]:
+          - link [ref=f7e656] [cursor=pointer]:
+            - /url: https://meta.miraheze.org/wiki/Special:MyLanguage/Miraheze_Meta
+            - img "Hosted by Miraheze" [ref=f7e657]
+        - listitem [ref=f7e658]:
+          - link [ref=f7e659] [cursor=pointer]:
+            - /url: https://creativecommons.org/licenses/by-nc-sa/4.0/
+            - img "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)" [ref=f7e660]
+        - listitem [ref=f7e661]:
+          - link [ref=f7e662] [cursor=pointer]:
+            - /url: https://www.mediawiki.org/
+            - img "Powered by MediaWiki" [ref=f7e664]
+  - generic [ref=f7e665]:
+    - list
+  - banner [ref=f7e668]:
+    - generic [ref=f7e669]:
+      - navigation "Site" [ref=f7e670]:
+        - generic "Main menu" [ref=f7e671]:
+          - button "Main menu" [ref=f7e672] [cursor=pointer]
+          - generic [ref=f7e675]: Main menu
+      - link [ref=f7e676] [cursor=pointer]:
+        - /url: /wiki/Obelisk_Miner_Wiki
+        - strong [ref=f7e678]: Idle Obelisk Miner
+    - generic [ref=f7e679]:
+      - search [ref=f7e680]:
+        - generic [ref=f7e683]:
+          - searchbox "Search Idle Obelisk Miner" [ref=f7e686]
+          - button "Search" [ref=f7e688]
+      - navigation "Personal tools" [ref=f7e689]:
+        - button " Scroll to top" [ref=f7e690]:
+          - generic [ref=f7e691]: 
+          - generic [ref=f7e692]: Scroll to top
+        - link "Discussion" [ref=f7e693] [cursor=pointer]:
+          - /url: /wiki/Talk:Guides/How_to_play_on_PC?action=edit&redlink=1
+        - link "Edit (visual)" [ref=f7e696] [cursor=pointer]:
+          - /url: /wiki/Guides/How_to_play_on_PC?veaction=edit
+        - link "Edit (source)" [ref=f7e699] [cursor=pointer]:
+          - /url: /wiki/Guides/How_to_play_on_PC?action=edit
+        - link "View history" [ref=f7e702] [cursor=pointer]:
+          - /url: /wiki/Guides/How_to_play_on_PC?action=history
+        - link "Alerts" [ref=f7e705] [cursor=pointer]:
+          - /url: undefined
+        - list [ref=f7e711]:
+          - listitem [ref=f7e712]:
+            - link "Create account" [ref=f7e713] [cursor=pointer]:
+              - /url: /wiki/Special:CreateAccount?returnto=Guides%2FHow+to+play+on+PC
+          - listitem [ref=f7e714]:
+            - link "Log in" [ref=f7e715] [cursor=pointer]:
+              - /url: /wiki/Special:UserLogin?returnto=Guides%2FHow+to+play+on+PC

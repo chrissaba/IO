@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 from contextlib import AsyncExitStack
 from pathlib import Path
 
@@ -732,6 +733,54 @@ async def search_results(session) -> str:
             + "\n".join(out))
 
 
+RESEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "research",
+        "description": ("Look something up on the web without leaving the app you're using: searches Google in a hidden browser, reads "
+                        "the top results and returns short practical notes (for example how a game mechanic works or what to do next)."),
+        "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "What you want to know, as a search query"}},
+                       "required": ["question"]},
+    },
+}
+RESEARCH_SYSTEM = """You turn web search results and pages into practical notes for an assistant that is doing a task on a PC.
+Answer the question for that task in at most 150 words: concrete steps, the names of buttons, menus and items, what to
+do first and what to avoid. Only use what the sources say. Output only the notes."""
+
+
+class Researcher:
+    """Google in a headless browser of its own, so looking things up never steals focus from the app being driven."""
+
+    def __init__(self, stack: AsyncExitStack) -> None:
+        self.stack, self.session = stack, None
+
+    async def _session(self):
+        if self.session is None:
+            params = StdioServerParameters(command="node", args=[str(BROWSER_CLI), "--headless", "--browser", "msedge", "--user-data-dir",
+                                                                 str(HERE / "data" / "research-profile"), "--codegen", "none", "--image-responses", "omit"])
+            r, w = await self.stack.enter_async_context(stdio_client(params, errlog=sys.stderr))
+            self.session = await self.stack.enter_async_context(ClientSession(r, w))
+            await self.session.initialize()
+        return self.session
+
+    async def ask(self, question: str, task: str) -> str:
+        s = await self._session()
+        await s.call_tool("browser_navigate", {"url": "https://www.google.com/search?q=" + urllib.parse.quote_plus(question)})
+        rows = _result_rows(text_of(await s.call_tool("browser_evaluate", {"function": RESULTS_JS})))
+        if not rows:
+            return "error: the search found nothing"
+        sources = ["Search results:\n" + "\n".join(f"- {t}: {snip}" for t, _, snip in rows[:6])]
+        for title, url, _ in rows[:2]:  # the top two pages, read as text
+            try:
+                await s.call_tool("browser_navigate", {"url": url})
+                text = page_text(text_of(await s.call_tool("browser_evaluate", {"function": "() => document.body.innerText"})))
+                sources.append(f"Page '{title}':\n{find_in_text(text, question, budget=3500)}")
+            except Exception as e:
+                log("warning", text=f"research couldn't read {url[:80]}: {e}")
+        notes = await asyncio.to_thread(local_chat, RESEARCH_SYSTEM, f"Task: {task}\nQuestion: {question}\n\n" + "\n\n".join(sources)[:12000], 450, False)
+        return notes or "error: couldn't make notes from the results"
+
+
 async def meanings_hint(session, page: str, task: str) -> str:
     """On a page that lists different meanings of a word, show the links that fit the task, so the agent opens the right one."""
     if not DISAMBIGUATION.search(page[:6000]):
@@ -959,14 +1008,16 @@ LOOP_REQUEST = re.compile(r"^\s*/loop\b|\buntil i (tell (you|it|io) to |say (to 
 LOOP_COMPACT_AT = 8000
 # a loop on one window gets just the tools for acting in it: a smaller prompt (the 16K-context models need the room)
 # and no two-step find-then-click habit
-LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "done"}
+LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
 LOOP_KEEP_RECENT = 6
-LOOP_REPEAT_LIMIT = 25  # the same call this many times in a row is a rut, even in a game
+LOOP_REPEAT_LIMIT = 25
+LOOP_RESEARCH_EVERY = 20  # steps without research before a loop looks up whatever it's working on now  # the same call this many times in a row is a rut, even in a game
 LOOP_NOTE = """LOOP MODE (the user approved it): this goal has no end. Keep working toward it, action after action, until the
 user presses Stop. You are never finished, so never stop to ask the user anything: decide for yourself.
 - Things change while you work: look again (look_at_screen / find_on_screen) before acting on old information.
 - Act with click_on and hold_on (they find and act in one step). Never guess coordinates.
 - Use wait when something needs time (a timer, an animation, resources building up), with the seconds you think it needs.
+- Stuck, or don't know how something works? Call research with a question (it reads guides without leaving the app).
 - Calling done only records a short progress note (what you did, what changed, what you'll do next); then you carry on.
 - If something isn't working, try a different approach instead of repeating it.
 - Older steps get folded into a progress summary to save space; the goal above always stays."""
@@ -976,9 +1027,9 @@ def loop_goal(task: str) -> str:
     return re.sub(r"^\s*/loop\b\s*", "", task).strip() or task
 
 
-def local_chat(system: str, user: str, max_tokens: int = 300) -> str:
+def local_chat(system: str, user: str, max_tokens: int = 300, think: bool = True) -> str:
     client = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=1, timeout=90)
-    reply = client.chat.completions.create(model=BOSS_MODEL, temperature=0.1, max_tokens=max_tokens,
+    reply = client.chat.completions.create(model=BOSS_MODEL, temperature=0.1, max_tokens=max_tokens, extra_body=None if think else NO_THINKING,
                                            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
@@ -1241,6 +1292,31 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 if isinstance(messages[head - 1]["content"], str):
                     messages[head - 1]["content"] += prompt_note
             log("loop", goal=task, window=focus)
+            tools.append(RESEARCH_TOOL)
+            researcher = Researcher(stack)
+            guide: list[str] = []
+
+            def pin_guide() -> None:
+                """Keeps the latest research next to the goal, where compaction never reaches."""
+                base = messages[head - 1]
+                if isinstance(base["content"], str):
+                    base["content"] = base["content"].split("\n\nWhat you learned from research:")[0] + \
+                        "\n\nWhat you learned from research:\n" + "\n---\n".join(guide[-3:])
+
+            # research mode first: learn how the thing works before acting on it
+            try:
+                t0 = time.time()
+                q = await asyncio.to_thread(local_chat, ("Write one Google search query (under 10 words) that finds a beginner guide for this goal. Name the game or app "
+                                             "itself, not the program or emulator it runs in. Output only the query."),
+                                            task, 40, False)
+                brief = await researcher.ask(q.strip().strip('"') or task, task)
+                if not brief.startswith("error"):
+                    guide.append(brief)
+                    pin_guide()
+                log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
+            except Exception as e:
+                log("warning", text=f"couldn't research the goal first: {e}"[:300])
+        last_research = 0
 
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
@@ -1253,6 +1329,23 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         found_points: list[tuple[int, int]] = []  # recent find_on_screen answers: loop clicks must come from one
 
         for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
+            if loop and step - last_research >= LOOP_RESEARCH_EVERY and last_info:
+                # research mode again: look up whatever the latest look says it's facing, so it doesn't circle
+                last_research = step
+                try:
+                    t0 = time.time()
+                    q = await asyncio.to_thread(local_chat, "An assistant is working on the goal below and has seen the screen described below. Write "
+                                                "one Google search query (under 12 words) that would explain how to make progress on what the screen "
+                                                "shows now (name the game or app itself). Output only the query.",
+                                                f"Goal: {task}\nScreen: {last_info[:800]}", 40, False)
+                    brief = await researcher.ask(q.strip().strip('"'), task)
+                    if not brief.startswith("error"):
+                        guide.append(f"({q.strip()}) {brief}")
+                        pin_guide()
+                        messages.append({"role": "user", "content": f"Research on what you're facing now ({q.strip()}):\n{brief}\nUse it."})
+                    log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
+                except Exception as e:
+                    log("warning", text=f"couldn't research: {e}"[:300])
             if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
                 stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
             else:
@@ -1469,7 +1562,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = await asyncio.to_thread(hold_mouse, pt[0], pt[1], args.get("seconds", 2))
                         if same_spot >= 2:
                             result += (" Note: this is the same spot your last searches found. If acting on it didn't do what you wanted, "
-                                       "it isn't the thing you're after: look at the screen and try something else.")
+                                       "it isn't the thing you're after: look at the screen and try something else, or research how this part works.")
                 elif name == "look_at_screen":
                     result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
                 elif name == "browser_read" and not browser_tab_open:
@@ -1494,6 +1587,15 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "research" and loop:
+                    last_research = step
+                    try:
+                        result = await researcher.ask(str(args.get("question") or task), task)
+                        if not result.startswith("error"):
+                            guide.append(f"({args.get('question')}) {result}")
+                            pin_guide()
+                    except Exception as e:
+                        result = f"error: research failed: {e}"
                 elif name == "wait":
                     secs = max(0.5, min(600.0, float(args.get("seconds") or 1)))
                     await asyncio.sleep(secs)  # cancellable: Stop ends it at once

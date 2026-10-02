@@ -1,0 +1,3 @@
+[     179ms] Uncaught TypeError: Cannot read properties of undefined (reading 'load')
+    at <anonymous> (:0:14)
+[    2478ms] [WARNING] A speculation rule set was inserted into the document but will be ignored. This might happen, for example, if it was previously inserted into another document, or if it was created using the innerHTML setter. @ https://www.google.com/search?q=Idle+Obelisk+Miner+BlueStacks+beginner+guide&sei=x_u_avvuBN_IkPIPhLyksAk:38

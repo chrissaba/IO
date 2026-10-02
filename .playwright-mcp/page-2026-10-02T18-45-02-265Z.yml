@@ -1,0 +1,24 @@
+- generic "YouTube Video Player" [ref=f8e5]:
+  - button "Play" [ref=f8e9] [cursor=pointer]
+  - generic [ref=f8e10]:
+    - generic [ref=f8e11] [cursor=pointer]:
+      - slider "Seek slider" [ref=f8e12]
+      - generic:
+        - generic:
+          - generic:
+            - slider "Click or scroll the panel for the precise seeking."
+    - generic [ref=f8e21]:
+      - generic [ref=f8e22]:
+        - button "Play (k)" [ref=f8e23] [cursor=pointer]
+        - generic [ref=f8e24]:
+          - button "Mute (m)" [ref=f8e26] [cursor=pointer]
+          - slider "Volume":
+            - generic [ref=f8e27] [cursor=pointer]
+        - button "0 Minutes 0 Seconds of 29 Minutes 17 Seconds" [ref=f8e30] [cursor=pointer]: 0:00 / 29:17
+      - generic [ref=f8e31]:
+        - generic [ref=f8e32]:
+          - button "Subtitles/closed captions unavailable" [pressed] [ref=f8e33] [cursor=pointer]
+          - button "Settings" [ref=f8e35] [cursor=pointer]
+        - generic [ref=f8e36]:
+          - button "Theater mode (t)" [ref=f8e37] [cursor=pointer]
+          - button "Full screen (f)" [ref=f8e38] [cursor=pointer]
