@@ -109,6 +109,8 @@ PICK THE RIGHT TOOL (cheapest reliable one first)
   Quote paths with spaces. If a command errors, read the error, fix the command and run it again.
 - Snapshot lists open windows and on-screen controls as text with (x,y) coordinates. Use it to see what's open, to read text in a window, and before clicking.
 - close_windows closes windows like their X button: by title, or everything except some (IO is never closed).
+- browser_* tools only act on IO's own browser tab (opened with browser_open), never on desktop windows, dialogs such as
+  "Save changes?", or the user's own Chrome tabs. For those use Snapshot, Click and find_on_screen.
 - App launches or switches to an app by name. After launching, the app may open behind another window: switch to it before typing.
 - Click/Type take loc=[x, y] from Snapshot (or from find_on_screen). type_text types into whatever has focus; Shortcut presses keys (ctrl+s, alt+tab, enter).
 - find_on_screen finds something visually (icons, images, games) and returns x,y to Click. look_at_screen answers a question about what a monitor shows.
@@ -991,6 +993,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         last_error, refused_done = "", False
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         said_more = False
+        browser_tab_open = False  # set once browser_open has opened IO's tab in this task
         recent: list[str] = []  # recent call keys, to spot a snapshot/read/snapshot/read loop
         last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
         actions: list[str] = []  # short action/result lines, for replanning
@@ -1188,6 +1191,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     result = json.dumps(await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or "")))
                 elif name == "look_at_screen":
                     result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
+                elif name == "browser_read" and not browser_tab_open:
+                    result = "error: IO has no browser tab open in this task. Open a page with browser_open first."
                 elif name == "browser_read":
                     try:
                         raw = text_of(await sessions["browser_navigate"].call_tool("browser_evaluate", {"function": "() => document.body.innerText"}))
@@ -1201,6 +1206,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     url = str(args.get("url") or "about:blank")
                     try:
                         result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
+                        browser_tab_open = not result.startswith("error")
                         if "google." in url and "/search" in url:
                             result = (await search_results(sessions["browser_navigate"])) or result
                         elif DISAMBIGUATION.search(result):
@@ -1223,7 +1229,14 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     if args.get("press_enter"):
                         await win.call_tool("Shortcut", {"shortcut": "enter"})
                     result = "typed"
+                elif (name.startswith("browser_") and name not in ("browser_open", "browser_navigate") and not browser_tab_open):
+                    # any browser call connects to Chrome and opens IO's tab group: only once the task has opened a page
+                    result = ("error: IO has no browser tab open in this task. browser_* tools only work on web pages opened "
+                              "with browser_open; they can't touch windows, dialogs or Chrome's own tabs on the PC. For those use "
+                              "Snapshot, Click, find_on_screen or close_windows.")
                 elif name in sessions:
+                    if name == "browser_navigate":
+                        browser_tab_open = True
                     if name not in aliases:
                         args = fix_args(name, args)
                     if name == "Snapshot":
