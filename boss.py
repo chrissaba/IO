@@ -108,6 +108,7 @@ PICK THE RIGHT TOOL (cheapest reliable one first)
   system: Get-CimInstance Win32_OperatingSystem, Get-Process | Sort-Object CPU -Descending | Select-Object -First 10, Get-NetIPAddress
   Quote paths with spaces. If a command errors, read the error, fix the command and run it again.
 - Snapshot lists open windows and on-screen controls as text with (x,y) coordinates. Use it to see what's open, to read text in a window, and before clicking.
+- close_windows closes windows like their X button: by title, or everything except some (IO is never closed).
 - App launches or switches to an app by name. After launching, the app may open behind another window: switch to it before typing.
 - Click/Type take loc=[x, y] from Snapshot (or from find_on_screen). type_text types into whatever has focus; Shortcut presses keys (ctrl+s, alt+tab, enter).
 - find_on_screen finds something visually (icons, images, games) and returns x,y to Click. look_at_screen answers a question about what a monitor shows.
@@ -161,6 +162,19 @@ EXTRA_TOOLS = [
                 },
                 "required": ["question"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_windows",
+            "description": ("Close windows the way their X button does (apps can still ask to save; IO is never closed). Give titles "
+                            "(parts of window titles, as listed by Snapshot), or all_except to close everything except those, e.g. "
+                            "all_except: [] closes all app windows. Use this to close apps, never App or Process."),
+            "parameters": {"type": "object", "properties": {
+                "titles": {"type": "array", "items": {"type": "string"}, "description": "Parts of the titles of windows to close"},
+                "all_except": {"type": "array", "items": {"type": "string"}, "description": "Close every app window except these"},
+            }},
         },
     },
     {
@@ -289,6 +303,51 @@ def find_window(title: str) -> tuple[int, tuple[int, int, int, int]] | None:
     proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
     user32.EnumWindows(proc(cb), 0)
     return found[0] if found else None
+
+
+def open_windows() -> list[tuple[int, str]]:
+    """Visible top-level app windows (hwnd, title), skipping system UI and IO itself."""
+    user32 = ctypes.windll.user32
+    out: list = []
+    skip = {"IO", "Program Manager", "Settings", "Windows Input Experience", "Taskbar", "NVIDIA GeForce Overlay"}
+    needed = ("unsloth", "llama-server")  # IO's own models run there: never close them
+
+    def cb(hwnd, _):
+        if user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4):  # GW_OWNER: skip owned popups
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value not in skip and not any(k in buf.value.lower() for k in needed):
+                    out.append((hwnd, buf.value))
+        return True
+
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    user32.EnumWindows(proc(cb), 0)
+    return out
+
+
+def close_windows(titles: list[str], all_but: list[str] | None = None) -> str:
+    """Closes windows the polite way (like clicking X), so apps can still ask to save. IO itself is never closed."""
+    user32 = ctypes.windll.user32
+    wins = open_windows()
+    if all_but is not None:
+        keep = [k.lower() for k in all_but if k]
+        targets = [(h, t) for h, t in wins if not any(k in t.lower() for k in keep)]
+    else:
+        wanted = [t.lower() for t in titles if t]
+        targets = [(h, t) for h, t in wins if any(w in t.lower() for w in wanted)]
+    for hwnd, _ in targets:
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+    time.sleep(1.0)
+    still = [t for h, t in targets if user32.IsWindow(h) and user32.IsWindowVisible(h)]
+    closed = [t for h, t in targets if t not in still]
+    msg = f"Closed {len(closed)} window(s): {', '.join(closed) or 'none'}."
+    if still:
+        msg += f" Still open (it may be asking to save): {', '.join(still)}."
+    if not targets:
+        msg = "No matching windows were open."
+    return msg
 
 
 def focus_window(title: str) -> str:
@@ -662,6 +721,13 @@ def risky_reason(name: str, args: dict) -> str:
         return f"run PowerShell: {args.get('command')}"
     if name == "FileSystem" and (args.get("mode") in ("delete", "move") or (args.get("mode") == "write" and args.get("overwrite"))):
         return f"{args.get('mode')} the file {args.get('path')}"
+    if name == "close_windows":
+        keep = [k.lower() for k in (args.get("all_except") or [])]
+        wanted = [t.lower() for t in (args.get("titles") or [])]
+        everything_but = args.get("all_except") is not None
+        names = [t for _, t in open_windows()
+                 if (not any(k in t.lower() for k in keep) if everything_but else any(w in t.lower() for w in wanted))]
+        return "close these windows: " + (", ".join(names) or "(none match)")
     if name == "Process" and args.get("mode") == "kill":
         return f"kill the process {args.get('name') or args.get('pid')}"
     return ""
@@ -1141,6 +1207,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "close_windows":
+                    all_but = args.get("all_except")
+                    result = await asyncio.to_thread(close_windows, list(args.get("titles") or []), list(all_but) if all_but is not None else None)
                 elif name == "remember":
                     result = remember(args.get("note", ""))
                 elif name == "ask_user":

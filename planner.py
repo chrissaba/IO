@@ -12,7 +12,7 @@ App (launch or switch to an app by name), Snapshot (text list of open windows an
 Click/Type (at coordinates from Snapshot), type_text (type into the focused control), Shortcut (keyboard shortcuts),
 Scroll, Wait/WaitFor, PowerShell, Clipboard, Process, find_on_screen (visually locate something not in Snapshot),
 look_at_screen (answer a question about what a display shows), browser_open and browser_* tools (open a page in IO's own browser tab, then click and type on it by element),
-FileSystem (read/write files), Scrape (read a web page as text), ask_user (ask the user a question), remember (save a note),
+close_windows (close windows by title, or all_except some), FileSystem (read/write files), Scrape (read a web page as text), ask_user (ask the user a question), remember (save a note),
 done (finish, with the answer in its summary).
 
 Write a short numbered plan, at most 8 steps. Each step is one concrete action naming the tool to use.

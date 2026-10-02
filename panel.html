@@ -1340,8 +1340,9 @@ function niceTool(name) {
 // a finished action, in plain past tense
 function stepText(name, a = {}) {
   switch (name) {
-    case "App": return a.mode === "switch" ? `Switched to ${a.name}` : a.mode === "resize" ? `Resized ${a.name || "the window"}` : `Opened ${a.name || a.executable || "an app"}`;
+    case "App": return a.mode === "switch" ? `Switched to ${a.name}` : a.mode === "resize" ? `Resized ${a.name || "the window"}` : a.mode && a.mode !== "launch" ? `Tried to ${a.mode} ${a.name || "an app"}` : `Opened ${a.name || a.executable || "an app"}`;
     case "Snapshot": return "Read what's on screen";
+    case "close_windows": return a.all_except ? `Closed windows except ${(a.all_except || []).join(", ") || "IO"}` : `Closed ${(a.titles || []).join(", ")}`;
     case "Click": return a.clicks === 2 ? "Double-clicked" : a.button === "right" ? "Right-clicked" : "Clicked";
     case "Type": case "type_text": return `Typed "${short(a.text, 40)}"${a.press_enter ? " and pressed Enter" : ""}`;
     case "Shortcut": return `Pressed ${a.shortcut}`;
