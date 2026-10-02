@@ -747,7 +747,7 @@ ASK_GEMINI_TOOL = {
     "type": "function",
     "function": {
         "name": "ask_gemini",
-        "description": "Ask a much stronger model (Gemini) for advice when you're stuck after research. Send one specific question; at most once every 5 minutes.",
+        "description": "Ask a much stronger model for advice when you're stuck after research; it also sees the window you're working in. Send one specific question; at most once every 5 minutes.",
         "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "What you're stuck on, specifically"}},
                        "required": ["question"]},
     },
@@ -847,6 +847,7 @@ class Gemini:
 
     def __init__(self, stack: AsyncExitStack, token: str, private: bool = True) -> None:
         self.stack, self.token, self.session, self.last, self.private = stack, token, None, 0.0, private
+        self.takes_images = not private  # signed-out Gemini takes no uploads
 
     async def ask(self, prompt: str, image: bytes = b"") -> str:
         if not self.private:
@@ -917,6 +918,130 @@ class Gemini:
                 break
         text = re.sub(r"(?m)^\s*(JPG|JPEG|PNG|screen\.jpg)\s*$\n?", "", text).strip()  # the attachment's chips, not the answer
         return text[:2000] if text else "error: no answer from Gemini"
+
+
+DUCK_URL = "https://duck.ai/"
+DUCK_ATTACH_JS = """() => {
+  const inp = document.querySelector('input[type=file]');
+  if (!inp) return 'no-input';
+  const b = atob(%s), a = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+  const dt = new DataTransfer();
+  dt.items.add(new File([a], 'screen.jpg', {type: 'image/jpeg'}));
+  inp.files = dt.files;
+  inp.dispatchEvent(new Event('change', {bubbles: true}));
+  return 'ok';
+}"""
+DUCK_TYPE_JS = """() => {
+  const t = document.querySelector('textarea[name=user-prompt], textarea');
+  if (!t) return 'no-textarea';
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, %s);
+  t.dispatchEvent(new Event('input', {bubbles: true}));
+  return 'ok';
+}"""
+DUCK_SEND_JS = """() => {
+  const b = [...document.querySelectorAll('button')].find(b => (b.getAttribute('aria-label') || '') === 'Ask' || b.type === 'submit');
+  if (!b || b.disabled) return 'no-send';
+  b.click();
+  return 'ok';
+}"""
+DUCK_READ_JS = """() => {
+  const main = (document.querySelector('main') || document.body).innerText;
+  const challenge = [...document.querySelectorAll('[role=dialog], dialog')].some(d => d.offsetParent !== null && /challenge|human|bots use/i.test(d.innerText));
+  const at = main.lastIndexOf('You said');
+  const parts = at < 0 ? [] : main.slice(at).split('Duck.ai said');
+  return JSON.stringify({challenge, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
+}"""
+# Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
+DUCK_NO_HISTORY_JS = """() => { localStorage.setItem('isRecentChatsOn', JSON.stringify('0')); return 'ok'; }"""  # Duck.ai's own "keep recent chats" switch
+DUCK_FORGET_JS = """async () => {
+  const del = [...document.querySelectorAll('button')].find(b => /^delete chat$/i.test(b.getAttribute('aria-label') || ''));
+  if (!del) return 'no-delete';
+  del.click();
+  await new Promise(r => setTimeout(r, 800));
+  const ok = [...document.querySelectorAll('[role=dialog] button, dialog button')].find(b => /delete/i.test(b.innerText || b.getAttribute('aria-label') || ''));
+  if (ok) ok.click();
+  return ok ? 'deleted' : 'clicked';
+}"""
+
+
+def duck_answer(text: str) -> str:
+    """The reply out of the page text after 'Duck.ai said': without the model name above it or the app promo below."""
+    text = re.split(r"\n(Duck\.ai works best|Jump to latest response|Download\n|Tools\n)", text)[0]
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    if lines and len(lines[0]) < 40 and not lines[0].rstrip().endswith((".", "!", "?")):
+        lines = lines[1:]  # the model's name, e.g. "GPT-5.6 Luna"
+    return "\n".join(lines).strip()
+
+
+class DuckAI:
+    """Opt-in: asks Duck.ai (DuckDuckGo's private chat, no account) in IO's tab in the user's Chrome, with a screenshot.
+    A fresh chat each time, Duck.ai's local chat history wiped afterwards, at most once every GEMINI_EVERY seconds.
+    If Duck.ai asks to prove you're human, IO stops: that's for you to do, not IO."""
+
+    private, takes_images = True, True
+
+    def __init__(self, stack: AsyncExitStack, token: str) -> None:
+        self.stack, self.token, self.session, self.last = stack, token, None, 0.0
+
+    def ready_in(self) -> int:
+        return max(0, round(self.last + GEMINI_EVERY - time.time()))
+
+    async def _session(self):
+        if self.session is None:
+            r, w = await self.stack.enter_async_context(stdio_client(browser_params({"browser_mode": "chrome", "chrome_token": self.token}), errlog=sys.stderr))
+            self.session = await self.stack.enter_async_context(ClientSession(r, w, client_info=BROWSER_CLIENT))
+            await self.session.initialize()
+        return self.session
+
+    async def ask(self, prompt: str, image: bytes = b"") -> str:
+        if wait := self.ready_in():
+            return f"error: the advisor was asked recently; it can be asked again in {wait}s. Keep going with what you have."
+        self.last = time.time()
+        s = await self._session()
+
+        async def js(code: str) -> str:
+            return page_text(text_of(await s.call_tool("browser_evaluate", {"function": code})))
+
+        await s.call_tool("browser_navigate", {"url": DUCK_URL})
+        await asyncio.sleep(1)
+        await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
+        await s.call_tool("browser_navigate", {"url": DUCK_URL})
+        await asyncio.sleep(3)
+        if image and "no-input" in await js(DUCK_ATTACH_JS % json.dumps(base64.b64encode(image).decode())):
+            prompt = prompt.replace("A screenshot of the window I'm working in is attached.\n\n", "")
+        await asyncio.sleep(2 if image else 0.3)
+        if "no-textarea" in await js(DUCK_TYPE_JS % json.dumps(prompt)):
+            return "error: Duck.ai's page didn't load"
+        await asyncio.sleep(0.5)
+        for _ in range(10):  # Ask stays disabled while the picture uploads
+            if "ok" in await js(DUCK_SEND_JS):
+                break
+            await asyncio.sleep(1)
+        else:
+            await s.call_tool("browser_press_key", {"key": "Enter"})
+        text, same = "", 0
+        try:
+            for _ in range(60):
+                await asyncio.sleep(2)
+                try:
+                    state = json.loads(await js(DUCK_READ_JS))
+                except ValueError:
+                    continue
+                if state.get("challenge"):
+                    return "error: Duck.ai asked to prove a human is there; that's for the user, not IO"
+                new = duck_answer(state.get("text", ""))
+                same = same + 1 if new and new == text and not state.get("generating") else 0
+                text = new
+                if same >= 2:
+                    break
+        finally:
+            try:
+                await js(DUCK_FORGET_JS)
+                await s.call_tool("browser_navigate", {"url": "about:blank"})
+            except Exception:
+                pass
+        return text[:2000] if text else "error: no answer from Duck.ai"
 
 
 async def meanings_hint(session, page: str, task: str) -> str:
@@ -1432,9 +1557,14 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             log("loop", goal=task, window=focus)
             tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack)
-            private = options.get("gemini_mode", "private") != "account"
-            allowed = options.get("ask_gemini") and (private or options.get("chrome_token"))
-            gemini = Gemini(stack, options.get("chrome_token", ""), private) if allowed else None
+            how = options.get("gemini_mode", "private")
+            token = options.get("chrome_token", "")
+            if not options.get("ask_gemini") or (how in ("account", "duck") and not token):
+                gemini = None
+            elif how == "duck":
+                gemini = DuckAI(stack, token)
+            else:
+                gemini = Gemini(stack, token, how != "account")
             if gemini:
                 tools.append(ASK_GEMINI_TOOL)
                 if isinstance(messages[head - 1]["content"], str):
@@ -1454,7 +1584,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
 
             async def consult(question: str) -> str:
                 # signed-out Gemini takes no uploads: private asks go with the screen described in words instead
-                image = b"" if gemini.private else await asyncio.to_thread(window_shot)
+                image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
                 prompt = GEMINI_PROMPT.format(shot="A screenshot of the window I'm working in is attached.\n\n" if image else "", goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
                                               actions="\n".join(actions[-10:]) or "(none yet)", question=question)
                 t0 = time.time()
@@ -1464,9 +1594,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     answer = f"error: couldn't reach Gemini: {e}"
                 if focus:
                     await asyncio.to_thread(focus_window, focus)  # Chrome may have come to the front: back to the app
-                log("gemini", question=question, secs=round(time.time() - t0, 1), answer=answer[:800])
+                log("gemini", question=question, via=type(gemini).__name__, secs=round(time.time() - t0, 1), answer=answer[:800])
                 if not answer.startswith("error"):
-                    guide.append(f"(Gemini on: {question}) {answer[:900]}")
+                    guide.append(f"(Advisor on: {question}) {answer[:900]}")
                     pin_guide()
                 return answer
             guide: list[str] = []
@@ -1527,7 +1657,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 if gemini and researches >= 2 and not gemini.ready_in():
                     advice = await consult(f"I've been at this for {step} steps and keep circling. What should I do next to make progress?")
                     if not advice.startswith("error"):
-                        messages.append({"role": "user", "content": f"Advice from Gemini:\n{advice[:900]}\nFollow it."})
+                        messages.append({"role": "user", "content": f"Advice from a stronger model:\n{advice[:900]}\nFollow it."})
             if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
                 stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
             else:

@@ -778,14 +778,15 @@
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
-        <div class="setting"><div class="txt"><div>Ask Gemini when a loop is stuck</div>
-            <div>Off keeps IO fully local. On, a loop that is still circling after research asks Gemini for advice about what
+        <div class="setting"><div class="txt"><div>Ask a stronger AI when a loop is stuck</div>
+            <div>Off keeps IO fully local. On, a loop that is still circling after research asks a stronger AI for advice about what
               it's working on, at most once every 5 minutes. Automated use may go against Gemini's terms.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>How to reach Gemini</div>
-            <div x-show="s.settings.gemini_mode !== 'account'">Private: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Which AI to ask</div>
+            <div x-show="s.settings.gemini_mode === 'duck'">Duck.ai: DuckDuckGo's private chat, no account, in your Chrome's IO tab group, with a screenshot of the window. Its chat history is wiped after each question.</div>
+            <div x-show="!['account', 'duck'].includes(s.settings.gemini_mode)">Private Gemini: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
             <div x-show="s.settings.gemini_mode === 'account'">Your account: Gemini Pro in your Chrome's IO tab group, with a screenshot of the window. Chats are saved to your Gemini history.</div></div>
-          <select x-model="s.settings.gemini_mode" @change="saveSettings()"><option value="private">Private (signed out)</option><option value="account">Your account (Pro)</option></select></div>
+          <select x-model="s.settings.gemini_mode" @change="saveSettings()"><option value="duck">Duck.ai (private, with screenshot)</option><option value="private">Gemini, signed out (text only)</option><option value="account">Gemini on your account (Pro)</option></select></div>
       </div>
       <h2>App</h2>
       <div class="card">

@@ -705,7 +705,7 @@ async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
-    if body.get("gemini_mode") in ("private", "account"):
+    if body.get("gemini_mode") in ("private", "account", "duck"):
         s["gemini_mode"] = body["gemini_mode"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
