@@ -1423,6 +1423,9 @@ function stepText(name, a = {}) {
     case "Shortcut": return `Pressed ${a.shortcut}`;
     case "Scroll": return `Scrolled ${a.direction || "down"}`;
     case "Wait": return `Waited ${a.duration}s`;
+    case "wait": return `Waited ${a.seconds}s${a.reason ? " for " + short(a.reason, 40) : ""}`;
+    case "click_on": return `Clicked "${short(a.description, 40)}"`;
+    case "hold_on": return `Held on "${short(a.description, 36)}" for ${a.seconds ?? 2}s`;
     case "WaitFor": return `Waited for ${short(a.text || a.condition, 40)}`;
     case "PowerShell": return "Ran a command";
     case "Clipboard": return a.mode === "set" ? "Copied text to the clipboard" : "Read the clipboard";

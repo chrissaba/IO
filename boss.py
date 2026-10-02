@@ -40,7 +40,7 @@ BOSS_URL = os.environ.get("BOSS_URL", "http://127.0.0.1:8090/v1")
 BOSS_MODEL = os.environ.get("BOSS_MODEL", "boss")
 EYES_URL = os.environ.get("EYES_URL", "http://127.0.0.1:8888/v1")
 EYES_MODEL = os.environ.get("EYES_MODEL", "mradermacher/UI-TARS-1.5-7B-GGUF")
-MCP_TOOLS = "App,Snapshot,Click,Type,Scroll,Shortcut,Wait,WaitFor,PowerShell,Clipboard,Process,FileSystem,Scrape"
+MCP_TOOLS = "App,Snapshot,Click,Type,Scroll,Shortcut,WaitFor,PowerShell,Clipboard,Process,FileSystem,Scrape"
 # Playwright MCP drives web pages by their elements, in one of two places:
 # "edge": a separate Edge window with its own profile
 # "chrome": your own Chrome through Playwright's extension (chrome.debugger), in a tab group named IO, the way
@@ -70,7 +70,7 @@ REPLAN_AFTER_STEPS = 10
 MAX_REPLANS = 3
 MAX_TOOL_TEXT = 14000
 # re-reading the same thing with nothing in between is a loop; repeating an action (undo x3, PageDown, Next) is not
-LOOP_PRONE = {"Snapshot", "browser_snapshot", "browser_read", "look_at_screen", "find_on_screen", "Scrape", "browser_open", "browser_navigate"}
+LOOP_PRONE = {"Snapshot", "browser_snapshot", "browser_read", "look_at_screen", "find_on_screen", "click_on", "Scrape", "browser_open", "browser_navigate"}
 # conditional offers ("If you want, I'll check the weekend too") aren't promises to keep working
 OFFER = re.compile(r"[^.!?\n]*\b(if you(?:'d)? (?:want|like|need|prefer)|let me know|would you like|want me to|shall i|should i)\b[^.!?\n]*[.!?]?", re.I)
 
@@ -208,6 +208,54 @@ EXTRA_TOOLS = [
                     "display": {"type": "integer", "description": "Display index from Snapshot (0 = primary)", "default": 0},
                 },
                 "required": ["description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "click_on",
+            "description": "Find something on screen by how it looks and click it, in one step (find_on_screen + Click). Best for games, emulators and anything not in Snapshot.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "What to click, e.g. 'the red Complete Task button'"},
+                    "window": {"type": "string", "description": "Part of the title of the window it is in (e.g. 'BlueStacks'). Keeps the search inside that app"},
+                    "display": {"type": "integer", "description": "Display index from Snapshot (0 = primary)", "default": 0},
+                },
+                "required": ["description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hold_on",
+            "description": "Find something on screen by how it looks, then press and hold the mouse on it for some seconds (for 'hold to mine', 'hold to charge').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "What to hold on, e.g. 'the grey tin rock nearest the character'"},
+                    "seconds": {"type": "number", "description": "How long to hold (0.2 to 15)", "default": 2},
+                    "window": {"type": "string", "description": "Part of the title of the window it is in (e.g. 'BlueStacks'). Keeps the search inside that app"},
+                    "display": {"type": "integer", "description": "Display index from Snapshot (0 = primary)", "default": 0},
+                },
+                "required": ["description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait",
+            "description": "Pause for a number of seconds you choose before the next action (an animation, a loading screen, a timer or resources building up in a game).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "seconds": {"type": "number", "description": "How long to wait (0.5 to 600)"},
+                    "reason": {"type": "string", "description": "What you are waiting for"},
+                },
+                "required": ["seconds"],
             },
         },
     },
@@ -454,6 +502,7 @@ def capture_area(display: int, window: str, content: bool = False) -> tuple[tupl
     return rects[display], ""
 
 
+NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}  # llama-server: skip the reasoning for this request
 QWEN_POINT_PROMPT = ("Find this on the screenshot: {target}\nAnswer only with JSON like {{\"point_2d\": [x, y]}}, the centre "
                      "of it, with x and y on a 0-1000 scale across the image's width and height.")
 
@@ -469,6 +518,7 @@ class Eyes:
         else:
             self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL
         self.content = False  # loops: look only at the window's content area (a game without its emulator's side bars)
+        self.brief = False  # loops: short looks, since it looks again before every move
 
     def find(self, description: str, display: int = 0, window: str = "") -> dict:
         (left, top, right, bottom), err = capture_area(display, window, self.content)
@@ -485,6 +535,7 @@ class Eyes:
             model=self.model,
             temperature=0,
             max_tokens=400 if self.mode == "smart" else 60,
+            extra_body=NO_THINKING if self.mode == "smart" else None,
             messages=[
                 {
                     "role": "user",
@@ -500,8 +551,11 @@ class Eyes:
             m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", reply)
             if not m:
                 return {"error": "could not locate it", "eyes_said": reply[-300:]}
-            x = left + float(m.group(1)) / 1000 * (right - left)
-            y = top + float(m.group(2)) / 1000 * (bottom - top)
+            px, py = float(m.group(1)), float(m.group(2))
+            if not (0 <= px <= 1000 and 0 <= py <= 1000):  # off the image: a guess, not a sighting
+                return {"error": f"could not locate it (the answer pointed off the {'window' if window else 'screen'})"}
+            x = left + px / 1000 * (right - left)
+            y = top + py / 1000 * (bottom - top)
             return {"x": round(x), "y": round(y)}
         m = re.search(r"\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", reply)
         if not m:
@@ -520,10 +574,13 @@ class Eyes:
         buf = io.BytesIO()
         shot.convert("RGB").save(buf, format="JPEG", quality=85)
         url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        if self.brief:
+            question = (question or "What is on the screen?") + " Answer in at most 3 short sentences: what screen or menu is open, and what can be done next."
         reply = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120).chat.completions.create(
             model=BOSS_MODEL,
             temperature=0.2,
-            max_tokens=700,
+            max_tokens=160 if self.brief else 700,
+            extra_body=NO_THINKING if self.brief else None,
             messages=[
                 {
                     "role": "user",
@@ -899,13 +956,17 @@ KEEP_RECENT = 6  # newest messages always kept word for word
 # it can go on indefinitely inside the local model's context.
 LOOP_REQUEST = re.compile(r"^\s*/loop\b|\buntil i (tell (you|it|io) to |say (to )?|ask (you|it) to )?stop\b|\buntil i stop (you|it)\b|\b(forever|endlessly|"
                           r"indefinitely|non-?stop|on (a )?loop)\b|\bkeep (going|playing|doing (it|this|that)) until\b", re.I)
-LOOP_COMPACT_AT = 14000
+LOOP_COMPACT_AT = 8000
+# a loop on one window gets just the tools for acting in it: a smaller prompt (the 16K-context models need the room)
+# and no two-step find-then-click habit
+LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "done"}
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25  # the same call this many times in a row is a rut, even in a game
 LOOP_NOTE = """LOOP MODE (the user approved it): this goal has no end. Keep working toward it, action after action, until the
 user presses Stop. You are never finished, so never stop to ask the user anything: decide for yourself.
 - Things change while you work: look again (look_at_screen / find_on_screen) before acting on old information.
-- Never guess coordinates: get every point to Click or hold from find_on_screen first.
+- Act with click_on and hold_on (they find and act in one step). Never guess coordinates.
+- Use wait when something needs time (a timer, an animation, resources building up), with the seconds you think it needs.
 - Calling done only records a short progress note (what you did, what changed, what you'll do next); then you carry on.
 - If something isn't working, try a different approach instead of repeating it.
 - Older steps get folded into a progress summary to save space; the goal above always stays."""
@@ -1173,6 +1234,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             if focus:
                 # every screenshot, find and click stays inside this window's content, so nothing beside it gets hit
                 eyes.content = True
+                eyes.brief = True
+                tools[:] = [t for t in tools if t["function"]["name"] in LOOP_TOOLS]
                 prompt_note = (f"\nThe goal is in the '{focus}' window. find_on_screen and look_at_screen only see its content area, and "
                                "clicks outside it are blocked.")
                 if isinstance(messages[head - 1]["content"], str):
@@ -1368,7 +1431,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                         actions.append(f"{name} -> refused by user")
                         continue
 
-                if loop and focus and name in ("find_on_screen", "look_at_screen"):
+                if loop and focus and name in ("find_on_screen", "look_at_screen", "click_on", "hold_on"):
                     args = {**args, "window": focus}
                 point = None
                 if loop and focus and name in ("Click", "hold", "Scroll", "Move", "Drag"):
@@ -1387,14 +1450,26 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                         blocked = "error: nothing was clicked. Don't guess coordinates: call find_on_screen for what you want, then use its x, y."
                 if blocked:
                     result = blocked
-                elif name == "find_on_screen":
-                    result = json.dumps(await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or "")))
-                    try:
-                        got = json.loads(result)
-                        if "x" in got:
-                            found_points[:] = (found_points + [(int(got["x"]), int(got["y"]))])[-8:]
-                    except (ValueError, TypeError):
-                        pass
+                elif name in ("find_on_screen", "click_on", "hold_on"):
+                    got = await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
+                    if "x" in got:
+                        pt = (int(got["x"]), int(got["y"]))
+                        if focus and (area := await asyncio.to_thread(content_rect, focus)) and not (area[0] <= pt[0] < area[2] and area[1] <= pt[1] < area[3]):
+                            got = {"error": f"could not locate it inside the {focus} window"}
+                    if "x" not in got:
+                        result = json.dumps(got) if name == "find_on_screen" else f"error: {got.get('error', 'could not locate it')}; nothing was clicked"
+                    else:
+                        same_spot = sum(1 for x, y in found_points[-3:] if abs(pt[0] - x) <= 15 and abs(pt[1] - y) <= 15)
+                        found_points[:] = (found_points + [pt])[-8:]
+                        if name == "find_on_screen":
+                            result = json.dumps(got)
+                        elif name == "click_on":
+                            result = text_of(await win.call_tool("Click", {"loc": list(pt)})) + f" (found at {pt[0]}, {pt[1]})"
+                        else:
+                            result = await asyncio.to_thread(hold_mouse, pt[0], pt[1], args.get("seconds", 2))
+                        if same_spot >= 2:
+                            result += (" Note: this is the same spot your last searches found. If acting on it didn't do what you wanted, "
+                                       "it isn't the thing you're after: look at the screen and try something else.")
                 elif name == "look_at_screen":
                     result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
                 elif name == "browser_read" and not browser_tab_open:
@@ -1419,6 +1494,10 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "wait":
+                    secs = max(0.5, min(600.0, float(args.get("seconds") or 1)))
+                    await asyncio.sleep(secs)  # cancellable: Stop ends it at once
+                    result = f"waited {secs:g}s"
                 elif name == "hold":
                     loc = args.get("loc") or [args.get("x"), args.get("y")]
                     try:
