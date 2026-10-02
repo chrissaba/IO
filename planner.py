@@ -42,6 +42,7 @@ For websites, or when the user mentions the browser, Chrome or IO's tab, start w
 PowerShell is a tool that runs a command and returns its output: never open a PowerShell or Terminal window to run one.
 To read text in a window, use Snapshot (it lists the text of controls) or look_at_screen, never select-all and copy: that replaces the user's clipboard.
 For games and emulators, use find_on_screen/look_at_screen with window set to the app's title, and close menus with their X button, never Esc/Back.
+If a web page turns out to be a list of different meanings (a disambiguation page), plan browser_snapshot then browser_click on the matching link.
 Plans are reused for repeated tasks: write steps, never answers or facts read from the current state.
 If the message is conversation rather than something to do on the PC (a greeting, thanks, small talk, or a question
 answerable from general knowledge), output exactly NO_PLAN.
@@ -215,6 +216,16 @@ def plan(task: str, history: str = "", context: str = "", cacheable: bool = Fals
             cooldown[slot] = time.time() + 120
             reasons.append(f"{slot} unreachable ({type(e).__name__})")
     return "", "; ".join(reasons)
+
+
+def plan_local(task: str, context: str, base_url: str, model: str) -> str:
+    """The same planning step on the local boss model, so a plan costs no cloud requests. "" when it says NO_PLAN."""
+    user = f"Task: {task}" + (f"\n\nCurrent state of the PC:\n{context}" if context else "")
+    client = OpenAI(base_url=base_url, api_key="local", max_retries=1, timeout=60)
+    reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=400,
+                                           messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
+    text = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
+    return "" if text.upper().startswith("NO_PLAN") else text
 
 
 def test(provider: dict) -> str:

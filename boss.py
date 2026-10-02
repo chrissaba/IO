@@ -113,6 +113,7 @@ COMMON JOBS
 - What's open: Snapshot, then list the window titles (skip system UI like the taskbar).
 - What's on screen: look_at_screen, then put the full description in your answer.
 - A fact on a web page: browser_open the most direct page (e.g. https://en.wikipedia.org/wiki/Topic), then browser_read with several words for the same thing (size: diameter radius dimensions; when: date founded born released). Work out the answer from what you find (a radius doubled is a diameter).
+- A web page that is a list of different meanings (a disambiguation page, "may refer to", "most commonly refers to"): browser_open the link that matches (its address), then read that page. browser_click needs a ref from browser_snapshot, not link text.
 - Games and emulators (BlueStacks): nothing is in Snapshot. Use find_on_screen and look_at_screen with window set to the app's title. Never press Esc or Back there (Esc is Android's Back and can close the game); close menus with their on-screen X.
 
 RULES
@@ -431,10 +432,19 @@ FIND_STOPWORDS = {"the", "and", "for", "how", "what", "with", "from", "this", "t
                   "who", "when", "where", "which", "does", "did", "has", "have", "much", "many", "about", "into", "tell", "find", "page"}
 
 
+FIND_SYNONYMS = {
+    "diameter": ["radius", "dimensions"], "size": ["diameter", "radius", "dimensions", "area"], "radius": ["diameter"],
+    "height": ["tall", "elevation"], "tall": ["height", "elevation"], "weight": ["mass"], "mass": ["weight"],
+    "age": ["born", "founded", "established"], "founded": ["established", "formed"], "born": ["birth"],
+    "population": ["inhabitants", "residents"], "price": ["cost", "$"], "cost": ["price"], "distance": ["semi", "orbit", "km"],
+}
+
+
 def find_in_text(text: str, find: str, budget: int = 4000) -> str:
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     raw = [w for w in re.findall(r"\w+", find.lower()) if len(w) > 2]
     words = [w for w in raw if w not in FIND_STOPWORDS] or raw
+    words += [x for w in list(words) for x in FIND_SYNONYMS.get(w, []) if x not in words]  # pages often say it another way
     if not words:
         return text[:12000] + ("\n[page continues; use find to look for something specific]" if len(text) > 12000 else "")
     pats = [re.compile(r"\b" + re.escape(w)) for w in words]  # at word starts: 'age' doesn't hit 'page'
@@ -471,6 +481,28 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
         out.append("[more matches cut]")
     tip = "" if len(hits) > 3 else "\n[few matches: if this doesn't answer it, search again with other words for the same thing, e.g. radius or dimensions for size]"
     return "\n".join(out) + tip
+
+
+DISAMBIGUATION = re.compile(r"\b(may|can|most commonly|commonly|usually|often) (also )?refers? to\b|\(disambiguation\)|topics referred to by the same term", re.I)
+LINKS_JS = ("() => [...(document.querySelector('#mw-content-text, article, main') || document.body).querySelectorAll('a')]"
+            ".map(a => [a.innerText.trim(), a.href]).filter(([t, h]) => t && h.startsWith(location.origin) && !h.includes('#')).slice(0, 300)")
+
+
+async def meanings_hint(session, page: str, task: str) -> str:
+    """On a page that lists different meanings of a word, show the links that fit the task, so the agent opens the right one."""
+    if not DISAMBIGUATION.search(page[:6000]):
+        return ""
+    try:
+        raw = text_of(await session.call_tool("browser_evaluate", {"function": LINKS_JS}))
+        m = re.search(r"### Result\s*\n(.*?)(?:\n###|$)", raw, re.S)
+        links = json.loads(m.group(1) if m else raw)
+    except Exception:
+        return ""
+    words = [w for w in re.findall(r"\w+", task.lower()) if len(w) > 2 and w not in FIND_STOPWORDS]
+    ranked = sorted(links, key=lambda l: -sum(w in l[0].lower() for w in words))
+    shown = [f"- {t[:120]} -> {h}" for t, h in ranked[:15]]
+    return ("This page is a list of different meanings, not the page you want. Open the link that matches the task with "
+            "browser_open (its address), then read that page. Links that best fit the task first:\n" + "\n".join(shown))
 
 
 def browser_open_tool(mode: str) -> dict:
@@ -785,6 +817,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         last_error, refused_done = "", False
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         said_more = False
+        recent: list[str] = []  # recent call keys, to spot a snapshot/read/snapshot/read loop
         last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
         actions: list[str] = []  # short action/result lines, the only context sent to cloud planners
         error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
@@ -835,6 +868,20 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
         if options["planner_mode"] == "always" and not images and not small_talk:
             await get_plan()
+        elif not images and not small_talk:
+            # "only when stuck": the local boss writes the opening plan itself, the way the cloud would, at no cost
+            context = ("Extra tools the agent has:\n" + extra_tools) if extra_tools else ""
+            if conversation:
+                asked = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m["role"] == "user" and isinstance(m["content"], str)]
+                context += ("\n\n" if context else "") + "Earlier requests in this conversation:\n" + "\n".join(asked)
+            try:
+                t0 = time.time()
+                text = await asyncio.to_thread(planner.plan_local, task, context, BOSS_URL, BOSS_MODEL)
+                if text:
+                    messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
+                log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
+            except Exception as e:
+                log("warning", text=f"local plan failed: {e}")
 
         for step in range(1, max_steps + 1):
             stuck = error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS
@@ -899,6 +946,15 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     args = {}
                 t1 = time.time()
                 key = name + json.dumps(args, sort_keys=True, ensure_ascii=False)
+                recent.append(key)
+                if name in LOOP_PRONE and len(recent) >= 6 and all(k.split("{")[0] in LOOP_PRONE for k in recent[-6:]) and len(set(recent[-6:])) <= 3:
+                    recent.clear()
+                    result = ("You keep re-reading the same page without getting closer. Do something different: open a more specific page "
+                              "(for example the exact article, like https://en.wikipedia.org/wiki/Io_(moon)), click a link by its ref from "
+                              "browser_snapshot, or answer with what you have.")
+                    log("tool", step=step, name=name, args=args, result=result)
+                    messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                    continue
                 repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
                 repeat["key"] = key
                 if name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
@@ -951,6 +1007,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     try:
                         raw = text_of(await sessions["browser_navigate"].call_tool("browser_evaluate", {"function": "() => document.body.innerText"}))
                         result = raw if raw.startswith("error") else find_in_text(page_text(raw), str(args.get("find") or ""))
+                        if not raw.startswith("error"):
+                            result = (await meanings_hint(sessions["browser_navigate"], page_text(raw), task)) or result
                     except Exception as e:
                         result = f"error: {e}"
                 elif name == "browser_open":
@@ -958,6 +1016,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     url = str(args.get("url") or "about:blank")
                     try:
                         result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
+                        if DISAMBIGUATION.search(result):
+                            result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
                 elif name == "remember":
