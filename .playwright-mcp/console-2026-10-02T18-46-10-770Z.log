@@ -1,2 +1,0 @@
-[     140ms] [WARNING] The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127 @ :0
-[     466ms] [INFO] Images loaded lazily and replaced with placeholders. Load events are deferred. See https://go.microsoft.com/fwlink/?linkid=2048113 @ https://shminer.miraheze.org/wiki/Guides/Progression_Guide:1098

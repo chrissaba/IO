@@ -1,2 +1,0 @@
-[     164ms] Uncaught TypeError: Cannot read properties of undefined (reading 'load')
-    at <anonymous> (:0:14)

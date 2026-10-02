@@ -1,2 +1,0 @@
-[     598ms] [WARNING] Failed to execute 'postMessage' on 'DOMWindow': The target origin provided ('https://www.youtube.com') does not match the recipient window's origin ('https://www.google.com'). @ https://www.youtube.com/s/player/8ab5c328/www-widgetapi.vflset/www-widgetapi.js:162
-[     844ms] [INFO] Images loaded lazily and replaced with placeholders. Load events are deferred. See https://go.microsoft.com/fwlink/?linkid=2048113 @ https://shminer.miraheze.org/wiki/Guides/How_to_play_on_PC:1008

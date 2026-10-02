@@ -757,7 +757,8 @@ class Researcher:
     async def _session(self):
         if self.session is None:
             params = StdioServerParameters(command="node", args=[str(BROWSER_CLI), "--headless", "--browser", "msedge", "--user-data-dir",
-                                                                 str(HERE / "data" / "research-profile"), "--codegen", "none", "--image-responses", "omit"])
+                                                                 str(HERE / "data" / "research-profile"), "--output-dir", str(HERE / "data" / "research"),
+                                                                 "--codegen", "none", "--image-responses", "omit"])
             r, w = await self.stack.enter_async_context(stdio_client(params, errlog=sys.stderr))
             self.session = await self.stack.enter_async_context(ClientSession(r, w))
             await self.session.initialize()

@@ -7,3 +7,4 @@ icon-*.ico
 logs/
 mcp/node_modules/
 planners.json
+.playwright-mcp/
