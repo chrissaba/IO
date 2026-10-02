@@ -800,6 +800,19 @@ GEMINI_SEND_JS = """() => {
   document.execCommand('insertText', false, %s);
   return 'ok';
 }"""
+# a screenshot goes in the way a person pastes one: a paste event carrying the image file
+GEMINI_PASTE_JS = """() => {
+  const ed = document.querySelector('rich-textarea .ql-editor, div.ql-editor[contenteditable]');
+  if (!ed) return 'no-editor';
+  const b = atob(%s), a = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+  const dt = new DataTransfer();
+  dt.items.add(new File([a], 'screen.jpg', {type: 'image/jpeg'}));
+  ed.focus();
+  ed.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+  return 'ok';
+}"""
+GEMINI_ATTACHED_JS = """() => String(document.querySelectorAll('uploader-file-preview, .file-preview-container img, img[src^="blob:"], img[src^="data:image"]').length)"""
 GEMINI_CLICK_SEND_JS = """() => {
   const b = [...document.querySelectorAll('button')].find(b => /send/i.test(b.getAttribute('aria-label') || '') && !b.disabled);
   if (!b) return 'no-send';
@@ -823,7 +836,7 @@ What the screen shows now:
 My recent actions:
 {actions}
 
-My question: {question}
+{shot}My question: {question}
 Reply with at most 120 words: concrete next steps (which button, menu or item, in order), and what I may be misunderstanding."""
 
 
@@ -844,13 +857,25 @@ class Gemini:
     def ready_in(self) -> int:
         return max(0, round(self.last + GEMINI_EVERY - time.time()))
 
-    async def ask(self, prompt: str) -> str:
+    async def ask(self, prompt: str, image: bytes = b"") -> str:
         if wait := self.ready_in():
             return f"error: Gemini was asked recently; it can be asked again in {wait}s. Keep going with what you have."
         self.last = time.time()
         s = await self._session()
         await s.call_tool("browser_navigate", {"url": GEMINI_URL})
         await asyncio.sleep(2)
+        if image:
+            pasted = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_PASTE_JS % json.dumps(base64.b64encode(image).decode())})))
+            if "no-editor" in pasted:
+                return "error: Gemini's page isn't ready (sign in to gemini.google.com in Chrome)"
+            for _ in range(15):  # wait for the upload to show before sending, or it goes without the picture
+                await asyncio.sleep(1)
+                n = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_ATTACHED_JS}))).strip().strip('"')
+                if n.isdigit() and int(n) > 0:
+                    break
+            else:
+                log("warning", text="the screenshot didn't attach in Gemini; asking without it")
+            await asyncio.sleep(1)
         sent = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_SEND_JS % json.dumps(prompt)})))
         if "no-editor" in sent:
             return "error: Gemini's page isn't ready (sign in to gemini.google.com in Chrome)"
@@ -870,6 +895,7 @@ class Gemini:
             text = new
             if same >= 2:
                 break
+        text = re.sub(r"(?m)^\s*(JPG|JPEG|PNG|screen\.jpg)\s*$\n?", "", text).strip()  # the attachment's chips, not the answer
         return text[:2000] if text else "error: no answer from Gemini"
 
 
@@ -1393,12 +1419,24 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     messages[head - 1]["content"] += ("\n- When research hasn't helped and you're still stuck, call ask_gemini with a specific question "
                                                       "(a stronger model; at most once every 5 minutes).")
 
+            def window_shot() -> bytes:
+                """The loop's window (its content area), as a JPEG small enough to paste."""
+                area = content_rect(focus) if focus else None
+                if not area:
+                    return b""
+                shot = ImageGrab.grab(bbox=area, all_screens=True).convert("RGB")
+                shot.thumbnail((1280, 1280))
+                buf = io.BytesIO()
+                shot.save(buf, format="JPEG", quality=80)
+                return buf.getvalue()
+
             async def consult(question: str) -> str:
-                prompt = GEMINI_PROMPT.format(goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
+                image = await asyncio.to_thread(window_shot)
+                prompt = GEMINI_PROMPT.format(shot="A screenshot of the window I'm working in is attached.\n\n" if image else "", goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
                                               actions="\n".join(actions[-10:]) or "(none yet)", question=question)
                 t0 = time.time()
                 try:
-                    answer = await gemini.ask(prompt)
+                    answer = await gemini.ask(prompt, image)
                 except Exception as e:
                     answer = f"error: couldn't reach Gemini: {e}"
                 if focus:
