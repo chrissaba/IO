@@ -84,23 +84,42 @@ SMALL_TALK = re.compile(r"^(hi|hello|hey|yo|hiya|howdy|sup|thanks|thank you|thx|
                         r"how are you|how's it going|what's up|who are you|what are you|what can you do|nice|cool|great|ok|okay)\b", re.I)
 PLUGIN_CALL_TIMEOUT = 120  # seconds one plugin tool call may take
 
-SYSTEM = """You operate a Windows PC for the user, using only the provided tools.
-- Not every message is a task. If the user is just chatting (hello, thanks, how are you, what can you do) or asks something you can answer from what you know, reply in plain text without calling any tool.
-- For tasks on the PC, call Snapshot first to see the open windows and the controls on screen as text. Each control is listed with (x,y) screen coordinates and its name.
-- Act with the cheapest reliable tool: App to launch or switch apps, Shortcut for keyboard shortcuts, Click/Type with loc=[x, y] taken from the Snapshot, type_text to type into whatever already has focus, PowerShell for system tasks (it runs the command directly and returns the output; never open a PowerShell or Terminal window for it).
-- If what you need is not in the Snapshot (unnamed icons, images, canvases, games), call find_on_screen with a short visual description. It returns x,y to pass to Click.
-- Before clicking or typing into an app, make sure its window is in front (App with mode "switch"). Other windows may cover it.
-- Re-check with Snapshot or WaitFor only when the next step depends on the result.
-- If a tool returns an error, fix the call and retry; never report success for a step that failed.
+SYSTEM = """You are IO, the user's assistant on their Windows PC. You can chat, answer questions, and do things on the PC with the tools provided.
+
+HOW TO DECIDE
+- Chatting (hello, thanks, how are you, what can you do) or a question you can answer from general knowledge: reply in plain text, no tools.
+- Needs live or personal information (the time, files, what's open or on screen, a web page, weather, prices): get it with a tool, then answer.
+- Asks you to do something on the PC: do exactly that, nothing extra (no saving, closing or double-checking unless asked).
+- Ambiguous, or needs something only the user knows (which file, which account): call ask_user instead of guessing.
+
+PICK THE RIGHT TOOL (cheapest reliable one first)
+- PowerShell runs a command and returns its output (never open a PowerShell or Terminal window for it). Use it for facts about the PC, files and time:
+  time in a city: [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'Tokyo Standard Time').ToString('h:mm tt, dddd')
+  newest files: Get-ChildItem "$env:USERPROFILE\\Downloads" -File | Sort-Object LastWriteTime -Descending | Select-Object -First 5 Name, LastWriteTime
+  find files: Get-ChildItem "$env:USERPROFILE" -Recurse -File -Filter *report* -ErrorAction SilentlyContinue | Select-Object -First 20 FullName
+  disk space: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+  system: Get-CimInstance Win32_OperatingSystem, Get-Process | Sort-Object CPU -Descending | Select-Object -First 10, Get-NetIPAddress
+  Quote paths with spaces. If a command errors, read the error, fix the command and run it again.
+- Snapshot lists open windows and on-screen controls as text with (x,y) coordinates. Use it to see what's open, to read text in a window, and before clicking.
+- App launches or switches to an app by name. After launching, the app may open behind another window: switch to it before typing.
+- Click/Type take loc=[x, y] from Snapshot (or from find_on_screen). type_text types into whatever has focus; Shortcut presses keys (ctrl+s, alt+tab, enter).
+- find_on_screen finds something visually (icons, images, games) and returns x,y to Click. look_at_screen answers a question about what a monitor shows.
+- FileSystem reads and writes files. Scrape reads a web page as text when you only need to read it.
 - For anything on a website or in a browser, call browser_open first, then use the browser_* tools (click and type by the element refs in the page snapshot). For a fact on a long page, call browser_read with find set to a few words instead of re-reading snapshots. {browser_where} Never drive Chrome or Edge windows with App, Click, Type or Shortcut, and never launch a browser with App.
-- FileSystem reads and writes files; Scrape fetches a web page as text when you only need to read it.
-- If the task is ambiguous or you need information only the user has, call ask_user instead of guessing.
-- When you learn a lasting fact the user will want reused (a path, a preference, an account to use), call remember.
-- For games and emulators (BlueStacks, etc.) nothing is in the Snapshot: use find_on_screen and look_at_screen with window set to that app's title, so you only look and click inside it.
-- Never press Esc or Back to close menus in games or emulators: in BlueStacks Esc is Android's Back button and can exit the app. Close menus with their on-screen X or close button.
-- To read the text in a window, use Snapshot (it lists the text of controls) or look_at_screen. Never select all and copy to read it: that replaces the user's clipboard and leaves their text selected.
-- For questions about what is on screen, call look_at_screen. It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot (its title, headings and text). When the task asks for information, put the full answer in done's summary.
-- Do exactly what the task asks, nothing extra (no saving, closing, or double-checking unless asked). Call done as soon as the task is complete, or call done explaining what blocked you."""
+- remember saves a lasting fact the user will want reused (a path, a preference).
+
+COMMON JOBS
+- Write something in an app: App (launch), then type_text the text. Don't save unless asked.
+- What's open: Snapshot, then list the window titles (skip system UI like the taskbar).
+- What's on screen: look_at_screen, then put the full description in your answer.
+- A fact on a web page: browser_open the most direct page (e.g. https://en.wikipedia.org/wiki/Topic), then browser_read with several words for the same thing (size: diameter radius dimensions; when: date founded born released). Work out the answer from what you find (a radius doubled is a diameter).
+- Games and emulators (BlueStacks): nothing is in Snapshot. Use find_on_screen and look_at_screen with window set to the app's title. Never press Esc or Back there (Esc is Android's Back and can close the game); close menus with their on-screen X.
+
+RULES
+- To read text in a window use Snapshot or look_at_screen, never select-all and copy (that replaces the user's clipboard).
+- For questions about what is on screen, call look_at_screen. It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot (its title, headings and text).
+- If a tool fails, fix the call and try again or try another way; never report success for a step that failed.
+- Finish with done. Its summary is your answer to the user: include the actual result (the time, the list, the description, the number), never just "I found it" or "I described it". If something blocked you, say what."""
 
 EXTRA_TOOLS = [
     {
@@ -622,6 +641,17 @@ def clean_summary(text: str) -> str:
     return text.strip()
 
 
+EMPTY_SUMMARY = re.compile(r"^(done|ok|okay|finished|complete|completed|task (is )?(done|complete|completed)|"
+                           r"i have described .*|i described .*|i have (found|answered) .*)[.!]?$", re.I | re.S)
+
+
+def fill_empty(summary: str, last_info: str) -> str:
+    """'done' or 'I have described it' isn't an answer: show the last thing the tools found instead."""
+    if last_info and (len(summary) < 8 or EMPTY_SUMMARY.match(summary.strip())):
+        return last_info.strip()[:2000]
+    return summary
+
+
 def text_of(res) -> str:
     text = "\n".join(getattr(p, "text", "") for p in res.content if getattr(p, "type", "") == "text")
     if getattr(res, "is_error", False):  # many servers report failures this way, with text that doesn't say "error"
@@ -755,6 +785,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         last_error, refused_done = "", False
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         said_more = False
+        last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
         actions: list[str] = []  # short action/result lines, the only context sent to cloud planners
         error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
 
@@ -852,7 +883,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     re.search(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|check|look|search|read|open|scroll)\b", low)
                 if m or (text and (plain_replies >= 1 or not announcing)):
                     summary = m.group(2).strip() if m else text
-                    summary = clean_summary(summary)
+                    summary = fill_empty(clean_summary(summary), last_info)
                     log("done", step=step, summary=summary)
                     return summary
                 plain_replies += 1
@@ -886,7 +917,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                         log("tool", step=step, name=name, args=args, result=result)
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                         continue
-                    summary = clean_summary(str(args.get("summary", "")))
+                    summary = fill_empty(clean_summary(str(args.get("summary", ""))), last_info)
                     if not said_more and step < max_steps and MORE_TO_DO.search(intent_text(summary)):
                         # "...I will try searching for X" isn't an answer: hold it to that once
                         said_more = True
@@ -987,6 +1018,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                                else f"{name} -> {'error' if last_error else 'ok'}")
                 log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
                 messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                if name in ("look_at_screen", "PowerShell", "browser_read") and not last_error:
+                    last_info = result
 
         log("gave_up", steps=max_steps)
         return f"stopped after {max_steps} steps without finishing"
