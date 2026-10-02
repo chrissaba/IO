@@ -515,7 +515,6 @@
           <span class="status">
             <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
             <span :title="'Eyes (UI-TARS): ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
-            <span x-show="plannerChip" title="Cloud planner requests used today" x-text="plannerChip"></span>
           </span>
         </div>
       </div>
@@ -594,20 +593,13 @@
 
     <!-- ===== usage ===== -->
     <div class="page" x-show="view === 'usage'">
-      <div class="pagehead"><h1>Usage</h1><p>How much I've done today, and how much of the free cloud planning is left.</p></div>
+      <div class="pagehead"><h1>Usage</h1><p>How much I've done today.</p></div>
       <div class="stats">
         <div class="stat"><b x-text="usage.today"></b><span>tasks today</span></div>
         <div class="stat"><b x-text="usage.success"></b><span>finished successfully</span></div>
         <div class="stat"><b x-text="usage.avg"></b><span>average time</span></div>
       </div>
-      <h2>Cloud planner requests today</h2>
-      <div class="card">
-        <template x-for="row in usage.planner" :key="row.name">
-          <div class="urow"><span x-text="row.name"></span><div class="bar"><i :style="`width:${row.pct}%`"></i></div><span class="mono" x-text="row.label"></span></div>
-        </template>
-        <div class="empty" style="padding:6px" x-show="!usage.planner.length">No cloud planning used today</div>
-      </div>
-      <p class="note">Resets at midnight. Your local models have no limits.</p>
+      <p class="note">Everything runs on this PC: no cloud requests, no limits.</p>
     </div>
 
     <!-- ===== schedules ===== -->
@@ -745,33 +737,9 @@
           <label class="switch"><input type="checkbox" x-model="s.settings.hotkeys" @change="saveSettings()"><span></span></label></div>
       </div>
 
-      <h2>Cloud planner</h2>
-      <div class="card">
-        <div class="setting"><div class="txt"><div>When to plan in the cloud</div><div>"Only when stuck" saves daily requests. Repeating tasks reuse their plan for a week.</div></div>
-          <select x-model="s.settings.planner_mode" @change="saveSettings()"><option value="always">Every message</option><option value="stuck">Only when stuck</option></select></div>
-        <div class="setting"><div class="txt"><div>Share local context</div><div>Send notes, open window titles and the conversation so plans fit your PC. Screenshots never leave this PC.</div></div>
-          <label class="switch"><input type="checkbox" x-model="s.settings.share_context" @change="saveSettings()"><span></span></label></div>
-        <div style="padding-top:10px">
-          <div class="note">Tried top to bottom. List several models to rotate through them (<span class="mono">model:limit, …</span>); one that hits its daily limit rests until midnight.</div>
-          <template x-for="p in providers" :key="p.name">
-            <div>
-              <div class="prow">
-                <span x-text="p.name"></span>
-                <input type="text" x-model="p.model" placeholder="model, or a list: a:500, b:20">
-                <input type="number" min="0" x-model.number="p.daily_limit" placeholder="per day" title="Default daily limit for models without one (0 = none)">
-                <input type="password" x-model="p.api_key" :placeholder="p.has_key ? 'key saved (blank keeps it)' : 'API key'">
-                <button class="btn sm" @click="testPlanner(p)">Test</button>
-              </div>
-              <div class="ptest" x-show="p.test" x-text="p.test"></div>
-            </div>
-          </template>
-          <div style="margin-top:12px"><button class="btn primary" @click="savePlanners()">Save</button> <span class="note" x-text="plannerSaved"></span></div>
-        </div>
-      </div>
-
       <h2>Tools</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Tool check</div><div>Test every tool, both models and the cloud planner, without touching the screen.</div></div>
+        <div class="setting"><div class="txt"><div>Tool check</div><div>Test every tool and both models without touching the screen.</div></div>
           <button class="btn" @click="toolCheck()" :disabled="checking" x-text="checking ? 'Checking…' : 'Run check'"></button></div>
         <ul class="checklines" x-show="checkLines.length">
           <template x-for="l in checkLines" :key="l"><li :class="l.startsWith('FAIL') ? 'err' : l.startsWith('OK') ? 'ok' : ''" x-text="l"></li></template>
@@ -791,11 +759,6 @@ const cleanAnswer = (s) => String(s ?? "").replace(/\s*done\s*[({]\s*summary\s*[
   .replace(/\s*\[actions taken:[\s\S]*?\]\s*$/, "").trim() || String(s ?? "");
 const BUSY = ["queued", "running", "waiting"];
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-// "a:500, b, deepseek/deepseek-r1:free" -> [{name, limit}]: only a trailing number is a daily limit
-const parseModels = (p) => String(p.model || "").split(",").map((m) => m.trim()).filter(Boolean).map((m) => {
-  const i = m.lastIndexOf(":"), lim = i >= 0 ? m.slice(i + 1).trim() : "";
-  return /^\d+$/.test(lim) ? { name: m.slice(0, i).trim(), limit: Number(lim) } : { name: m, limit: 0 };
-}).filter((x) => x.name);
 const short = (v, n = 48) => { const x = String(v ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
 
 const iconCache = {};
@@ -828,7 +791,7 @@ function agent() {
       { icon: "folder-search", label: "Check my files", text: "List the 5 newest files in my Downloads folder" },
     ],
     view: "chat", chatId: "",
-    s: { status: { boss: "…", eyes: "…", paused: false }, tasks: [], chats: [], schedules: [], templates: [], triggers: [], settings: {}, planner_usage: {}, today: { count: 0, done: 0, avg: 0 }, user: "" },
+    s: { status: { boss: "…", eyes: "…", paused: false }, tasks: [], chats: [], schedules: [], templates: [], triggers: [], settings: {}, today: { count: 0, done: 0, avg: 0 }, user: "" },
     draft: "", filter: "", statusFilter: "", open: {}, lastState: "", attachments: [], answers: {}, dragging: false, menuOpen: false,
     custom: { catalog: [], installed: {}, skills: [] }, customTab: "plugins", pluginEnv: {}, pluginTest: {}, pluginQuery: "",
     skill: { name: "", instructions: "" }, skillMsg: "",
@@ -837,7 +800,7 @@ function agent() {
     sched: { kind: "every", minutes: 60, at: "09:00", text: "", name: "" },
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
-    providers: [], plannerSaved: "", checking: false, checkLines: [],
+    checking: false, checkLines: [],
     chromeToken: "", browserTest: "",
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
@@ -901,7 +864,7 @@ function agent() {
       window.addEventListener("focus", () => { this.lastInput = Date.now(); this.refresh(); });
       document.addEventListener("visibilitychange", () => this.refresh());
       try { this.chatId = localStorage.getItem("chatId") || ""; } catch {}
-      await Promise.all([this.refresh(false), this.loadPlanners(), this.loadNotes(), this.loadCustomize()]);
+      await Promise.all([this.refresh(false), this.loadNotes(), this.loadCustomize()]);
       window.addEventListener("keydown", (e) => {
         if (this.dialog) { if (e.key === "Escape") this.closeDialog(false); return; }
         if (e.ctrlKey && e.key === ",") { e.preventDefault(); this.go("settings"); }
@@ -1029,15 +992,6 @@ function agent() {
       const q = this.filter.toLowerCase();
       return this.s.tasks.filter((t) => !BUSY.includes(t.status) && (!this.statusFilter || t.status === this.statusFilter) &&
         (!q || (t.text + " " + t.summary).toLowerCase().includes(q)));
-    },
-    get plannerChip() {
-      const used = this.s.planner_usage || {};
-      return this.providers.filter((p) => p.has_key && p.model).map((p) => {
-        const n = Object.entries(used).filter(([k]) => k === p.name || k.startsWith(p.name + "/")).reduce((a, [, v]) => a + v, 0);
-        const limits = parseModels(p).map((x) => x.limit || Number(p.daily_limit) || 0);
-        const total = limits.every(Boolean) ? limits.reduce((a, b) => a + b, 0) : 0;
-        return `${p.name} ${n}${total ? "/" + total : ""}`;
-      }).join(" · ");
     },
     dot(st) { return st === "ready" ? "ok" : /fail|couldn/.test(st || "") ? "bad" : ""; },
     // grow with the text, from one line up to ten
@@ -1365,34 +1319,10 @@ function agent() {
     // ----- usage -----
     get usage() {
       const today = this.s.today || { count: 0, done: 0, avg: 0 };
-      const used = this.s.planner_usage || {};
-      const planner = [];
-      this.providers.filter((p) => p.has_key && p.model).forEach((p) => {
-        const list = parseModels(p);
-        list.forEach(({ name, limit: l }) => {
-          const slot = list.length > 1 ? `${p.name}/${name}` : p.name;
-          const n = used[slot] || 0, limit = l || Number(p.daily_limit) || 0;
-          planner.push({ name: `${p.name} · ${name}`, pct: limit ? Math.min(100, (n / limit) * 100) : (n ? 4 : 0), label: limit ? `${n} / ${limit}` : `${n}` });
-        });
-      });
-      return { today: today.count, success: today.done, avg: today.avg ? `${today.avg}s` : "–", planner };
+      return { today: today.count, success: today.done, avg: today.avg ? `${today.avg}s` : "–" };
     },
 
-    // ----- planner & tools -----
-    async loadPlanners() {
-      const d = await (await fetch("/api/planners")).json();
-      const saved = Object.fromEntries(d.providers.map((p) => [p.name, p]));
-      this.providers = d.presets.map((pre) => ({ ...pre, test: "", ...(saved[pre.name] || {}), api_key: "" }));
-    },
-    async savePlanners() {
-      const providers = this.providers.filter((p) => p.model || p.api_key || p.has_key)
-        .map(({ name, base_url, model, api_key, daily_limit }) => ({ name, base_url, model, api_key, daily_limit }));
-      await post("/api/planners", { providers });
-      await this.loadPlanners();
-      this.plannerSaved = "Saved";
-      setTimeout(() => (this.plannerSaved = ""), 2000);
-    },
-    async testPlanner(p) { p.test = "Testing…"; p.test = (await post("/api/planners/test", { name: p.name })).result; },
+    // ----- tools -----
     async toolCheck() {
       this.checking = true; this.checkLines = [];
       try { this.checkLines = (await post("/api/toolcheck")).lines; } finally { this.checking = false; }

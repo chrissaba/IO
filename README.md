@@ -4,7 +4,7 @@ IO is a local desktop assistant for Windows, named after Jupiter's moon. A small
 Gemma 4 E4B on llama.cpp) operates the PC through [Windows-MCP](https://github.com/CursorTouch/Windows-MCP),
 using the accessibility tree to launch apps, click named controls, type and run PowerShell. UI-TARS-1.5-7B
 (in Unsloth Studio) is its eyes: `find_on_screen` and `look_at_screen` handle what the accessibility tree
-can't see. A free-tier cloud model can write plans; the local models do every action.
+can't see. It is fully local: the boss also writes its own plans.
 
 ## Using it
 
@@ -34,12 +34,10 @@ queue work there:
 curl -X POST http://127.0.0.1:8765/api/tasks -H "Content-Type: application/json" -d "{\"task\": \"open notepad and type hello\"}"
 ```
 
-## Cloud planner (optional)
+## Fully local
 
-In Settings > Cloud planner, paste a free-tier key (Groq or Gemini are preset), Save, then Test. The planner
-writes a short plan at the start of a task and a new one when the boss gets stuck; models rotate when one
-hits its limit, daily budgets are tracked, and "Share local context" controls what leaves the PC. Keys stay
-in `planners.json` (not committed).
+Everything runs on this PC: the boss plans each task itself before acting (and replans when stuck), and no
+requests go to cloud models.
 
 ## Your Chrome (optional)
 

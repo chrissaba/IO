@@ -3,7 +3,7 @@ import asyncio, json, sys, time
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import boss, planner
+import boss
 
 def row(name, ok, detail, t0):
     print(f"{'OK ' if ok else 'FAIL'} {name:<16} {time.time()-t0:5.1f}s  {detail[:90]}")
@@ -33,9 +33,5 @@ async def main():
     eyes = boss.Eyes()
     t0 = time.time(); r = eyes.find("the Start button on the taskbar"); row("find_on_screen", "x" in r, json.dumps(r), t0)
     t0 = time.time(); d = eyes.describe("In one sentence, what app is in the foreground?"); row("look_at_screen", len(d) > 5, d.replace("\n", " "), t0)
-    for p in planner.load():
-        t0 = time.time(); res = planner.test(p); row(f"planner:{p['name']}", " ok" in " " + res or res.startswith("ok"), res, t0)
-    if not planner.load():
-        print("--   planner         none configured")
 
 asyncio.run(main())

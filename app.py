@@ -33,7 +33,6 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import boss
-import planner
 import plugins
 import triggers
 
@@ -57,7 +56,7 @@ MAX_EVENTS_PER_TASK = 200
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
-    "confirm_risky": True, "browser": True, "files": True, "watchdog": True, "share_context": True, "planner_mode": "always",
+    "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
     "browser_mode": "edge",
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
@@ -85,6 +84,8 @@ def load_state() -> None:
         return
     state.update({k: saved.get(k, v) for k, v in state.items()})
     state["settings"] = {**DEFAULT_SETTINGS, **state["settings"]}
+    for old in ("planner_mode", "share_context"):  # from when IO had a cloud planner
+        state["settings"].pop(old, None)
     for task in state["tasks"]:  # anything mid-flight when the app closed didn't finish
         if task["status"] in ("queued", "running", "waiting"):
             task.update(status="cancelled", summary="app was closed")
@@ -301,10 +302,8 @@ async def worker() -> None:
             await ensure_boss()
         task.update(status="running", started=time.time())
         current["task"] = task
-        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "share_context", "browser_mode")}
+        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode")}
         options["chrome_token"] = chrome_token()
-        options["planner_mode"] = state["settings"]["planner_mode"]
-        options["cache_plan"] = task.get("source", "you").startswith(("schedule", "trigger", "webhook"))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -460,7 +459,6 @@ async def get_state(_request: Request) -> JSONResponse:
             "templates": state["templates"],
             "triggers": [public_trigger(t) for t in state["triggers"]],
             "settings": state["settings"],
-            "planner_usage": planner.usage(),
             "today": today_stats(),
             "chrome_token_set": bool(chrome_token()),
             "user": os.environ.get("USERNAME", "").capitalize(),
@@ -647,11 +645,9 @@ async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
-    if body.get("planner_mode") in ("always", "stuck"):
-        s["planner_mode"] = body["planner_mode"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "share_context"):
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog"):
         if key in body:
             s[key] = bool(body[key])
     save_state()
@@ -693,38 +689,6 @@ async def test_browser(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "result": result[:600]})
     except Exception as e:
         return JSONResponse({"ok": False, "result": f"{type(e).__name__}: {e}"[:600]})
-
-
-def masked(providers: list[dict]) -> list[dict]:
-    return [{**p, "api_key": "", "has_key": bool(p.get("api_key"))} for p in providers]
-
-
-async def get_planners(_request: Request) -> JSONResponse:
-    return JSONResponse({"providers": masked(planner.load_all()), "presets": planner.PRESETS, "usage": planner.usage()})
-
-
-async def save_planners(request: Request) -> JSONResponse:
-    """Saves the provider list; an empty api_key keeps the key already saved for that provider."""
-    old = {p["name"]: p for p in planner.load_all()}
-    providers = []
-    for p in (await request.json()).get("providers", []):
-        entry = {k: str(p.get(k, "")).strip() for k in ("name", "base_url", "model", "api_key")}
-        entry["daily_limit"] = int(p.get("daily_limit") or 0)
-        if not entry["api_key"] and entry["name"] in old:
-            entry["api_key"] = old[entry["name"]].get("api_key", "")
-        if entry["name"] and entry["base_url"]:
-            providers.append(entry)
-    planner.save(providers)
-    planner.cooldown.clear()
-    return JSONResponse({"providers": masked(providers)})
-
-
-async def test_planner(request: Request) -> JSONResponse:
-    name = (await request.json()).get("name")
-    provider = next((p for p in planner.load() if p["name"] == name), None)
-    if provider is None:
-        return JSONResponse({"result": "save a key and model for it first"})
-    return JSONResponse({"result": await asyncio.to_thread(planner.test, provider)})
 
 
 async def answer_task(request: Request) -> JSONResponse:
@@ -871,9 +835,6 @@ app = Starlette(
         Route("/api/browser", save_browser, methods=["POST"]),
         Route("/api/browser/test", test_browser, methods=["POST"]),
         Route("/api/browser/folder", open_extension_folder, methods=["POST"]),
-        Route("/api/planners", get_planners, methods=["GET"]),
-        Route("/api/planners", save_planners, methods=["POST"]),
-        Route("/api/planners/test", test_planner, methods=["POST"]),
         Route("/api/toolcheck", run_toolcheck, methods=["POST"]),
         Route("/api/customize", get_customize, methods=["GET"]),
         Route("/api/plugins/{id}", install_plugin, methods=["POST"]),

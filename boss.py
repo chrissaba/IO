@@ -63,7 +63,7 @@ MAX_MEMORY = 50
 # so UI-TARS's pixel coordinates refer to the exact image we sent
 EYES_MAX_PIXELS = 4096 * 28 * 28
 KEEP_FULL_SNAPSHOTS = 2
-# cloud replanning: after this many failed calls in a row, or steps without finishing, at most MAX_REPLANS times
+# replanning: after this many failed calls in a row, or steps without finishing, at most MAX_REPLANS times
 REPLAN_AFTER_ERRORS = 2
 REPLAN_AFTER_STEPS = 10
 MAX_REPLANS = 3
@@ -79,7 +79,7 @@ def intent_text(t: str) -> str:
 
 
 MORE_TO_DO = re.compile(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|search|look|check|read|scroll|open)\b")
-# greetings and thanks: answered by the local model directly, without a cloud plan
+# greetings and thanks: answered directly, without a plan
 SMALL_TALK = re.compile(r"^(hi|hello|hey|yo|hiya|howdy|sup|thanks|thank you|thx|ty|cheers|good (morning|afternoon|evening|night)|"
                         r"how are you|how's it going|what's up|who are you|what are you|what can you do|nice|cool|great|ok|okay)\b", re.I)
 PLUGIN_CALL_TIMEOUT = 120  # seconds one plugin tool call may take
@@ -704,7 +704,7 @@ def inline_browser_snapshot(result: str, cwd: Path) -> str:
 
 
 async def desktop_context(win: ClientSession) -> str:
-    """Focused and open windows from a Snapshot, for the cloud planner (no UI tree, no screenshot)."""
+    """Focused and open windows from a Snapshot, for the planner (no UI tree, no screenshot)."""
     try:
         raw = text_of(await win.call_tool("Snapshot", {"use_vision": False, "use_annotation": False}))
         raw = "\n".join(json.loads(raw)) if raw.startswith("[") else raw
@@ -722,9 +722,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     so follow-ups like "now do the same for the other one" make sense."""
     conversation = conversation or []
     options = {
-        "allow_powershell": True, "confirm_risky": True, "browser": True, "files": True, "share_context": True,
-        "planner_mode": "always",  # "always": cloud plan at the start; "stuck": only when the local agent gets stuck
-        "cache_plan": False, **(options or {}),
+        "allow_powershell": True, "confirm_risky": True, "browser": True, "files": True,
+        **(options or {}),
     }
     (HERE / "logs").mkdir(exist_ok=True)
     boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
@@ -819,73 +818,47 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
         said_more = False
         recent: list[str] = []  # recent call keys, to spot a snapshot/read/snapshot/read loop
         last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
-        actions: list[str] = []  # short action/result lines, the only context sent to cloud planners
+        actions: list[str] = []  # short action/result lines, for replanning
         error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
 
         async def get_plan(history: str = "") -> None:
-            context = ""
-            if options["share_context"] and planner.load():
-                # local pre-plan pass: give the cloud planner the PC's state and saved notes
-                parts = [await desktop_context(win)]
-                if notes:
-                    parts.append("Saved notes:\n" + "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:]))
-                if conversation:
-                    turns = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in conversation[-6:])
-                    parts.append("Earlier in this conversation:\n" + turns)
-                context = "\n\n".join(p for p in parts if p)
-            if conversation and not context:
-                # without sharing, the planner still needs the chat to understand a follow-up, but only your own words:
-                # no agent answers and no tool arguments
-                asked = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m["role"] == "user" and isinstance(m["content"], str)]
-                if asked:
-                    context = "Earlier requests in this conversation:\n" + "\n".join(f"user: {a}" for a in asked)
-            if "browser_navigate" not in sessions:
-                context += ("\n\n" if context else "") + ("The agent has no browser tools this time: plan Scrape to read a page, "
-                                                             "or App, Snapshot, Click and Type to use a browser window.")
-            else:
-                where = "IO's own tab in the user's Chrome (tab group 'IO')" if options.get("browser_mode") == "chrome" else "IO's own Edge window"
-                context += ("\n\n" if context else "") + (f"Web pages: browser_open(url) opens {where}; then browser_snapshot, browser_click, "
-                                                             "browser_type work in it. Never plan App, Click, Type or Shortcut on a browser window.")
-            # tool names aren't private, so the planner always hears about plugins; skills only when sharing is on
-            if extra_tools:
-                context += ("\n\n" if context else "") + "Extra tools the agent has (prefer them when they fit):\n" + extra_tools
-            if skills and options["share_context"]:
-                context += ("\n\n" if context else "") + skills
-            plan_task = task + (f" (the user attached {len(images)} image(s), which only the local agent can see)" if images else "")
-            # a cached plan is redone when plugins, skills or the browser setting change
-            salt = hashlib.sha1((extra_tools + skills + options.get("browser_mode", "edge") + str("browser_navigate" in sessions)).encode()).hexdigest()[:10]
-            text, source = await asyncio.to_thread(planner.plan, plan_task, history, context, options["cache_plan"], salt)
-            if text.strip().upper().startswith("NO_PLAN"):  # the planner says this is conversation, not a task
-                log("plan", source=source, reason="conversation, no plan needed")
-            elif text:
-                note = f"Plan from the planner:\n{text}\n\nFollow it step by step, adapting to what Snapshot shows."
-                messages.append({"role": "user", "content": note})
-                log("plan", source=source, plan=text, shared=bool(context))
-            else:
-                log("plan", source="local", reason=source)
-
-        # the cloud planner can't see attached images, so the local model starts with them on its own
-        small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
-        if options["planner_mode"] == "always" and not images and not small_talk:
-            await get_plan()
-        elif not images and not small_talk:
-            # "only when stuck": the local boss writes the opening plan itself, the way the cloud would, at no cost
-            context = ("Extra tools the agent has:\n" + extra_tools) if extra_tools else ""
+            """The local boss writes itself a plan (and a new one when stuck). Everything stays on this PC, so it gets
+            the full picture: open windows, saved notes, the conversation, extra tools and skills."""
+            parts = [await desktop_context(win)] if history else []
+            if notes:
+                parts.append("Saved notes:\n" + "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:]))
             if conversation:
                 asked = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m["role"] == "user" and isinstance(m["content"], str)]
-                context += ("\n\n" if context else "") + "Earlier requests in this conversation:\n" + "\n".join(asked)
+                if asked:
+                    parts.append("Earlier requests in this conversation:\n" + "\n".join(f"user: {a}" for a in asked))
+            if "browser_navigate" not in sessions:
+                parts.append("The agent has no browser tools this time: plan Scrape to read a page, or App, Snapshot, Click and Type to use a browser window.")
+            else:
+                where = "IO's own tab in the user's Chrome (tab group 'IO')" if options.get("browser_mode") == "chrome" else "IO's own Edge window"
+                parts.append(f"Web pages: browser_open(url) opens {where}; then browser_read, browser_snapshot, browser_click and browser_type work in it.")
+            if extra_tools:
+                parts.append("Extra tools the agent has (prefer them when they fit):\n" + extra_tools)
+            if skills:
+                parts.append(skills)
+            context = "\n\n".join(p for p in parts if p)
             try:
                 t0 = time.time()
-                text = await asyncio.to_thread(planner.plan_local, task, context, BOSS_URL, BOSS_MODEL)
-                if text:
-                    messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
-                log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
+                text = await asyncio.to_thread(planner.plan_local, task, context, BOSS_URL, BOSS_MODEL, history)
             except Exception as e:
-                log("warning", text=f"local plan failed: {e}")
+                log("warning", text=f"planning failed: {e}")
+                return
+            if text:
+                messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
+            log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
+
+        # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
+        small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
+        if not images and not small_talk:
+            await get_plan()
 
         for step in range(1, max_steps + 1):
             stuck = error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS
-            if stuck and replans < MAX_REPLANS and planner.load():
+            if stuck and replans < MAX_REPLANS:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
                 await get_plan("\n".join(actions[-12:]))
             t0 = time.time()
@@ -1073,9 +1046,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 if not last_error:
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
-                # replan history goes to a cloud planner: with sharing off it carries no data from the PC
-                actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}" if options["share_context"]
-                               else f"{name} -> {'error' if last_error else 'ok'}")
+                actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}")  # for replanning
                 log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
                 messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                 if name in ("look_at_screen", "PowerShell", "browser_read") and not last_error:
