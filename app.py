@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import uuid
 import webbrowser
@@ -176,8 +177,35 @@ async def switch_models() -> None:
             await ensure_eyes()
 
 
+boss_starting = asyncio.Lock()
+
+
+def boss_loading() -> bool:
+    """A boss server is up but still loading its model (/health answers 503 'Loading model')."""
+    try:
+        urllib.request.urlopen(boss.BOSS_URL.removesuffix("/v1") + "/health", timeout=3)
+        return False
+    except urllib.error.HTTPError as e:
+        return e.code == 503
+    except Exception:
+        return False
+
+
 async def ensure_boss() -> None:
+    # the watchdog and the task worker can both find the model down at once: start it once, and never start a second
+    # server while one is still loading (two copies of a 21 GB model don't fit and both stall)
+    async with boss_starting:
+        await _ensure_boss()
+
+
+async def _ensure_boss() -> None:
     mode = state["settings"].get("model_mode", "fast")
+    if not boss_up() and await asyncio.to_thread(boss_loading):
+        status["boss"] = "loading model"
+        for _ in range(300):
+            await asyncio.sleep(1)
+            if boss_up():
+                break
     if boss_up():
         path = await asyncio.to_thread(boss_model_path)
         if not path or BOSS_NAMES[mode] in path:
