@@ -779,8 +779,8 @@
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
         <div class="setting"><div class="txt"><div>Ask a stronger AI when a loop is stuck</div>
-            <div>Off keeps IO fully local. On, a loop that is still circling after research asks a stronger AI for advice about what
-              it's working on, at most once every 5 minutes. Automated use may go against Gemini's terms.</div></div>
+            <div>Off keeps IO fully local. On, a loop asks a stronger AI for a plan when it starts and for advice when it's still circling after research, about what
+              it's working on, at most once every 2 minutes. Automated use may go against Gemini's terms.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
         <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Which AI to ask</div>
             <div x-show="s.settings.gemini_mode === 'duck'">Duck.ai: DuckDuckGo's private chat, no account, in your Chrome's IO tab group, with a screenshot of the window. Its chat history is wiped after each question.</div>

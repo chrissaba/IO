@@ -747,7 +747,7 @@ ASK_GEMINI_TOOL = {
     "type": "function",
     "function": {
         "name": "ask_gemini",
-        "description": "Ask a much stronger model for advice when you're stuck after research; it also sees the window you're working in. Send one specific question; at most once every 5 minutes.",
+        "description": "Ask a much stronger model for advice when you're stuck after research; it also sees the window you're working in. Send one specific question; at most once every 2 minutes.",
         "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "What you're stuck on, specifically"}},
                        "required": ["question"]},
     },
@@ -792,7 +792,22 @@ class Researcher:
 
 
 GEMINI_URL = "https://gemini.google.com/app"
-GEMINI_EVERY = 300  # seconds between questions: an opt-in helper for when a loop is stuck, not a chat partner
+GEMINI_EVERY = 120  # seconds between questions: a plan at the start, then help when a loop is stuck, not a chat partner
+ADVISOR_MAX_CHARS = {"DuckAI": 4400, "Gemini": 8000}  # Duck.ai refuses messages over 4500 characters
+
+
+def fit_advisor_prompt(limit: int, **parts: str) -> str:
+    """GEMINI_PROMPT filled in and kept under the site's length limit: the oldest guide notes, actions and screen
+    description are cut first; the goal and question always go whole."""
+    budgets = {"guide": 1800, "screen": 1200, "actions": 900}
+    for _ in range(12):
+        prompt = GEMINI_PROMPT.format(**{k: (v[-budgets[k]:] if k in ("guide", "actions") else v[:budgets[k]]) if k in budgets else v
+                                          for k, v in parts.items()})
+        if len(prompt) <= limit:
+            return prompt
+        for k in budgets:
+            budgets[k] = int(budgets[k] * 0.75)
+    return prompt[:limit]
 GEMINI_SEND_JS = """() => {
   const ed = document.querySelector('rich-textarea .ql-editor, div.ql-editor[contenteditable]');
   if (!ed) return 'no-editor';
@@ -848,6 +863,7 @@ class Gemini:
     def __init__(self, stack: AsyncExitStack, token: str, private: bool = True) -> None:
         self.stack, self.token, self.session, self.last, self.private = stack, token, None, 0.0, private
         self.takes_images = not private  # signed-out Gemini takes no uploads
+        self.max_chars = ADVISOR_MAX_CHARS["Gemini"]
 
     async def ask(self, prompt: str, image: bytes = b"") -> str:
         if not self.private:
@@ -979,7 +995,7 @@ class DuckAI:
     A fresh chat each time, Duck.ai's local chat history wiped afterwards, at most once every GEMINI_EVERY seconds.
     If Duck.ai asks to prove you're human, IO stops: that's for you to do, not IO."""
 
-    private, takes_images = True, True
+    private, takes_images, max_chars = True, True, ADVISOR_MAX_CHARS["DuckAI"]
 
     def __init__(self, stack: AsyncExitStack, token: str) -> None:
         self.stack, self.token, self.session, self.last = stack, token, None, 0.0
@@ -1569,7 +1585,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 tools.append(ASK_GEMINI_TOOL)
                 if isinstance(messages[head - 1]["content"], str):
                     messages[head - 1]["content"] += ("\n- When research hasn't helped and you're still stuck, call ask_gemini with a specific question "
-                                                      "(a stronger model; at most once every 5 minutes).")
+                                                      "(a stronger model; at most once every 2 minutes).")
 
             def window_shot() -> bytes:
                 """The loop's window (its content area), as a JPEG small enough to paste."""
@@ -1585,8 +1601,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             async def consult(question: str) -> str:
                 # signed-out Gemini takes no uploads: private asks go with the screen described in words instead
                 image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
-                prompt = GEMINI_PROMPT.format(shot="A screenshot of the window I'm working in is attached.\n\n" if image else "", goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
-                                              actions="\n".join(actions[-10:]) or "(none yet)", question=question)
+                prompt = fit_advisor_prompt(gemini.max_chars, shot="A screenshot of the window I'm working in is attached.\n\n" if image else "",
+                                            goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info or "(not looked yet)",
+                                            actions="\n".join(actions[-10:]) or "(none yet)", question=question)
                 t0 = time.time()
                 try:
                     answer = await gemini.ask(prompt, image)
@@ -1621,6 +1638,12 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
             except Exception as e:
                 log("warning", text=f"couldn't research the goal first: {e}"[:300])
+            if gemini:
+                # the stronger model plans the start, like the planner did for single tasks: it sees the window and the research
+                plan = await consult("I'm just starting. " + ("Look at the screenshot and give" if gemini.takes_images else "Give")
+                                     + " me a numbered plan for my first steps toward the goal.")
+                if not plan.startswith("error"):
+                    messages.append({"role": "user", "content": f"Plan from a stronger model (it saw the window):\n{plan[:1500]}\nFollow it, adapting to what you see."})
         last_research = researches = 0
         if not loop:
             gemini = None
