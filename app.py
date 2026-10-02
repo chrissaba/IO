@@ -33,6 +33,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import boss
+import overlay
 import plugins
 import triggers
 
@@ -57,7 +58,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private",
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "focus_glow": True,
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -356,6 +357,7 @@ async def worker() -> None:
         options["chrome_token"] = chrome_token()
         options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
         options["gemini_mode"] = state["settings"].get("gemini_mode", "private")
+        options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -363,6 +365,8 @@ async def worker() -> None:
         options["loop"] = bool(task.get("loop") or boss.LOOP_REQUEST.search(task["text"]))
         if options["loop"]:
             task["loop"] = True
+        if state["settings"].get("focus_glow", True):
+            overlay.show()  # the purple glow around the window IO works in; screenshots never see it
         current["job"] = asyncio.create_task(
             boss.run(task["text"], task["max_steps"], options, asker(task), chat_context(task), [UPLOADS / n for n in imgs])
         )
@@ -375,6 +379,7 @@ async def worker() -> None:
             task["status"], task["summary"] = "error", str(e)
         task["finished"] = time.time()
         current.update(task=None, job=None)
+        overlay.hide()
         save_state()
         for listener in finished_listeners:
             try:
@@ -480,12 +485,14 @@ async def startup() -> None:
 @asynccontextmanager
 async def lifespan(_app):
     load_state()
+    overlay.start(hint=lambda: boss.focus_hint)
     asyncio.create_task(startup())
     asyncio.create_task(worker())
     asyncio.create_task(scheduler())
     asyncio.create_task(trigger_loop())
     asyncio.create_task(watchdog())
     yield
+    overlay.stop()
     save_state()
 
 
@@ -712,9 +719,13 @@ async def save_settings(request: Request) -> JSONResponse:
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
         s["model_mode"] = body["model_mode"]
         asyncio.create_task(switch_models())
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini"):
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow"):
         if key in body:
             s[key] = bool(body[key])
+    if not s["focus_glow"]:
+        overlay.hide()
+    elif current["task"]:
+        overlay.show()
     save_state()
     return JSONResponse(s)
 

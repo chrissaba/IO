@@ -1146,6 +1146,13 @@ def compact(messages: list[dict], keep: int = 2, trim: int = 1500) -> list[dict]
 
 # callbacks that receive every log record (the web app streams these to the page)
 listeners: list = []
+# part of the title of the window the running task works in ('' = none known); IO's focus glow outlines it
+focus_hint = ""
+
+
+def hint_focus(title: str) -> None:
+    global focus_hint
+    focus_hint = title
 
 
 def log(event: str, **data) -> None:
@@ -1383,6 +1390,16 @@ async def desktop_context(win: ClientSession) -> str:
 
 async def run(task: str, max_steps: int, options: dict | None = None, ask=None, conversation: list[dict] | None = None,
               images: list[Path] | None = None) -> str:
+    """Runs one task (see _run); the focus hint is cleared however it ends."""
+    hint_focus("")
+    try:
+        return await _run(task, max_steps, options, ask, conversation, images)
+    finally:
+        hint_focus("")
+
+
+async def _run(task: str, max_steps: int, options: dict | None = None, ask=None, conversation: list[dict] | None = None,
+               images: list[Path] | None = None) -> str:
     """Runs one task. options: allow_powershell, confirm_risky, browser, files (all bools).
     ask: async callable(question) -> answer, used by ask_user and risky-action confirmations.
     conversation: earlier turns of the chat this message belongs to, as [{"role": "user"|"assistant", "content"}],
@@ -1410,7 +1427,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     async with AsyncExitStack() as stack:
         win_r, win_w = await stack.enter_async_context(stdio_client(
             # through the venv interpreter, not the windows-mcp.exe launcher, which has the venv path baked in
-            StdioServerParameters(command=str(Path(sys.executable).with_name("python.exe")), args=["-m", "windows_mcp", "serve", "--tools", ",".join(windows_tools)]),
+            # with IO's purple focus glow on, Windows-MCP's orange-red after-screenshot flash would clash with it
+            StdioServerParameters(command=str(Path(sys.executable).with_name("python.exe")), args=["-m", "windows_mcp", "serve", "--tools", ",".join(windows_tools)],
+                                  env={"WINDOWS_MCP_DISABLE_FLASH": "1"} if options.get("focus_glow") else None),
             errlog=sys.stderr,
         ))
         win = await stack.enter_async_context(ClientSession(win_r, win_w))
@@ -1562,6 +1581,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     return "Loop not started."
             focus = await asyncio.to_thread(window_in, task)
             if focus:
+                hint_focus(focus)
                 # every screenshot, find and click stays inside this window's content, so nothing beside it gets hit
                 eyes.content = True
                 eyes.brief = True
@@ -1861,6 +1881,12 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
 
                 if loop and focus and name in ("find_on_screen", "look_at_screen", "click_on", "hold_on"):
                     args = {**args, "window": focus}
+                if name in ("find_on_screen", "look_at_screen", "click_on", "hold_on") and args.get("window"):
+                    hint_focus(str(args["window"]))
+                elif name == "App" and args.get("name") and args.get("mode", "launch") in ("launch", "switch"):
+                    hint_focus(str(args["name"]))
+                elif not loop:
+                    hint_focus("")  # working somewhere else: the glow follows the foreground window
                 point = None
                 if loop and focus and name in ("Click", "hold", "Scroll", "Move", "Drag"):
                     loc = args.get("loc") or []

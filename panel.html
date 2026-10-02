@@ -16,21 +16,26 @@
   @font-face { font-family: Lora; src: url(/static/fonts/lora-400.woff2) format("woff2"); font-weight: 400; }
   @font-face { font-family: Lora; src: url(/static/fonts/lora-500.woff2) format("woff2"); font-weight: 500; }
 
-  /* warm palette in the style of the Claude apps: parchment surfaces, ink text, terracotta accent */
+  /* IO's palette, after its indigo icon: cool lavender-grey surfaces, ink text, a violet accent.
+     --accent carries white text (5.6:1 light, 4.5:1 dark); --accent-text is the accent as text on the page.
+     Every text colour, --faint and the status colours included, is at least 4.5:1 on --bg, --rail and --surface.
+     --spark-* are the sparkle squares, faint to bright. */
   :root {
-    --bg: #faf9f5; --rail: #f5f4ef; --surface: #ffffff; --raised: #f0eee6; --hover: #ebe8de;
-    --line: #e8e5da; --line-strong: #dad6c8; --text: #29261b; --muted: #73705f; --faint: #8a8678;
-    --accent: #c96442; --accent-soft: #f6e4dc; --unread: #4a7fd4;
-    --ok: #4b8a5b; --warn: #c27a1c; --bad: #bf4b3d; --bad-soft: #f7e3df; --warn-soft: #f8efdc;
-    --shadow: 0 1px 2px rgb(41 38 27 / .04), 0 4px 14px -6px rgb(41 38 27 / .08);
+    --bg: #faf9fc; --rail: #f4f3f8; --surface: #ffffff; --raised: #efedf5; --hover: #e8e5f0;
+    --line: #e6e3ee; --line-strong: #d6d2e1; --text: #1f1c2c; --muted: #5f5b72; --faint: #716d81;
+    --accent: #6d4ae3; --accent-text: #6d4ae3; --accent-soft: #ece7fc; --unread: #2f80d0;
+    --ok: #37794f; --warn: #986017; --bad: #b44037; --bad-soft: #f9e4e1; --warn-soft: #f8efdc;
+    --spark-1: #c4b5fb; --spark-2: #9a80f5; --spark-3: #6d4ae3;
+    --shadow: 0 1px 2px rgb(31 26 51 / .04), 0 4px 14px -6px rgb(31 26 51 / .1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #262624; --rail: #1f1e1d; --surface: #30302e; --raised: #30302e; --hover: #383734;
-      --line: #393835; --line-strong: #4a4945; --text: #f2f0e8; --muted: #b3b0a3; --faint: #959184;
-      --accent: #d97757; --accent-soft: #46302a; --unread: #6f9be6;
-      --ok: #7fbf8e; --warn: #e3a857; --bad: #e8806f; --bad-soft: #452824; --warn-soft: #433824;
-      --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .4);
+      --bg: #23222a; --rail: #1c1b22; --surface: #2d2c35; --raised: #2d2c35; --hover: #36343f;
+      --line: #37353f; --line-strong: #484651; --text: #f1f0f7; --muted: #aeabbd; --faint: #9492a4;
+      --accent: #7c5cf0; --accent-text: #b4a2fb; --accent-soft: #352d55; --unread: #66a6ec;
+      --ok: #7cc496; --warn: #e3a857; --bad: #ec8476; --bad-soft: #45262a; --warn-soft: #433824;
+      --spark-1: #7c5cf0; --spark-2: #b9a8fb; --spark-3: #ffffff;
+      --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .45);
     }
   }
   :root { color-scheme: light dark; }
@@ -38,8 +43,13 @@
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
          -webkit-font-smoothing: antialiased; overflow: hidden; }
+  /* an app, not a page: the chrome doesn't select on a stray drag, but anything you'd want to copy does */
+  body { user-select: none; cursor: default; }
+  .md, .bubble, .question .q, .ckdetail, .task .title, .task .summary, .item .txt, .dialog p, .pdesc, .ptest, .checklines, .url, .note {
+    user-select: text; cursor: auto; }
+  input, textarea, select { user-select: text; }
   [x-cloak] { display: none !important; }
-  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 9px; border: 3px solid transparent; background-clip: content-box; }
   svg.lucide { width: 15px; height: 15px; stroke-width: 1.6; flex: none; }
@@ -78,7 +88,7 @@
   .menu.titlemenu { top: calc(100% + 4px); bottom: auto; left: 0; right: auto; min-width: 180px; }
   .pinmark { color: var(--faint); display: grid; }
   /* in-app dialogs instead of the browser's "127.0.0.1 says" boxes */
-  .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(20 18 12 / .28); display: grid; place-items: center; padding: 16px; }
+  .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(18 14 34 / .32); display: grid; place-items: center; padding: 16px; }
   .dialog { width: min(400px, 100%); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
             padding: 16px 18px 14px; }
   .dialog h3 { margin: 0 0 4px; font: 400 18px/1.3 Lora, Georgia, serif; }
@@ -117,7 +127,7 @@
   .chatitem .acts button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 2px; border-radius: 5px; display: grid; }
   .chatitem .acts button:hover { color: var(--text); }
   .chatitem .acts button.del:hover { color: var(--bad); }
-  /* status marks like Claude's list: hollow = read, blue = unread reply, terracotta = working */
+  /* status marks like Claude's list: hollow = read, blue = unread reply, violet = working */
   .mk { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid color-mix(in srgb, var(--faint) 75%, transparent); }
   .mk.unread { background: var(--unread); border-color: var(--unread); }
   .mk.busy { background: var(--accent); border-color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
@@ -129,7 +139,9 @@
   .menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% - 2px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
           box-shadow: var(--shadow); padding: 6px; z-index: 20; }
   .menu .menuhead { font-size: 12.5px; color: var(--faint); padding: 4px 8px 6px; }
-  .menu button { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; text-align: left; }
+  .menu button { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; text-align: left;
+                 white-space: nowrap; }
+  .mewrap > .menu { right: auto; min-width: calc(100% - 16px); }  /* a long shortcut widens it past the sidebar rather than wrapping */
   .menu button:hover { background: var(--hover); }
   .menu button.danger { color: var(--bad); }
   .menu kbd { margin-left: auto; font: 11px Geist, sans-serif; color: var(--faint); background: none; border: 0; }
@@ -140,7 +152,6 @@
   .iconbtn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px; border-radius: 7px; display: grid; }
   .iconbtn:hover { background: var(--hover); color: var(--text); }
   .iconbtn.stop:hover { color: var(--bad); }
-  .iconbtn.on { color: var(--warn); }
   main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .mainbody { flex: 1; min-height: 0; overflow-y: auto; }
 
@@ -178,12 +189,22 @@
   .md strong { font-weight: 600; }
   .md code { font: 12.5px "Geist Mono", ui-monospace, monospace; background: var(--raised); border-radius: 4px; padding: 1px 5px; }
   .md pre { background: var(--raised); border-radius: 8px; padding: 10px 13px; overflow-x: auto; } .md pre code { padding: 0; background: none; }
-  .md a { color: var(--accent); }
+  .md a { color: var(--accent-text); }
   .md h1, .md h2, .md h3 { font-size: 1em; font-weight: 600; margin: 1em 0 .35em; }
   .md h1 { font-size: 1.2em; } .md h2 { font-size: 1.08em; }
   .md table { border-collapse: collapse; margin: .4em 0 .8em; font-size: 13.5px; } .md th, .md td { border: 1px solid var(--line); padding: 4px 9px; }
   .md.bad { color: var(--bad); }
   .meta { font-size: 12px; color: var(--faint); margin-top: 6px; }
+  /* under an answer: how long it took and copy (on hover, always on the latest), like Claude's message actions */
+  .msgfoot { display: flex; align-items: center; gap: 4px; margin-top: 4px; min-height: 26px; }
+  .msgfoot .meta { margin: 0; }
+  .copy { width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--faint); display: grid; place-items: center; cursor: pointer;
+          padding: 0; opacity: 0; transition: opacity .15s, background .12s, color .12s; }
+  .msg-agent:hover .copy, .msg-agent.last .copy, .copy:focus-visible, .copy.done { opacity: 1; }
+  .copy:hover { background: var(--hover); color: var(--text); }
+  .copy.done { color: var(--accent-text); }
+  .copy:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -2px; }
+  .copy svg.lucide { width: 14px; height: 14px; }
   /* checklist card, like Claude's progress list */
   .checklist { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px 14px; margin: 0 0 12px; }
   .ck { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; padding: 4px 0; font-size: 13.5px; }
@@ -193,18 +214,18 @@
   .ck .mark svg.lucide { width: 10px; height: 10px; stroke-width: 3.2; }
   .ck.done .mark { background: var(--text); border-color: var(--text); }
   .ck.fail .mark { background: var(--bad); border-color: var(--bad); color: #fff; }
-  .ck.now .mark { border-color: transparent; color: var(--accent); } .ck.now .mark svg.lucide { width: 16px; height: 16px; stroke-width: 2; }
+  .ck.now .mark { border-color: transparent; color: var(--accent-text); } .ck.now .mark svg.lucide { width: 16px; height: 16px; stroke-width: 2; }
   .ck.todo { color: var(--muted); } .ck.fail .cktext { color: var(--bad); }
   .ckdetail { margin-top: 3px; font-size: 12px; color: var(--faint); white-space: pre-wrap; overflow-wrap: anywhere; }
   .ckdetail code { font: 11.5px "Geist Mono", ui-monospace, monospace; color: var(--muted); }
-  .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--text) 40%, var(--muted) 80%); background-size: 200% 100%;
+  .shimmer { background: linear-gradient(90deg, var(--muted) 0%, color-mix(in srgb, var(--accent-text) 45%, var(--text)) 40%, var(--muted) 80%); background-size: 200% 100%;
              -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   .question { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; padding: 11px 14px; margin: 0 0 12px; }
   .question .q { font-size: 14px; }
   .qrow { display: flex; gap: 8px; margin-top: 9px; } .qrow input { flex: 1; }
   /* "New" divider for replies that arrived while you weren't looking */
-  .newline { display: flex; align-items: center; gap: 12px; margin: 6px 0 20px; color: var(--accent); font-size: 12.5px; }
+  .newline { display: flex; align-items: center; gap: 12px; margin: 6px 0 20px; color: var(--accent-text); font-size: 12.5px; }
   .newline i { flex: 1; height: 6px; background: currentColor; opacity: .7;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 0 6 3 T12 3' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") repeat-x center / 12px 6px;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 0 6 3 T12 3' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") repeat-x center / 12px 6px; }
@@ -226,32 +247,51 @@
   .composerwrap { padding: 2px 22px 10px; }
   .home .composerwrap { padding: 0; }
   /* composer: as small as it can be while text stays comfortable; grows with what you type */
-  .composer { max-width: 716px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px;
-              box-shadow: var(--shadow); padding: 9px 7px 5px 13px; }
+  .composer { position: relative; max-width: 716px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px;
+              box-shadow: var(--shadow); padding: 9px 7px 5px 13px; transition: border-color .4s, box-shadow .4s; }
   .composer:focus-within { border-color: color-mix(in srgb, var(--muted) 25%, var(--line-strong)); }
-  /* the suggestion sits in the same grid cell as the textarea, so a long one grows the box */
+  /* IO is working in this chat: the box takes on a violet edge with sparkle just inside its top edge, fading down
+     before the text and out toward the corners */
+  .composer.working { border-color: color-mix(in srgb, var(--accent) 38%, var(--line-strong));
+                      box-shadow: var(--shadow), 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent),
+                                  0 10px 30px -14px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .composer > .spark { position: absolute; left: 0; top: 0; width: 100%; height: 9px; border-radius: 13px 13px 0 0;
+                       -webkit-mask: linear-gradient(90deg, transparent 2%, #000 22%, #000 78%, transparent 98%), linear-gradient(#000 35%, rgb(0 0 0 / .3));
+                       -webkit-mask-composite: source-in; mask-composite: intersect; }
+  /* the sparkle canvas: crisp tiny squares, drawn by Sparkle below; never in the way of the mouse */
+  canvas.spark { display: block; pointer-events: none; }
+  /* the suggestion sits in the same grid cell as the textarea, so a long one grows the box
+     (always .typing > .ghost: a bare .ghost would also hit .btn.ghost buttons and make them unclickable) */
   .typing { display: grid; }
   .typing > textarea, .typing > .ghost { grid-area: 1 / 1; }
-  .composer textarea, .ghost { width: 100%; border: 0; padding: 0 6px 0 0; font: 14px/21px Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  .composer textarea, .typing > .ghost { width: 100%; border: 0; padding: 0 6px 0 0; font: 14px/21px Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
                                white-space: pre-wrap; overflow-wrap: break-word; letter-spacing: normal; }
   .composer textarea { position: relative; display: block; outline: 0; background: none; resize: none; height: 21px; min-height: 21px; max-height: 210px; }
   .composer textarea::placeholder { color: var(--faint); }
-  .ghost { color: transparent; pointer-events: none; }
-  .ghost .hint { color: var(--faint); }
-  .ghost kbd { font: 10.5px/1 Geist, sans-serif; color: var(--faint); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 4px; margin-left: 6px;
+  .typing > .ghost { color: transparent; pointer-events: none; }
+  .typing > .ghost .hint { color: var(--faint); }
+  .typing > .ghost kbd { font: 10.5px/1 Geist, sans-serif; color: var(--faint); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 4px; margin-left: 6px;
                vertical-align: 1px; }
   .composer .row { display: flex; align-items: center; gap: 2px; margin: 3px 0 0 -6px; }
   /* a loop is running in this chat: say so plainly, with the way to stop it right there */
-  .loopbar { max-width: 716px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 8px 6px 11px;
+  .loopbar { position: relative; overflow: hidden; isolation: isolate; max-width: 716px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px;
+             font-size: 12.5px; padding: 6px 8px 6px 11px;
              border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-strong)); border-radius: 10px;
-             background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
-  .loopbar .ic { color: var(--accent); }
+             --loopbg: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); background: var(--loopbg); }
+  /* the sparkle fills the bar, barely there behind the words on the left and brightest toward Stop;
+     the words carry a halo of the bar's colour so they stay readable where it's dense */
+  .loopbar > .spark { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1;
+                      -webkit-mask: linear-gradient(90deg, rgb(0 0 0 / .06), rgb(0 0 0 / .14) 35%, rgb(0 0 0 / .6) 65%, #000 90%);
+                      mask: linear-gradient(90deg, rgb(0 0 0 / .06), rgb(0 0 0 / .14) 35%, rgb(0 0 0 / .6) 65%, #000 90%); }
+  .loopbar .goal, .loopbar small { text-shadow: 0 0 2px var(--loopbg), 0 0 6px var(--loopbg), 0 0 10px var(--loopbg); }
+  .loopbar small { padding: 1px 7px; border-radius: 8px; background: var(--loopbg); box-shadow: 0 0 6px 4px var(--loopbg); }
+  .loopbar .ic { color: var(--accent-text); }
   .loopbar .goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .loopbar .goal b { font-weight: 600; }
   .loopbar small { color: var(--muted); white-space: nowrap; }
   .loopbar button { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 3px 10px; font: inherit; cursor: pointer; }
   .loopbar button:hover { background: var(--hover); }
-  .iconbtn.on { color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+  .iconbtn.on { color: var(--accent-text); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
   .notice { max-width: 716px; margin: 0 auto 6px; font-size: 12px; color: var(--warn); padding: 0 4px; }
   .composer.drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); }
   .attachments { display: flex; gap: 7px; flex-wrap: wrap; margin: 0 0 8px; }
@@ -269,6 +309,7 @@
   .tpl button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 1px; display: grid; }
   .send { width: 28px; height: 28px; border-radius: 8px; border: 0; display: grid; place-items: center; cursor: pointer; color: var(--text); background: none; }
   .send:hover:not(:disabled) { background: var(--hover); } .send:disabled { color: var(--faint); cursor: default; }
+  .send:not(:disabled):not(.stop) { background: var(--accent); color: #fff; } .send:not(:disabled):not(.stop):hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
   .send svg.lucide { width: 16px; height: 16px; }
   .send.stop { background: var(--text); color: var(--bg); border-radius: 50%; width: 24px; height: 24px; margin: 2px; }
   .send.stop svg.lucide { width: 10px; height: 10px; }
@@ -283,9 +324,9 @@
   .modelpick > button:hover { background: var(--hover); color: var(--text); }
   .menu.modelmenu { left: auto; right: 0; bottom: calc(100% + 4px); width: 320px; }
   .modelmenu button { align-items: flex-start; }
-  .modelmenu .opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .modelmenu .opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; white-space: normal; }
   .modelmenu .opt small { color: var(--faint); font-size: 11.5px; }
-  .modelmenu .tick { margin-left: auto; color: var(--accent); }
+  .modelmenu .tick { margin-left: auto; color: var(--accent-text); }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
   .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 
@@ -301,8 +342,8 @@
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .note { font-size: 12.5px; color: var(--muted); }
   .setting { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
-  .setting:first-child { padding-top: 0; } .setting:last-child { border-bottom: 0; padding-bottom: 0; }
-  .setting .txt { flex: 1; font-size: 13.5px; } .setting .txt div:last-child { font-size: 12.5px; color: var(--muted); }
+  .setting:first-child { padding-top: 0; } .setting:last-of-type { border-bottom: 0; padding-bottom: 0; }
+  .setting .txt { flex: 1; font-size: 13.5px; } .setting .txt > div:not(:first-child) { font-size: 12.5px; color: var(--muted); }
   .item { display: flex; align-items: center; gap: 12px; }
   .card.task, .card.item { background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin: 0; padding: 12px 4px; }
   .badge.done { display: none; }
@@ -479,7 +520,7 @@
         <div class="column">
           <template x-for="(m, i) in (chat ? chat.messages : [])" :key="m.task_id">
             <div>
-              <div x-html="turn(m, i)"></div>
+              <div x-effect="setHtml($el, turn(m, i))"></div>
               <template x-if="taskById(m.task_id)?.status === 'waiting'">
                 <div class="msg-agent" style="margin-top:-14px"><div class="question">
                   <div class="q" x-text="qText(taskById(m.task_id))"></div>
@@ -502,15 +543,17 @@
         <div class="notice" x-show="notice" x-text="notice"></div>
         <template x-if="loopTask">
           <div class="loopbar">
+            <canvas class="spark" aria-hidden="true" x-init="sparkle($el, { ramp: 1, sweep: 5200, max: .85 })"></canvas>
             <span class="ic" x-html="ic('repeat', 'sm')"></span>
             <span class="goal" :title="loopTask.text"><b x-text="loopTask.status === 'waiting' ? 'Loop waiting for you:' : 'Looping:'"></b> <span x-text="loopTask.text"></span></span>
             <small x-text="loopSteps(loopTask)"></small>
             <button @click="post(`/api/tasks/${loopTask.id}/stop`)">Stop</button>
           </div>
         </template>
-        <div class="composer" :class="dragging && 'drag'" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
+        <div class="composer" :class="{ drag: dragging, working: chatRunning }" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
              @dragleave="if (--dragDepth <= 0) { dragDepth = 0; dragging = false }"
              @drop.prevent="dragDepth = 0; dragging = false; addFiles($event.dataTransfer.files)">
+          <canvas class="spark" aria-hidden="true" x-show="chatRunning && !loopTask" x-transition.opacity.duration.400ms x-init="sparkle($el, { ramp: 0, fill: 0.4, sweep: 2600, max: 1 })"></canvas>
           <div class="attachments" x-show="attachments.length">
             <template x-for="(a, i) in attachments" :key="i">
               <div class="thumb"><img :src="a"><button @click="attachments.splice(i, 1)" title="Remove"><span class="ic" x-html="ic('x', 'sm')"></span></button></div>
@@ -796,6 +839,8 @@
           <label class="switch"><input type="checkbox" x-model="s.settings.notify" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Keyboard shortcuts</div><div>Ctrl+Alt+Q for a new message, Ctrl+Alt+End to stop everything. Applies after a restart.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.hotkeys" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Focus glow</div><div>While IO works, a purple glow outlines the window it's focused on. It's invisible to IO's own screenshots.</div></div>
+          <label class="switch"><input type="checkbox" :checked="s.settings.focus_glow !== false" @change="s.settings.focus_glow = $event.target.checked; saveSettings()"><span></span></label></div>
       </div>
 
       <h2>Tools</h2>
@@ -901,7 +946,14 @@ function agent() {
         if (t !== this.$refs.task) this.focusComposer();
       });
       window.focusTask = () => { if (this.dialog) this.closeDialog(false); this.newChat(); };
-      window.toggleSteps = (id) => { this.open[id] = !this.open[id]; };
+      // a drag that selected text in a step, or a click inside its details, isn't a request to fold it
+      // (a selection left elsewhere, say in an answer, doesn't count: clicks here don't clear it)
+      window.toggleSteps = (id, e) => {
+        const sel = getSelection(), ck = e?.currentTarget;
+        if (e?.target.closest?.(".ckdetail") || (String(sel) && ck && sel.containsNode(ck, true))) return;
+        this.open[id] = !this.open[id];
+      };
+      window.copyAnswer = (id) => this.copyAnswer(id);
       window.stopTask = (id) => post(`/api/tasks/${id}/stop`).then(() => this.refresh());
       window.rerun = (id) => {
         const t = this.s.tasks.find((x) => x.id === id);
@@ -1070,6 +1122,7 @@ function agent() {
       return this.hasUnseen(c);
     },
     get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
+    get chatRunning() { return !!this.chat && this.chatTasks(this.chat).some((t) => t.status === "running"); },
     loopNext: false,
     get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },
     loopSteps(t) {
@@ -1263,6 +1316,20 @@ function agent() {
         if (nl) nl.scrollIntoView({ block: "start" }); else el.scrollTop = el.scrollHeight;
       }));
     },
+    // only replace a message's HTML when it changed, so a selection in one answer survives another one updating
+    setHtml(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } },
+    copied: "", copyTimer: 0,
+    async copyAnswer(id) {
+      const text = cleanAnswer(this.taskById(id)?.summary);
+      try { await navigator.clipboard.writeText(text); } catch {
+        const ta = Object.assign(document.createElement("textarea"), { value: text });
+        document.body.append(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove();
+        if (!ok) return;
+      }
+      this.copied = id;
+      clearTimeout(this.copyTimer);
+      this.copyTimer = setTimeout(() => { if (this.copied === id) this.copied = ""; }, 1500);
+    },
     turn(m, i) {
       const t = this.taskById(m.task_id);
       if (!t) return `<div class="meta" style="margin:0 0 18px">This message was cleared from history</div>`;
@@ -1273,7 +1340,7 @@ function agent() {
       const items = checklist(t);
       const card = items.length
         ? `<div class="checklist">${items.map((it) => `
-            <div class="ck ${it.state}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}')"` : ""}>
+            <div class="ck ${it.state}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}', event)"` : ""}>
               <span class="mark">${it.state === "done" ? ic("check") : it.state === "fail" ? ic("x") : it.state === "now" ? ic("loader-circle", "spin") : ""}</span>
               <div class="cktext"><span class="${it.state === "now" ? "shimmer" : ""}">${esc(it.text)}</span>
                 ${it.detail && this.open[t.id + ":" + it.key] ? `<div class="ckdetail">${it.detail}</div>` : ""}</div>
@@ -1281,11 +1348,15 @@ function agent() {
         : "";
       const answer = t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "";
       const meta = !busy && secs ? `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>` : "";
+      const done = this.copied === t.id;
+      const copy = answer && !busy ? `<button class="copy ${done ? "done" : ""}" onclick="copyAnswer('${t.id}')" title="${done ? "Copied" : "Copy"}">${ic(done ? "check" : "copy")}</button>` : "";
+      const foot = copy || meta ? `<div class="msgfoot">${meta}${copy}</div>` : "";
+      const last = this.chat && i === this.chat.messages.length - 1;
       const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
       const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
       return `<div class="msg-user">${imgs}${said}</div>${divider}
-        <div class="msg-agent">${card}${answer}
-          ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${meta}</div>`;
+        <div class="msg-agent ${last ? "last" : ""}">${card}${answer}
+          ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${foot}</div>`;
     },
 
     // ----- tasks & history -----
@@ -1413,6 +1484,99 @@ function agent() {
     },
   };
 }
+
+// Claude's Ultracode look: a field of tiny squares twinkling in violet, lavender and white (colours from --spark-1..3).
+// ramp 1 makes it denser and brighter toward the right end, ramp 0 keeps it even at fill (the share of squares lit);
+// sweep is how many ms a soft bright band takes to cross (0: none);
+// max is the peak opacity. It only draws while the canvas is on screen, the window is showing and motion is allowed.
+class Sparkle {
+  static all = new Set();
+  static frame = 0;
+  static last = 0;
+  static still = matchMedia("(prefers-reduced-motion: reduce)");
+
+  constructor(canvas, opts) {
+    this.canvas = canvas;
+    this.g = canvas.getContext("2d");
+    this.o = { size: 2, gap: 1, ramp: 1, fill: 0.2, sweep: 0, max: 0.9, ...opts };
+    this.cells = [];
+    this.seen = false;
+    this.resize = new ResizeObserver(() => this.layout());
+    this.resize.observe(canvas);
+    this.view = new IntersectionObserver(([e]) => { this.seen = e.isIntersecting; Sparkle.kick(); });
+    this.view.observe(canvas);
+    Sparkle.all.add(this);
+  }
+
+  // squares snap to whole device pixels so they stay crisp at any display scaling
+  layout() {
+    const c = this.canvas, dpr = devicePixelRatio || 1, o = this.o;
+    c.width = Math.round(c.clientWidth * dpr);
+    c.height = Math.round(c.clientHeight * dpr);
+    const size = Math.max(1, Math.round(o.size * dpr)), pitch = size + Math.max(1, Math.round(o.gap * dpr));
+    const cols = Math.floor((c.width + pitch - size) / pitch), rows = Math.floor((c.height + pitch - size) / pitch);
+    const x0 = Math.floor((c.width - (cols - 1) * pitch - size) / 2), y0 = Math.floor((c.height - (rows - 1) * pitch - size) / 2);
+    const css = getComputedStyle(c);
+    this.colors = ["--spark-1", "--spark-2", "--spark-3"].map((v) => css.getPropertyValue(v).trim() || "#8b6cf5");
+    this.size = size;
+    this.cells = [];
+    for (let i = 0; i < cols; i++) {
+      const u = cols > 1 ? i / (cols - 1) : 0;
+      for (let j = 0; j < rows; j++) {
+        // brighter tones are commoner toward the bright end
+        const hi = o.ramp ? 0.1 + 0.45 * u : 0.22, r = Math.random();
+        this.cells.push({ x: x0 + i * pitch, y: y0 + j * pitch, u, seed: Math.random(), phase: Math.random() * 6.283,
+                          speed: 0.25 + Math.random() * 0.9, tone: r < hi ? 2 : r < hi + 0.38 ? 1 : 0 });
+      }
+    }
+    this.cells.sort((a, b) => a.tone - b.tone);  // one fillStyle change per tone
+    this.draw(Sparkle.still.matches ? 1600 : performance.now());
+  }
+
+  draw(t) {
+    const { g, o, size } = this, w = this.canvas.width, h = this.canvas.height;
+    g.clearRect(0, 0, w, h);
+    const at = o.sweep ? ((t / o.sweep) % 1) * 1.6 - 0.3 : -9;  // the band starts and ends off the edges
+    let tone = -1;
+    for (const c of this.cells) {
+      const band = o.sweep ? Math.exp(-(((c.u - at) / 0.12) ** 2)) : 0;
+      const density = Math.min(1, (o.ramp ? 0.07 + 0.78 * c.u ** 1.6 : o.fill) + band * 0.6);
+      const present = Math.min(1, (density - c.seed) / 0.08);  // fade in and out at the density edge, never pop
+      if (present <= 0) continue;
+      const twinkle = 0.5 + 0.5 * Math.sin(t * 0.006283 * c.speed + c.phase);
+      const glow = (o.ramp ? 0.35 + 0.65 * c.u : 0.7) + band * 0.7;
+      const a = Math.min(1, (0.1 + 0.9 * twinkle ** 3) * glow) * present * o.max;
+      if (a < 0.02) continue;
+      if (c.tone !== tone) { tone = c.tone; g.fillStyle = this.colors[tone]; }
+      g.globalAlpha = a;
+      g.fillRect(c.x, c.y, size, size);
+    }
+    g.globalAlpha = 1;
+  }
+
+  // one shared animation loop at about 30 fps, idle unless some sparkle is on screen
+  static kick() {
+    if (Sparkle.frame) return;
+    const tick = (t) => {
+      Sparkle.frame = 0;
+      let live = false;
+      for (const s of Sparkle.all) {
+        if (!s.canvas.isConnected) { s.resize.disconnect(); s.view.disconnect(); Sparkle.all.delete(s); continue; }
+        if (!s.seen || document.hidden || window.panelHidden || Sparkle.still.matches) continue;
+        live = true;
+        if (t - Sparkle.last >= 32) s.draw(t);
+      }
+      if (t - Sparkle.last >= 32) Sparkle.last = t;
+      if (live) Sparkle.frame = requestAnimationFrame(tick);
+    };
+    Sparkle.frame = requestAnimationFrame(tick);
+  }
+}
+function sparkle(canvas, opts) { return new Sparkle(canvas, opts); }
+window.addEventListener("focus", () => Sparkle.kick());  // also how the tray's Open tells the page it's showing again
+document.addEventListener("visibilitychange", () => Sparkle.kick());
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => Sparkle.all.forEach((s) => s.layout()));
+Sparkle.still.addEventListener("change", () => { Sparkle.all.forEach((s) => s.layout()); Sparkle.kick(); });
 
 function niceTool(name) {
   return ({ App: "opening an app", Snapshot: "reading the screen", Click: "clicking", Type: "typing", type_text: "typing", Shortcut: "pressing keys",

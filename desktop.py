@@ -292,7 +292,7 @@ def theme_background() -> str:
             light = winreg.QueryValueEx(key, "AppsUseLightTheme")[0]
     except OSError:
         light = 1
-    return "#faf9f5" if light else "#262624"
+    return "#faf9fc" if light else "#23222a"
 
 
 async def quit_route(_request) -> JSONResponse:
@@ -381,7 +381,8 @@ def main() -> None:
 
     start_hidden = "--hidden" in sys.argv
     window = webview.create_window(APP_NAME, URL, width=1000, height=760, min_size=(480, 420), hidden=start_hidden,
-                                   js_api=WindowApi(), shadow=False, background_color=theme_background())
+                                   js_api=WindowApi(), shadow=False, background_color=theme_background(),
+                                   text_select=True)  # pywebview's default makes every word in the page unselectable
     window.events.closing += on_closing
     window.events.before_show += install_frame
     window.events.shown += set_window_icon
