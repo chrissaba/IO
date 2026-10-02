@@ -105,7 +105,8 @@ PICK THE RIGHT TOOL (cheapest reliable one first)
 - App launches or switches to an app by name. After launching, the app may open behind another window: switch to it before typing.
 - Click/Type take loc=[x, y] from Snapshot (or from find_on_screen). type_text types into whatever has focus; Shortcut presses keys (ctrl+s, alt+tab, enter).
 - find_on_screen finds something visually (icons, images, games) and returns x,y to Click. look_at_screen answers a question about what a monitor shows.
-- FileSystem reads and writes files. Scrape reads a web page as text when you only need to read it.
+- FileSystem reads and writes files. For web pages prefer browser_open and browser_read; Scrape is a quick fallback that some sites (like Wikipedia) block with 403.
+- If a tool fails, try another way before giving up (Scrape blocked: browser_open the page; one site down: another source).
 - For anything on a website or in a browser, call browser_open first, then use the browser_* tools (click and type by the element refs in the page snapshot). For a fact on a long page, call browser_read with find set to a few words instead of re-reading snapshots. {browser_where} Never drive Chrome or Edge windows with App, Click, Type or Shortcut, and never launch a browser with App.
 - remember saves a lasting fact the user will want reused (a path, a preference).
 
@@ -709,6 +710,22 @@ def local_chat(system: str, user: str, max_tokens: int = 300) -> str:
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
 
+RESOLVE_SYSTEM = """You turn the user's latest chat message into a standalone request, using the conversation before it.
+Resolve words like "it", "that", "the moon", "again", "what about..." from what was being discussed (for example after
+"What is IO?" answered about the assistant IO, "what about the moon?" means "What is Io, the moon of Jupiter?").
+Keep the user's intent and wording otherwise. If the message already stands alone, return it unchanged.
+Output only the rewritten request, one line."""
+
+
+def resolve_followup(task: str, conversation: list[dict]) -> str:
+    turns = []
+    for m in conversation[-8:]:
+        content = m["content"] if isinstance(m["content"], str) else ""
+        turns.append(f"{m['role']}: {clean_summary(content)[:400]}")
+    text = local_chat(RESOLVE_SYSTEM, "Conversation:\n" + "\n".join(turns) + f"\n\nLatest message: {task}", max_tokens=80)
+    return text.splitlines()[0].strip().strip('"') if text else task
+
+
 def check_work(task: str, steps: list[str], answer: str) -> str:
     """'' when the work looks done; otherwise what is missing, in one sentence."""
     verdict = local_chat(CHECK_SYSTEM, f"Request: {task}\n\nActions and results:\n" + "\n".join(steps[-8:]) +
@@ -833,8 +850,17 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             # next to the task, where a small model actually reads it (it overlooks notes in the system prompt)
             memo = "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:])
             prompt = (f"Your saved notes (use them when relevant):\n{memo}\n\n" if notes else "") + (f"{skills}\n\n" if skills else "") + f"Task: {task}"
+        standalone = task
         if conversation:
-            prompt += "\n\n(This continues the conversation above; resolve words like 'it', 'that', or 'again' from it.)"
+            try:
+                standalone = await asyncio.to_thread(resolve_followup, task, conversation) or task
+            except Exception as e:
+                log("warning", text=f"couldn't resolve the follow-up: {e}")
+            if standalone.strip().lower() != task.strip().lower():
+                log("resolved", text=standalone)
+                prompt += f"\n\n(This continues the conversation above. In context, the user means: {standalone})"
+            else:
+                prompt += "\n\n(This continues the conversation above; resolve words like 'it', 'that', or 'again' from it.)"
         parts = []
         for p in images or []:
             try:
@@ -910,7 +936,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             context = "\n\n".join(p for p in parts if p)
             try:
                 t0 = time.time()
-                text = await asyncio.to_thread(planner.plan_local, task, context, BOSS_URL, BOSS_MODEL, history)
+                text = await asyncio.to_thread(planner.plan_local, standalone, context, BOSS_URL, BOSS_MODEL, history)
             except Exception as e:
                 log("warning", text=f"planning failed: {e}")
                 return
