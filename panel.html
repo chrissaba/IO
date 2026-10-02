@@ -778,6 +778,11 @@
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
+        <div class="setting"><div class="txt"><div>Ask Gemini when a loop is stuck</div>
+            <div>Off keeps IO fully local. On, a loop that is still circling after research asks Gemini in your Chrome's IO tab group
+              for advice: text only (no screenshots), at most once every 5 minutes. It uses your Google account, and automated use
+              may go against Gemini's terms.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
       </div>
       <h2>App</h2>
       <div class="card">

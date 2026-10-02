@@ -57,7 +57,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast",
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False,
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -354,6 +354,7 @@ async def worker() -> None:
         current["task"] = task
         options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode", "model_mode")}
         options["chrome_token"] = chrome_token()
+        options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -708,7 +709,7 @@ async def save_settings(request: Request) -> JSONResponse:
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
         s["model_mode"] = body["model_mode"]
         asyncio.create_task(switch_models())
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog"):
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini"):
         if key in body:
             s[key] = bool(body[key])
     save_state()

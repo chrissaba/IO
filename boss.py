@@ -743,6 +743,15 @@ RESEARCH_TOOL = {
                        "required": ["question"]},
     },
 }
+ASK_GEMINI_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ask_gemini",
+        "description": "Ask a much stronger model (Gemini) for advice when you're stuck after research. Send one specific question; at most once every 5 minutes.",
+        "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "What you're stuck on, specifically"}},
+                       "required": ["question"]},
+    },
+}
 RESEARCH_SYSTEM = """You turn web search results and pages into practical notes for an assistant that is doing a task on a PC.
 Answer the question for that task in at most 150 words: concrete steps, the names of buttons, menus and items, what to
 do first and what to avoid. Only use what the sources say. Output only the notes."""
@@ -780,6 +789,88 @@ class Researcher:
                 log("warning", text=f"research couldn't read {url[:80]}: {e}")
         notes = await asyncio.to_thread(local_chat, RESEARCH_SYSTEM, f"Task: {task}\nQuestion: {question}\n\n" + "\n\n".join(sources)[:12000], 450, False)
         return notes or "error: couldn't make notes from the results"
+
+
+GEMINI_URL = "https://gemini.google.com/app"
+GEMINI_EVERY = 300  # seconds between questions: an opt-in helper for when a loop is stuck, not a chat partner
+GEMINI_SEND_JS = """() => {
+  const ed = document.querySelector('rich-textarea .ql-editor, div.ql-editor[contenteditable]');
+  if (!ed) return 'no-editor';
+  ed.focus();
+  document.execCommand('insertText', false, %s);
+  return 'ok';
+}"""
+GEMINI_CLICK_SEND_JS = """() => {
+  const b = [...document.querySelectorAll('button')].find(b => /send/i.test(b.getAttribute('aria-label') || '') && !b.disabled);
+  if (!b) return 'no-send';
+  b.click();
+  return 'ok';
+}"""
+GEMINI_READ_JS = """() => {
+  const r = [...document.querySelectorAll('model-response message-content, message-content')];
+  const busy = !![...document.querySelectorAll('button')].find(b => /stop/i.test(b.getAttribute('aria-label') || ''));
+  return JSON.stringify({n: r.length, busy, text: r.length ? r[r.length - 1].innerText : ''});
+}"""
+GEMINI_PROMPT = """I'm an AI agent running on someone's Windows PC, working on this goal on my own: {goal}
+I'm stuck and would like advice from a stronger model.
+
+What I learned from guides:
+{guide}
+
+What the screen shows now:
+{screen}
+
+My recent actions:
+{actions}
+
+My question: {question}
+Reply with at most 120 words: concrete next steps (which button, menu or item, in order), and what I may be misunderstanding."""
+
+
+class Gemini:
+    """Opt-in: asks Gemini in the user's own Chrome (IO's tab group) for advice. Text only, a fresh chat each time,
+    and at most once every GEMINI_EVERY seconds."""
+
+    def __init__(self, stack: AsyncExitStack, token: str) -> None:
+        self.stack, self.token, self.session, self.last = stack, token, None, 0.0
+
+    async def _session(self):
+        if self.session is None:
+            r, w = await self.stack.enter_async_context(stdio_client(browser_params({"browser_mode": "chrome", "chrome_token": self.token}), errlog=sys.stderr))
+            self.session = await self.stack.enter_async_context(ClientSession(r, w, client_info=BROWSER_CLIENT))
+            await self.session.initialize()
+        return self.session
+
+    def ready_in(self) -> int:
+        return max(0, round(self.last + GEMINI_EVERY - time.time()))
+
+    async def ask(self, prompt: str) -> str:
+        if wait := self.ready_in():
+            return f"error: Gemini was asked recently; it can be asked again in {wait}s. Keep going with what you have."
+        self.last = time.time()
+        s = await self._session()
+        await s.call_tool("browser_navigate", {"url": GEMINI_URL})
+        await asyncio.sleep(2)
+        sent = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_SEND_JS % json.dumps(prompt)})))
+        if "no-editor" in sent:
+            return "error: Gemini's page isn't ready (sign in to gemini.google.com in Chrome)"
+        await asyncio.sleep(0.5)
+        clicked = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_CLICK_SEND_JS})))
+        if "no-send" in clicked:
+            await s.call_tool("browser_press_key", {"key": "Enter"})
+        text, same = "", 0
+        for _ in range(60):  # up to about 2 minutes for Pro to think and answer
+            await asyncio.sleep(2)
+            try:
+                state = json.loads(page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_READ_JS}))))
+            except ValueError:
+                continue
+            new = state.get("text", "").strip()
+            same = same + 1 if new and new == text and not state.get("busy") else 0
+            text = new
+            if same >= 2:
+                break
+        return text[:2000] if text else "error: no answer from Gemini"
 
 
 async def meanings_hint(session, page: str, task: str) -> str:
@@ -1295,6 +1386,28 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             log("loop", goal=task, window=focus)
             tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack)
+            gemini = Gemini(stack, options.get("chrome_token", "")) if options.get("ask_gemini") and options.get("chrome_token") else None
+            if gemini:
+                tools.append(ASK_GEMINI_TOOL)
+                if isinstance(messages[head - 1]["content"], str):
+                    messages[head - 1]["content"] += ("\n- When research hasn't helped and you're still stuck, call ask_gemini with a specific question "
+                                                      "(a stronger model; at most once every 5 minutes).")
+
+            async def consult(question: str) -> str:
+                prompt = GEMINI_PROMPT.format(goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
+                                              actions="\n".join(actions[-10:]) or "(none yet)", question=question)
+                t0 = time.time()
+                try:
+                    answer = await gemini.ask(prompt)
+                except Exception as e:
+                    answer = f"error: couldn't reach Gemini: {e}"
+                if focus:
+                    await asyncio.to_thread(focus_window, focus)  # Chrome may have come to the front: back to the app
+                log("gemini", question=question, secs=round(time.time() - t0, 1), answer=answer[:800])
+                if not answer.startswith("error"):
+                    guide.append(f"(Gemini on: {question}) {answer[:900]}")
+                    pin_guide()
+                return answer
             guide: list[str] = []
 
             def pin_guide() -> None:
@@ -1317,7 +1430,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
             except Exception as e:
                 log("warning", text=f"couldn't research the goal first: {e}"[:300])
-        last_research = 0
+        last_research = researches = 0
+        if not loop:
+            gemini = None
 
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
@@ -1347,6 +1462,11 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
                 except Exception as e:
                     log("warning", text=f"couldn't research: {e}"[:300])
+                researches += 1
+                if gemini and researches >= 2 and not gemini.ready_in():
+                    advice = await consult(f"I've been at this for {step} steps and keep circling. What should I do next to make progress?")
+                    if not advice.startswith("error"):
+                        messages.append({"role": "user", "content": f"Advice from Gemini:\n{advice[:900]}\nFollow it."})
             if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
                 stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
             else:
@@ -1588,6 +1708,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "ask_gemini" and loop and gemini:
+                    result = await consult(str(args.get("question") or "What should I do next?"))
                 elif name == "research" and loop:
                     last_research = step
                     try:
