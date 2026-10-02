@@ -393,8 +393,8 @@ class Eyes:
     Smart mode: the boss (Qwen) does both with its own vision."""
 
     def __init__(self, mode: str = "fast") -> None:
-        self.mode = mode
-        if mode == "smart":
+        self.mode = "smart" if mode in ("smart", "balanced") else "fast"  # the Qwen modes see for themselves
+        if self.mode == "smart":
             self.client, self.model = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=180), BOSS_MODEL
         else:
             self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL

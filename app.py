@@ -138,8 +138,8 @@ def boss_up() -> bool:
         return False
 
 
-BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd"}
-BOSS_NAMES = {"fast": "gemma", "smart": "qwen"}  # what the loaded model's file name contains
+BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd", "balanced": "start-qwen36-server.cmd"}
+BOSS_NAMES = {"fast": "gemma", "smart": "qwen3.8", "balanced": "qwen3.6"}  # what the loaded model's file name contains
 
 
 def boss_model_path() -> str:
@@ -166,7 +166,7 @@ async def switch_models() -> None:
             await asyncio.sleep(2)
         mode = state["settings"].get("model_mode", "fast")
         status["boss"] = "switching model"
-        if mode == "smart":
+        if mode != "fast":
             await ensure_eyes()  # unloads UI-TARS
         await asyncio.to_thread(stop_boss_server)
         await asyncio.sleep(2)
@@ -184,7 +184,7 @@ async def ensure_boss() -> None:
             return
         await asyncio.to_thread(stop_boss_server)  # the other mode's model is loaded
         await asyncio.sleep(2)
-    status["boss"] = "starting Qwen 3.8 27B" if mode == "smart" else "starting model"
+    status["boss"] = {"smart": "starting Qwen 3.8 27B", "balanced": "starting Qwen 3.6 35B-A3B"}.get(mode, "starting model")
     log_file = open(HERE / "logs" / "boss-server.log", "a", encoding="utf-8")
     subprocess.Popen(
         ["cmd", "/c", str(HERE / BOSS_CMDS[mode])],
@@ -211,7 +211,7 @@ async def ensure_eyes() -> None:
     """Makes sure UI-TARS is loaded in Unsloth Studio, opening Studio first if needed (e.g. at login).
     In Smart mode Qwen is its own eyes, so UI-TARS is unloaded instead to leave room on the GPU."""
     key = boss.studio_key()
-    if state["settings"].get("model_mode") == "smart":
+    if state["settings"].get("model_mode", "fast") != "fast":
         try:
             await asyncio.to_thread(http_json, f"{STUDIO_URL}/v1/unload", {"model_path": boss.EYES_MODEL}, 60, key)
         except Exception:
@@ -456,7 +456,7 @@ async def watchdog() -> None:
                 print("watchdog: boss model down, restarting")
                 await ensure_boss()
             models = studio_models(boss.studio_key())
-            if state["settings"].get("model_mode") != "smart" and (
+            if state["settings"].get("model_mode", "fast") == "fast" and (
                     not models or not any(m["id"] == boss.EYES_MODEL and m.get("loaded") for m in models)):
                 print("watchdog: UI-TARS not loaded, restoring")
                 await ensure_eyes()
@@ -699,7 +699,7 @@ async def save_settings(request: Request) -> JSONResponse:
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
-    if body.get("model_mode") in ("fast", "smart") and body["model_mode"] != s.get("model_mode"):
+    if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
         s["model_mode"] = body["model_mode"]
         asyncio.create_task(switch_models())
     for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog"):
