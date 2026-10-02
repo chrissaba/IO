@@ -384,9 +384,20 @@ def capture_area(display: int, window: str) -> tuple[tuple[int, int, int, int], 
     return rects[display], ""
 
 
+QWEN_POINT_PROMPT = ("Find this on the screenshot: {target}\nAnswer only with JSON like {{\"point_2d\": [x, y]}}, the centre "
+                     "of it, with x and y on a 0-1000 scale across the image's width and height.")
+
+
 class Eyes:
-    def __init__(self) -> None:
-        self.client = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120)
+    """Where to click and what's on screen. Fast mode: UI-TARS in Unsloth Studio finds things, the boss describes.
+    Smart mode: the boss (Qwen) does both with its own vision."""
+
+    def __init__(self, mode: str = "fast") -> None:
+        self.mode = mode
+        if mode == "smart":
+            self.client, self.model = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=180), BOSS_MODEL
+        else:
+            self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL
 
     def find(self, description: str, display: int = 0, window: str = "") -> dict:
         (left, top, right, bottom), err = capture_area(display, window)
@@ -398,20 +409,29 @@ class Eyes:
         shot.resize((iw, ih)).save(buf, format="PNG")
         url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
+        prompt = QWEN_POINT_PROMPT if self.mode == "smart" else EYES_PROMPT
         reply = self.client.chat.completions.create(
-            model=EYES_MODEL,
+            model=self.model,
             temperature=0,
-            max_tokens=60,
+            max_tokens=400 if self.mode == "smart" else 60,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {"type": "image_url", "image_url": {"url": url}},
-                        {"type": "text", "text": EYES_PROMPT.format(target=description)},
+                        {"type": "text", "text": prompt.format(target=description)},
                     ],
                 }
             ],
         ).choices[0].message.content or ""
+        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
+        if self.mode == "smart":
+            m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", reply)
+            if not m:
+                return {"error": "could not locate it", "eyes_said": reply[-300:]}
+            x = left + float(m.group(1)) / 1000 * (right - left)
+            y = top + float(m.group(2)) / 1000 * (bottom - top)
+            return {"x": round(x), "y": round(y)}
         m = re.search(r"\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", reply)
         if not m:
             return {"error": "could not locate it", "eyes_said": reply[-300:]}
@@ -892,7 +912,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     }
     (HERE / "logs").mkdir(exist_ok=True)
     boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
-    eyes = Eyes()
+    eyes = Eyes(options.get("model_mode", "fast"))
 
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:

@@ -57,7 +57,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge",
+    "browser_mode": "edge", "model_mode": "fast",
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -138,19 +138,61 @@ def boss_up() -> bool:
         return False
 
 
+BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd"}
+BOSS_NAMES = {"fast": "gemma", "smart": "qwen"}  # what the loaded model's file name contains
+
+
+def boss_model_path() -> str:
+    try:
+        return str(http_json("http://127.0.0.1:8090/props", timeout=3).get("model_path", "")).lower()
+    except Exception:
+        return ""
+
+
+def stop_boss_server() -> None:
+    """Stops the llama-server on the boss port, so the other model can load."""
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | Where-Object { $_.CommandLine -like '*--port 8090*' } | "
+                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+
+
+switching = asyncio.Lock()
+
+
+async def switch_models() -> None:
+    """Fast <-> Smart: free the GPU first (UI-TARS out for Smart, Qwen out for Fast), then load the other."""
+    async with switching:
+        while current["task"] is not None:  # never pull the model out from under a running task
+            await asyncio.sleep(2)
+        mode = state["settings"].get("model_mode", "fast")
+        status["boss"] = "switching model"
+        if mode == "smart":
+            await ensure_eyes()  # unloads UI-TARS
+        await asyncio.to_thread(stop_boss_server)
+        await asyncio.sleep(2)
+        await ensure_boss()
+        if mode == "fast":
+            await ensure_eyes()
+
+
 async def ensure_boss() -> None:
+    mode = state["settings"].get("model_mode", "fast")
     if boss_up():
-        status["boss"] = "ready"
-        return
-    status["boss"] = "starting model"
+        path = await asyncio.to_thread(boss_model_path)
+        if not path or BOSS_NAMES[mode] in path:
+            status["boss"] = "ready"
+            return
+        await asyncio.to_thread(stop_boss_server)  # the other mode's model is loaded
+        await asyncio.sleep(2)
+    status["boss"] = "starting Qwen 3.8 27B" if mode == "smart" else "starting model"
     log_file = open(HERE / "logs" / "boss-server.log", "a", encoding="utf-8")
     subprocess.Popen(
-        ["cmd", "/c", str(HERE / "start-boss-server.cmd")],
+        ["cmd", "/c", str(HERE / BOSS_CMDS[mode])],
         stdout=log_file,
         stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    for _ in range(120):
+    for _ in range(300):  # Qwen 27B takes longer to load
         await asyncio.sleep(1)
         if boss_up():
             status["boss"] = "ready"
@@ -166,8 +208,16 @@ def studio_models(key: str) -> list[dict] | None:
 
 
 async def ensure_eyes() -> None:
-    """Makes sure UI-TARS is loaded in Unsloth Studio, opening Studio first if needed (e.g. at login)."""
+    """Makes sure UI-TARS is loaded in Unsloth Studio, opening Studio first if needed (e.g. at login).
+    In Smart mode Qwen is its own eyes, so UI-TARS is unloaded instead to leave room on the GPU."""
     key = boss.studio_key()
+    if state["settings"].get("model_mode") == "smart":
+        try:
+            await asyncio.to_thread(http_json, f"{STUDIO_URL}/v1/unload", {"model_path": boss.EYES_MODEL}, 60, key)
+        except Exception:
+            pass
+        status["eyes"] = "ready"
+        return
     models = studio_models(key)
     if models is None and STUDIO_EXE.exists():
         status["eyes"] = "opening Unsloth Studio"
@@ -302,7 +352,7 @@ async def worker() -> None:
             await ensure_boss()
         task.update(status="running", started=time.time())
         current["task"] = task
-        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode")}
+        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode", "model_mode")}
         options["chrome_token"] = chrome_token()
         own = task.get("images") or []
         imgs = own or earlier_images(task)
@@ -406,7 +456,8 @@ async def watchdog() -> None:
                 print("watchdog: boss model down, restarting")
                 await ensure_boss()
             models = studio_models(boss.studio_key())
-            if not models or not any(m["id"] == boss.EYES_MODEL and m.get("loaded") for m in models):
+            if state["settings"].get("model_mode") != "smart" and (
+                    not models or not any(m["id"] == boss.EYES_MODEL and m.get("loaded") for m in models)):
                 print("watchdog: UI-TARS not loaded, restoring")
                 await ensure_eyes()
         await asyncio.sleep(30)
@@ -648,6 +699,9 @@ async def save_settings(request: Request) -> JSONResponse:
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
+    if body.get("model_mode") in ("fast", "smart") and body["model_mode"] != s.get("model_mode"):
+        s["model_mode"] = body["model_mode"]
+        asyncio.create_task(switch_models())
     for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog"):
         if key in body:
             s[key] = bool(body[key])
