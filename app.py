@@ -59,7 +59,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "focus_glow": True, "theme": "system",
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "advisor_role": "director", "focus_glow": True, "theme": "system",
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -393,6 +393,7 @@ async def worker() -> None:
         options["chrome_token"] = chrome_token()
         options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
         options["gemini_mode"] = state["settings"].get("gemini_mode", "private")
+        options["advisor_role"] = state["settings"].get("advisor_role", "director")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
@@ -750,6 +751,8 @@ async def save_settings(request: Request) -> JSONResponse:
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
     if body.get("theme") in ("system", "light", "dark"):
         s["theme"] = body["theme"]
+    if body.get("advisor_role") in ("director", "advisor"):
+        s["advisor_role"] = body["advisor_role"]
     if body.get("gemini_mode") in ("private", "account", "duck"):
         s["gemini_mode"] = body["gemini_mode"]
     if body.get("browser_mode") in ("edge", "chrome"):

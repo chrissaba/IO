@@ -837,10 +837,14 @@
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
-        <div class="setting"><div class="txt"><div>Ask a stronger AI when a loop is stuck</div>
-            <div>Off keeps IO fully local. On, a loop asks a stronger AI for a plan when it starts and for advice when it's still circling after research, about what
-              it's working on, at most once every 2 minutes. Automated use may go against Gemini's terms.</div></div>
+        <div class="setting"><div class="txt"><div>Use a stronger AI in loops</div>
+            <div>Off keeps IO fully local. On, loops work with a stronger web AI (chosen below), as their director or an advisor.
+              Automated use may go against the chat site's terms.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Its role</div>
+            <div x-show="s.settings.advisor_role !== 'advisor'">Director: it sees the window, the tools and what just happened, and decides every next action. Qwen carries them out.</div>
+            <div x-show="s.settings.advisor_role === 'advisor'">Advisor: it plans the start and helps when the loop is stuck. Qwen decides each action.</div></div>
+          <select x-model="s.settings.advisor_role" @change="saveSettings()"><option value="director">Director</option><option value="advisor">Advisor</option></select></div>
         <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Which AI to ask</div>
             <div x-show="s.settings.gemini_mode === 'duck'">Duck.ai: DuckDuckGo's private chat, no account, in your Chrome's IO tab group, with a screenshot of the window. Its chat history is wiped after each question.</div>
             <div x-show="!['account', 'duck'].includes(s.settings.gemini_mode)">Private Gemini: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
@@ -1656,6 +1660,7 @@ function checklist(t) {
   const hidden = new Set(["Snapshot", "Wait", "WaitFor", "browser_snapshot", "browser_wait_for"]);  // bookkeeping, not progress
   const isError = (r) => /^(error|\d+ validation error)|Error calling tool|did not allow/i.test(r || "");
   events.forEach((e, i) => {
+    if (e.event === "director" && e.thoughts) { items.push({ key: i, state: "done", text: "Director: " + short(e.thoughts, 90), detail: `<div>${esc(e.thoughts)}</div><div>${esc((e.actions || []).join(" → "))}</div>` }); return; }
     if (e.event === "progress" && e.summary) { items.push({ key: i, state: "done", text: "Progress: " + short(e.summary, 90), detail: `<div>${esc(e.summary)}</div>` }); return; }
     if (e.event !== "tool" || (hidden.has(e.name) && !isError(e.result))) return;
     const failed = isError(e.result);

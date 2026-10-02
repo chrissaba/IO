@@ -23,6 +23,7 @@ import time
 import urllib.parse
 import urllib.request
 from contextlib import AsyncExitStack
+from types import SimpleNamespace
 from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters, types
@@ -751,7 +752,7 @@ ASK_GEMINI_TOOL = {
     "type": "function",
     "function": {
         "name": "ask_gemini",
-        "description": "Ask a much stronger model for advice when you're stuck after research; it also sees the window you're working in. Send one specific question; at most once every 2 minutes.",
+        "description": "Ask a much stronger model for advice when you're stuck after research; it also sees the window you're working in. Send one specific question.",
         "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "What you're stuck on, specifically"}},
                        "required": ["question"]},
     },
@@ -796,7 +797,7 @@ class Researcher:
 
 
 GEMINI_URL = "https://gemini.google.com/app"
-GEMINI_EVERY = 120  # seconds between questions: a plan at the start, then help when a loop is stuck, not a chat partner
+GEMINI_EVERY = 0  # seconds between questions; no limit: each answer takes 20-90s anyway
 ADVISOR_MAX_CHARS = {"DuckAI": 4400, "Gemini": 8000}  # Duck.ai refuses messages over 4500 characters
 
 
@@ -857,6 +858,70 @@ My recent actions:
 
 {shot}My question: {question}
 Reply with at most 120 words: concrete next steps (which button, menu or item, in order), and what I may be misunderstanding."""
+
+
+# Director mode: the stronger model is the loop's brain. Each round it sees the goal, the window, what IO learned and what
+# its last actions did, and answers with the next actions as JSON, like an API call. The local model only carries them out
+# (it still finds things on screen for click_on/hold_on), and decides for itself only when the director can't be reached.
+DIRECTOR_PROMPT = """You are the director of IO, an AI agent that operates a Windows PC by itself. You decide IO's next actions; a smaller
+local model carries them out exactly. It finds things on screen from your descriptions, so describe each target by what it
+looks like and where it is (e.g. "the red Fire button at the bottom right").
+
+Goal (it never ends; the user stops it): {goal}
+{shot}
+What IO learned from guides:
+{guide}
+
+{screen}Recent actions and their results, oldest first:
+{history}
+
+Tools:
+{catalog}
+
+Reply with ONLY a JSON object, no other text:
+{{"thoughts": "<one sentence: what you see and why these actions>", "actions": [{{"tool": "<tool name>", "args": {{...}}}}]}}
+Give 1 to 8 actions to do next, in order. Use wait when the game needs time. After they run you'll get the results and a new
+screenshot. If an action fails, the rest are skipped and you're asked again."""
+
+
+def tool_catalog(tools: list[dict]) -> str:
+    """One line per tool for the director: name, arguments and what it does."""
+    lines = []
+    for t in tools:
+        f = t["function"]
+        params = ", ".join(k for k in f.get("parameters", {}).get("properties", {}) if k not in ("window", "display"))  # IO fills those in
+        desc = "record a short progress note (IO keeps going)" if f["name"] == "done" else (f.get("description") or "").split(". ")[0][:120]
+        lines.append(f"- {f['name']}({params}): {desc}")
+    return "\n".join(lines)
+
+
+def fit_director_prompt(limit: int, **parts: str) -> str:
+    """DIRECTOR_PROMPT under the site's length limit: older guide notes, history and the screen description go first."""
+    budgets = {"guide": 1400, "history": 1400, "screen": 700}
+    for _ in range(12):
+        filled = {k: (v[-budgets[k]:] if k in ("guide", "history") else v[:budgets[k]]) if k in budgets else v for k, v in parts.items()}
+        prompt = DIRECTOR_PROMPT.format(**filled)
+        if len(prompt) <= limit:
+            return prompt
+        for k in budgets:
+            budgets[k] = int(budgets[k] * 0.75)
+    return prompt[:limit]
+
+
+def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]]:
+    """(thoughts, [(tool, args)]) from the director's reply; tools IO doesn't have are dropped."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return "", []
+    try:
+        data = json.loads(m.group(0))
+    except ValueError:
+        return "", []
+    out = []
+    for a in data.get("actions") or []:
+        if isinstance(a, dict) and a.get("tool") in allowed:
+            out.append((a["tool"], a.get("args") if isinstance(a.get("args"), dict) else {}))
+    return str(data.get("thoughts") or "")[:400], out[:8]
 
 
 class Gemini:
@@ -1640,11 +1705,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 gemini = DuckAI(stack, token)
             else:
                 gemini = Gemini(stack, token, how != "account")
-            if gemini:
+            director = bool(gemini) and options.get("advisor_role", "director") == "director"
+            if gemini and not director:
                 tools.append(ASK_GEMINI_TOOL)
                 if isinstance(messages[head - 1]["content"], str):
                     messages[head - 1]["content"] += ("\n- When research hasn't helped and you're still stuck, call ask_gemini with a specific question "
-                                                      "(a stronger model; at most once every 2 minutes).")
+                                                      "(a stronger model).")
 
             def window_shot() -> bytes:
                 """The loop's window (its content area), as a JPEG small enough to paste."""
@@ -1697,7 +1763,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
             except Exception as e:
                 log("warning", text=f"couldn't research the goal first: {e}"[:300])
-            if gemini:
+            if gemini and not director:
                 # the stronger model plans the start, like the planner did for single tasks: it sees the window and the research
                 plan = await consult("I'm just starting. " + ("Look at the screenshot and give" if gemini.takes_images else "Give")
                                      + " me a numbered plan for my first steps toward the goal.")
@@ -1705,7 +1771,29 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     messages.append({"role": "user", "content": f"Plan from a stronger model (it saw the window):\n{plan[:1500]}\nFollow it, adapting to what you see."})
         last_research = researches = 0
         if not loop:
-            gemini = None
+            gemini, director = None, False
+        director_queue: list[tuple[str, dict]] = []
+
+        async def direct(step: int) -> str:
+            """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
+            image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
+            prompt = fit_director_prompt(
+                gemini.max_chars, goal=task, shot="A screenshot of the window IO works in is attached.\n" if image else "",
+                guide="\n---\n".join(guide[-2:]) or "(nothing yet)",
+                screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
+                history="\n".join(actions[-14:]) or "(none yet: this is the start)", catalog=tool_catalog(tools))
+            t0 = time.time()
+            try:
+                reply = await gemini.ask(prompt, image)
+            except Exception as e:
+                reply = f"error: {e}"
+            if focus:
+                await asyncio.to_thread(focus_window, focus)  # Chrome may have come to the front: back to the app
+            thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in tools})
+            log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
+                actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
+            director_queue.extend(batch)
+            return (thoughts or "(director)") if batch else ""
 
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
@@ -1743,7 +1831,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 except Exception as e:
                     log("warning", text=f"couldn't research: {e}"[:300])
                 researches += 1
-                if gemini and researches >= 2 and not gemini.ready_in():
+                if gemini and not director and researches >= 2 and not gemini.ready_in():
                     advice = await consult(f"I've been at this for {step} steps and keep circling. What should I do next to make progress?")
                     if not advice.startswith("error"):
                         messages.append({"role": "user", "content": f"Advice from a stronger model:\n{advice[:900]}\nFollow it."})
@@ -1766,9 +1854,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     except Exception as e:
                         log("warning", text=f"couldn't summarize older steps: {e}")
             t0 = time.time()
+            pending = None  # director mode: the next queued action stands in for the local model's choice
+            if director:
+                thoughts = "" if director_queue else await direct(step)
+                if director_queue:
+                    tool_name, tool_args = director_queue.pop(0)
+                    call = SimpleNamespace(id=f"director-{step}", function=SimpleNamespace(name=tool_name, arguments=json.dumps(tool_args)))
+                    pending = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=thoughts, tool_calls=[call]))])
             # model calls run in a thread so the web app's event loop stays responsive
             try:
-                if loop:
+                if pending is not None:
+                    response = pending
+                elif loop:
                     try:
                         response = await asyncio.to_thread(
                             boss.chat.completions.create,
@@ -2102,6 +2199,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 if not last_error:
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
+                if director and last_error:
+                    director_queue.clear()  # the rest of its plan assumed this worked: ask the director again with the result
                 actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}")  # for replanning
                 steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> {result[:1500]}")
                 log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
