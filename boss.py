@@ -1,0 +1,1003 @@
+"""ui-tars-boss: a small tool-calling text model drives Windows through Windows-MCP.
+
+UI-TARS is only used as "eyes": when the boss can't find something in the accessibility
+tree (unnamed icons, canvases, images), it calls find_on_screen and UI-TARS returns
+where to click.
+
+Usage:  python boss.py "open notepad and type hello"
+"""
+import argparse
+import asyncio
+import base64
+import ctypes
+import ctypes.wintypes as wt
+import hashlib
+import io
+import json
+import math
+import os
+import re
+import sys
+import time
+from contextlib import AsyncExitStack
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import MCPError
+from openai import BadRequestError, OpenAI
+from PIL import ImageGrab
+
+import planner
+import plugins
+
+# physical pixels everywhere, matching Windows-MCP's virtual-desktop coordinates
+ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+
+HERE = Path(__file__).parent
+BOSS_URL = os.environ.get("BOSS_URL", "http://127.0.0.1:8090/v1")
+BOSS_MODEL = os.environ.get("BOSS_MODEL", "boss")
+EYES_URL = os.environ.get("EYES_URL", "http://127.0.0.1:8888/v1")
+EYES_MODEL = os.environ.get("EYES_MODEL", "mradermacher/UI-TARS-1.5-7B-GGUF")
+MCP_TOOLS = "App,Snapshot,Click,Type,Scroll,Shortcut,Wait,WaitFor,PowerShell,Clipboard,Process,FileSystem,Scrape"
+# Playwright MCP drives web pages by their elements, in one of two places:
+# "edge": a separate Edge window with its own profile
+# "chrome": your own Chrome through Playwright's extension (chrome.debugger), in a tab group named IO, the way
+#           Claude in Chrome works; signed in as you. The extension's token skips its approval prompt.
+BROWSER_CLI = HERE / "mcp" / "node_modules" / "@playwright" / "mcp" / "cli.js"
+BROWSER_ARGS = ["--browser", "msedge", "--user-data-dir", str(HERE / "data" / "browser-profile"), "--codegen", "none", "--image-responses", "omit"]
+CHROME_ARGS = ["--extension", "--browser", "chrome", "--codegen", "none", "--image-responses", "omit"]
+BROWSER_CLIENT = types.Implementation(name="IO", version="1.0")  # the extension names the tab group after this
+BROWSER_WHERE = {
+    "edge": "They work in IO's own Edge window.",
+    "chrome": ("They work in IO's own tab in the user's Chrome, inside the tab group named IO, signed in to the user's accounts: "
+               "never buy, post, send or change account settings unless the task says to."),
+}
+BROWSER_TOOLS = {
+    "browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_click", "browser_type", "browser_fill_form",
+    "browser_press_key", "browser_select_option", "browser_hover", "browser_wait_for", "browser_tabs", "browser_handle_dialog",
+    "browser_file_upload", "browser_close",
+}
+MAX_MEMORY = 50
+# llama.cpp caps Qwen2.5-VL images at 4096 visual tokens of 28x28 px; resize to that ourselves
+# so UI-TARS's pixel coordinates refer to the exact image we sent
+EYES_MAX_PIXELS = 4096 * 28 * 28
+KEEP_FULL_SNAPSHOTS = 2
+# cloud replanning: after this many failed calls in a row, or steps without finishing, at most MAX_REPLANS times
+REPLAN_AFTER_ERRORS = 2
+REPLAN_AFTER_STEPS = 10
+MAX_REPLANS = 3
+MAX_TOOL_TEXT = 14000
+# re-reading the same thing with nothing in between is a loop; repeating an action (undo x3, PageDown, Next) is not
+LOOP_PRONE = {"Snapshot", "browser_snapshot", "browser_read", "look_at_screen", "find_on_screen", "Scrape", "browser_open", "browser_navigate"}
+# conditional offers ("If you want, I'll check the weekend too") aren't promises to keep working
+OFFER = re.compile(r"[^.!?\n]*\b(if you(?:'d)? (?:want|like|need|prefer)|let me know|would you like|want me to|shall i|should i)\b[^.!?\n]*[.!?]?", re.I)
+
+
+def intent_text(t: str) -> str:
+    return OFFER.sub("", (t or "").replace("\u2019", "'")).lower()
+
+
+MORE_TO_DO = re.compile(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|search|look|check|read|scroll|open)\b")
+# greetings and thanks: answered by the local model directly, without a cloud plan
+SMALL_TALK = re.compile(r"^(hi|hello|hey|yo|hiya|howdy|sup|thanks|thank you|thx|ty|cheers|good (morning|afternoon|evening|night)|"
+                        r"how are you|how's it going|what's up|who are you|what are you|what can you do|nice|cool|great|ok|okay)\b", re.I)
+PLUGIN_CALL_TIMEOUT = 120  # seconds one plugin tool call may take
+
+SYSTEM = """You operate a Windows PC for the user, using only the provided tools.
+- Not every message is a task. If the user is just chatting (hello, thanks, how are you, what can you do) or asks something you can answer from what you know, reply in plain text without calling any tool.
+- For tasks on the PC, call Snapshot first to see the open windows and the controls on screen as text. Each control is listed with (x,y) screen coordinates and its name.
+- Act with the cheapest reliable tool: App to launch or switch apps, Shortcut for keyboard shortcuts, Click/Type with loc=[x, y] taken from the Snapshot, type_text to type into whatever already has focus, PowerShell for system tasks (it runs the command directly and returns the output; never open a PowerShell or Terminal window for it).
+- If what you need is not in the Snapshot (unnamed icons, images, canvases, games), call find_on_screen with a short visual description. It returns x,y to pass to Click.
+- Before clicking or typing into an app, make sure its window is in front (App with mode "switch"). Other windows may cover it.
+- Re-check with Snapshot or WaitFor only when the next step depends on the result.
+- If a tool returns an error, fix the call and retry; never report success for a step that failed.
+- For anything on a website or in a browser, call browser_open first, then use the browser_* tools (click and type by the element refs in the page snapshot). For a fact on a long page, call browser_read with find set to a few words instead of re-reading snapshots. {browser_where} Never drive Chrome or Edge windows with App, Click, Type or Shortcut, and never launch a browser with App.
+- FileSystem reads and writes files; Scrape fetches a web page as text when you only need to read it.
+- If the task is ambiguous or you need information only the user has, call ask_user instead of guessing.
+- When you learn a lasting fact the user will want reused (a path, a preference, an account to use), call remember.
+- For games and emulators (BlueStacks, etc.) nothing is in the Snapshot: use find_on_screen and look_at_screen with window set to that app's title, so you only look and click inside it.
+- Never press Esc or Back to close menus in games or emulators: in BlueStacks Esc is Android's Back button and can exit the app. Close menus with their on-screen X or close button.
+- To read the text in a window, use Snapshot (it lists the text of controls) or look_at_screen. Never select all and copy to read it: that replaces the user's clipboard and leaves their text selected.
+- For questions about what is on screen, call look_at_screen. It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot (its title, headings and text). When the task asks for information, put the full answer in done's summary.
+- Do exactly what the task asks, nothing extra (no saving, closing, or double-checking unless asked). Call done as soon as the task is complete, or call done explaining what blocked you."""
+
+EXTRA_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user",
+            "description": "Ask the user a question and wait for their answer. Use when the task is ambiguous or needs information only they have.",
+            "parameters": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": "Save a short lasting note for future tasks (e.g. where a file lives, which account to use).",
+            "parameters": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "look_at_screen",
+            "description": "Look at a screenshot of a display and answer a question about it (what is shown, what an image or video contains, what text says). Use for questions about what is visible on the PC's monitors; for web pages opened with browser_open, use browser_snapshot instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "What you want to know about the screen"},
+                    "window": {"type": "string", "description": "Optional: part of a window title (e.g. 'BlueStacks') to look only at that window"},
+                    "display": {"type": "integer", "description": "Display index from Snapshot (0 = primary)", "default": 0},
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "type_text",
+            "description": "Type text into the control that currently has keyboard focus (e.g. a just-opened editor). Use Type with loc when you need to click a field first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "press_enter": {"type": "boolean", "default": False},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_on_screen",
+            "description": "Visually locate something on a display when it is not in the Snapshot's control list. Returns screen coordinates {x, y} to use with Click.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "What to find, e.g. 'the red record button' or 'the gear icon in the top right of Spotify'"},
+                    "window": {"type": "string", "description": "Part of the title of the window to search in (e.g. 'BlueStacks'). Strongly recommended: it keeps clicks inside that app"},
+                    "display": {"type": "integer", "description": "Display index from Snapshot (0 = primary)", "default": 0},
+                },
+                "required": ["description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": "Finish the task. Call as soon as the task is complete or cannot be completed.",
+            "parameters": {
+                "type": "object",
+                "properties": {"summary": {"type": "string", "description": "What was done, or what blocked the task"}},
+                "required": ["summary"],
+            },
+        },
+    },
+]
+
+# UI-TARS-1.5's single-point grounding prompt; on taskbar icons it lands within a few pixels,
+# where the multi-step agent prompt was off by hundreds
+EYES_PROMPT = "Output only the coordinate of one point in your response. What element matches the following task: {target}"
+
+
+STUDIO_KEY_FILE = HERE / "data" / "studio.json"
+
+
+def studio_key() -> str:
+    """Studio API key: STUDIO_API_KEY, else the one saved in UI-TARS Desktop's settings (copied into IO's data whenever
+    it changes), else IO's copy (UI-TARS Desktop's folder may only exist inside another app's private storage)."""
+    if os.environ.get("STUDIO_API_KEY"):
+        return os.environ["STUDIO_API_KEY"]
+    try:
+        saved = json.loads(STUDIO_KEY_FILE.read_text(encoding="utf-8")).get("key", "")
+    except (OSError, ValueError, AttributeError):
+        saved = ""
+    rel = Path("ui-tars-desktop") / "ui_tars.setting.json"
+    candidates = [Path(os.environ["APPDATA"]) / rel]
+    candidates += sorted(Path(os.environ["LOCALAPPDATA"], "Packages").glob(f"*/LocalCache/Roaming/{rel.as_posix()}"))
+    for settings in candidates:
+        try:
+            key = json.loads(settings.read_text(encoding="utf-8")).get("vlmApiKey", "")
+        except (OSError, ValueError):
+            continue
+        if key:
+            if key != saved:
+                STUDIO_KEY_FILE.parent.mkdir(exist_ok=True)
+                STUDIO_KEY_FILE.write_text(json.dumps({"key": key}), encoding="utf-8")
+            return key
+    return saved
+
+
+def displays() -> list[tuple[int, int, int, int]]:
+    """Monitor rects (left, top, right, bottom) in physical pixels, primary first."""
+    rects: list[tuple[bool, tuple[int, int, int, int]]] = []
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+
+    def cb(hmon, _hdc, _rect, _data):
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(mi)
+        ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+        r = mi.rcMonitor
+        rects.append((bool(mi.dwFlags & 1), (r.left, r.top, r.right, r.bottom)))
+        return True
+
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HMONITOR, wt.HDC, ctypes.POINTER(wt.RECT), wt.LPARAM)
+    ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(cb), 0)
+    rects.sort(key=lambda r: (not r[0], r[1][0]))
+    return [r for _, r in rects]
+
+
+def smart_size(w: int, h: int, factor: int = 28, max_pixels: int = EYES_MAX_PIXELS) -> tuple[int, int]:
+    """Largest factor-aligned size with the same aspect ratio that fits max_pixels."""
+    scale = min(1.0, math.sqrt(max_pixels / (w * h)))
+    return max(factor, int(w * scale // factor) * factor), max(factor, int(h * scale // factor) * factor)
+
+
+def find_window(title: str) -> tuple[int, tuple[int, int, int, int]] | None:
+    """The visible top-level window whose title contains `title` (case-insensitive): (hwnd, rect)."""
+    user32 = ctypes.windll.user32
+    found: list = []
+
+    def cb(hwnd, _):
+        if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if title.lower() in buf.value.lower():
+                    r = wt.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(r))
+                    if r.right - r.left > 50 and r.bottom - r.top > 50:
+                        found.append((hwnd, (r.left, r.top, r.right, r.bottom)))
+        return True
+
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    user32.EnumWindows(proc(cb), 0)
+    return found[0] if found else None
+
+
+def focus_window(title: str) -> str:
+    """Brings the window whose title contains `title` to the front (fallback when App switch fails)."""
+    hit = find_window(title)
+    if not hit:
+        return ""
+    user32 = ctypes.windll.user32
+    user32.ShowWindow(hit[0], 9)  # SW_RESTORE
+    # Windows only lets the foreground app hand over focus; a no-op Alt press satisfies that rule
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.SetForegroundWindow(hit[0])
+    user32.keybd_event(0x12, 0, 2, 0)
+    n = user32.GetWindowTextLengthW(hit[0])
+    buf = ctypes.create_unicode_buffer(n + 1)
+    user32.GetWindowTextW(hit[0], buf, n + 1)
+    return buf.value
+
+
+def capture_area(display: int, window: str) -> tuple[tuple[int, int, int, int], str]:
+    """Screen rect to look at: the named window if given, else the display. Returns (rect, error)."""
+    if window:
+        # screenshots show whatever is on top, and clicks land there too: bring the window up first
+        if not focus_window(window):
+            return (0, 0, 0, 0), f"no visible window with '{window}' in its title"
+        time.sleep(0.4)
+        hit = find_window(window)
+        return hit[1], ""
+    rects = displays()
+    if not 0 <= display < len(rects):
+        return (0, 0, 0, 0), f"display {display} does not exist; there are {len(rects)}"
+    return rects[display], ""
+
+
+class Eyes:
+    def __init__(self) -> None:
+        self.client = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120)
+
+    def find(self, description: str, display: int = 0, window: str = "") -> dict:
+        (left, top, right, bottom), err = capture_area(display, window)
+        if err:
+            return {"error": err}
+        shot = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+        iw, ih = smart_size(shot.width, shot.height)
+        buf = io.BytesIO()
+        shot.resize((iw, ih)).save(buf, format="PNG")
+        url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+        reply = self.client.chat.completions.create(
+            model=EYES_MODEL,
+            temperature=0,
+            max_tokens=60,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": url}},
+                        {"type": "text", "text": EYES_PROMPT.format(target=description)},
+                    ],
+                }
+            ],
+        ).choices[0].message.content or ""
+        m = re.search(r"\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", reply)
+        if not m:
+            return {"error": "could not locate it", "eyes_said": reply[-300:]}
+        x = left + float(m.group(1)) * (right - left) / iw
+        y = top + float(m.group(2)) * (bottom - top) / ih
+        return {"x": round(x), "y": round(y)}
+
+    def describe(self, question: str, display: int = 0, window: str = "") -> str:
+        """Answers a question about a display's (or one window's) contents with the boss model's own vision."""
+        rect, err = capture_area(display, window)
+        if err:
+            return err
+        shot = ImageGrab.grab(bbox=rect, all_screens=True)
+        shot.thumbnail((1920, 1920))
+        buf = io.BytesIO()
+        shot.convert("RGB").save(buf, format="JPEG", quality=85)
+        url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        reply = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120).chat.completions.create(
+            model=BOSS_MODEL,
+            temperature=0.2,
+            max_tokens=700,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": url}},
+                        {"type": "text", "text": f"This is a screenshot of {('the ' + window + ' window') if window else f'display {display}'}. {question or 'Describe what is on the screen.'}"},
+                    ],
+                }
+            ],
+        )
+        return reply.choices[0].message.content or "(no answer)"
+
+
+# Windows-MCP's label/labels args are ids from its annotated screenshot, which the text-only boss
+# never sees; hiding them stops the boss passing control names there
+HIDDEN_ARGS = {"label", "labels"}
+
+
+def browser_params(options: dict) -> StdioServerParameters:
+    browser_dir = HERE / "data" / "browser"
+    browser_dir.mkdir(parents=True, exist_ok=True)
+    if options.get("browser_mode") == "chrome":
+        env = {"PLAYWRIGHT_MCP_EXTENSION_TOKEN": options["chrome_token"]} if options.get("chrome_token") else None
+        return StdioServerParameters(command="node", args=[str(BROWSER_CLI), *CHROME_ARGS], cwd=str(browser_dir), env=env)
+    return StdioServerParameters(command="node", args=[str(BROWSER_CLI), *BROWSER_ARGS], cwd=str(browser_dir))
+
+
+async def test_browser(options: dict, hold: float = 12) -> str:
+    """Starts the browser tools the way a task would. In Chrome mode this connects to IO's extension, opens a
+    "connected" page in the IO tab group and stays connected a few seconds so you can see the group."""
+    async with AsyncExitStack() as stack:
+        r, w = await stack.enter_async_context(stdio_client(browser_params(options), errlog=sys.stderr))
+        session = await stack.enter_async_context(ClientSession(r, w, read_timeout_seconds=60, client_info=BROWSER_CLIENT))
+        await session.initialize()
+        if options.get("browser_mode") == "chrome":
+            res = text_of(await session.call_tool("browser_navigate", {"url": "http://127.0.0.1:8765/static/connected.html"}))
+            if res.startswith("error"):
+                return res
+            await asyncio.sleep(hold)
+        return text_of(await session.call_tool("browser_tabs", {"action": "list"}))
+
+
+BROWSER_READ_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "browser_read",
+        "description": ("Read the text of the page open in IO's browser tab. Set find to a few words (e.g. 'diameter radius') to get "
+                        "only the lines that mention them, which is best for facts on long pages. Without find it returns the start of the page."),
+        "parameters": {"type": "object", "properties": {"find": {"type": "string", "description": "Words to look for"}}},
+    },
+}
+
+
+def page_text(raw: str) -> str:
+    """The page text out of a browser_evaluate result ('### Result' followed by a JSON string)."""
+    m = re.search(r'### Result\s*\n(".*?")\s*(?:\n###|$)', raw, re.S)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except ValueError:
+            pass
+    return raw
+
+
+FIND_STOPWORDS = {"the", "and", "for", "how", "what", "with", "from", "this", "that", "are", "was", "were", "its", "his", "her",
+                  "who", "when", "where", "which", "does", "did", "has", "have", "much", "many", "about", "into", "tell", "find", "page"}
+
+
+def find_in_text(text: str, find: str, budget: int = 4000) -> str:
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    raw = [w for w in re.findall(r"\w+", find.lower()) if len(w) > 2]
+    words = [w for w in raw if w not in FIND_STOPWORDS] or raw
+    if not words:
+        return text[:12000] + ("\n[page continues; use find to look for something specific]" if len(text) > 12000 else "")
+    pats = [re.compile(r"\b" + re.escape(w)) for w in words]  # at word starts: 'age' doesn't hit 'page'
+    score = {i: sum(1 for pt in pats if pt.search(l.lower())) for i, l in enumerate(lines)}
+    hits = [i for i in range(len(lines)) if score[i]]
+    if not hits:
+        return f"No lines mention {find!r}. The page starts:\n" + "\n".join(lines)[:1500]
+    hit_set = set(hits)
+
+    def clip(i: int) -> str:  # a window around the match, so one long line can't use up the budget
+        line, low = lines[i], lines[i].lower()
+        pos = min((m.start() for pt in pats if (m := pt.search(low))), default=-1)
+        if pos >= 0:
+            a, b = max(0, pos - 150), pos + 250
+        elif i - 1 in hit_set:  # the line after a hit: its start
+            a, b = 0, 200
+        else:  # the line before a hit: its end
+            a, b = max(0, len(line) - 200), len(line)
+        return ("…" if a > 0 else "") + line[a:b] + ("…" if b < len(line) else "")
+
+    keep, used = set(), 0
+    for i in sorted(hits, key=lambda i: -score[i]):  # best matches first, each with its neighbours
+        window = [j for j in range(max(0, i - 1), min(len(lines), i + 2)) if j not in keep]
+        cost = sum(len(clip(j)) for j in window)
+        if keep and used + cost > budget:
+            break
+        keep.update(window)
+        used += cost
+    out, last = [], -2
+    for i in sorted(keep):  # shown in page order
+        out.append(("…\n" if i != last + 1 and out else "") + clip(i))
+        last = i
+    if len(keep) < len(hits):
+        out.append("[more matches cut]")
+    tip = "" if len(hits) > 3 else "\n[few matches: if this doesn't answer it, search again with other words for the same thing, e.g. radius or dimensions for size]"
+    return "\n".join(out) + tip
+
+
+def browser_open_tool(mode: str) -> dict:
+    where = ("IO's own tab in the user's Chrome, inside the tab group named IO (the first call connects to Chrome)" if mode == "chrome"
+             else "IO's own Edge window")
+    return {
+        "type": "function",
+        "function": {
+            "name": "browser_open",
+            "description": (f"Open a web page in {where}. Start every web task with this, and use it when the user asks you to use "
+                            "the browser, Chrome or your tab. Then use browser_snapshot, browser_click and browser_type in that tab."),
+            "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "Address to open; leave empty for a blank tab"}}},
+        },
+    }
+
+
+def mcp_to_openai(tool, hide: set = HIDDEN_ARGS) -> dict:
+    schema = dict(tool.input_schema or {"type": "object", "properties": {}})
+    schema.pop("title", None)
+    props = {k: v for k, v in schema.get("properties", {}).items() if k not in hide}
+    schema["properties"] = props
+    if "required" in schema:
+        schema["required"] = [r for r in schema["required"] if r in props]
+    description = (tool.description or "")[:1200]
+    if "loc" in props:
+        description += " loc must be a JSON array [x, y] of screen coordinates from Snapshot or find_on_screen."
+    return {"type": "function", "function": {"name": tool.name, "description": description, "parameters": schema}}
+
+
+def fix_args(name: str, args: dict) -> dict:
+    """Repair common small-model slips: loc as "(x, y)" text, and stray label args."""
+    args = {k: v for k, v in args.items() if k not in HIDDEN_ARGS}
+    loc = args.get("loc")
+    if isinstance(loc, str):
+        nums = re.findall(r"-?\d+(?:\.\d+)?", loc)
+        if len(nums) >= 2:
+            args["loc"] = [round(float(nums[0])), round(float(nums[1]))]
+    elif isinstance(loc, dict):
+        loc = {str(k).strip("\"' "): v for k, v in loc.items()}
+        if {"x", "y"} <= loc.keys():
+            args["loc"] = [round(float(loc["x"])), round(float(loc["y"]))]
+    return args
+
+
+def compact(messages: list[dict], keep: int = 2, trim: int = 1500) -> list[dict]:
+    """Keep only the newest tool results in full. Older Snapshots are dropped (huge and stale); other
+    older results (web pages, documents, plugin output) are cut short so the context doesn't overflow."""
+    snapshot_ids = {
+        tc["id"]
+        for m in messages
+        if m["role"] == "assistant"
+        for tc in m.get("tool_calls") or []
+        if tc["function"]["name"] == "Snapshot"
+    }
+    results = [m for m in messages if m["role"] == "tool"]
+    snaps = [m for m in results if m["tool_call_id"] in snapshot_ids]
+    others = [m for m in results if m["tool_call_id"] not in snapshot_ids]
+    stale_snaps = {id(m) for m in snaps[:-KEEP_FULL_SNAPSHOTS]}
+    stale_others = {id(m) for m in (others[:-keep] if keep else others)}
+    out = []
+    for m in messages:
+        if id(m) in stale_snaps:
+            m = {**m, "content": "[older snapshot omitted; call Snapshot again if needed]"}
+        elif id(m) in stale_others and len(m["content"]) > trim:
+            m = {**m, "content": m["content"][:trim] + "\n[older result trimmed; call the tool again if you need the rest]"}
+        out.append(m)
+    return out
+
+
+# callbacks that receive every log record (the web app streams these to the page)
+listeners: list = []
+
+
+def log(event: str, **data) -> None:
+    record = {"t": round(time.time(), 2), "event": event, **data}
+    line = json.dumps(record, ensure_ascii=False)
+    print(line[:600], flush=True)
+    for listener in listeners:
+        listener(record)
+    with open(HERE / "logs" / "boss.jsonl", "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+# ---------- memory: short notes that carry across tasks (data/memory.json) ----------
+
+MEMORY = HERE / "data" / "memory.json"
+
+
+def memory_load() -> list[dict]:
+    try:
+        return json.loads(MEMORY.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def memory_save(notes: list[dict]) -> None:
+    MEMORY.parent.mkdir(exist_ok=True)
+    MEMORY.write_text(json.dumps(notes, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def remember(text: str) -> str:
+    notes = memory_load()
+    text = text.strip()
+    if text and all(n["text"] != text for n in notes):
+        notes.append({"id": hex(int(time.time() * 1000))[2:], "text": text[:500], "created": time.time()})
+        memory_save(notes[-MAX_MEMORY:])
+    return "remembered"
+
+
+# ---------- risky actions that need the user's OK when confirm_risky is on ----------
+
+RISKY_POWERSHELL = re.compile(
+    r"\b(Remove-Item|rm|del|erase|rmdir|rd|Format-Volume|format|Clear-Content|Stop-Computer|Restart-Computer|shutdown|"
+    r"Stop-Process|taskkill|kill|Set-ExecutionPolicy|reg\s+delete|Remove-ItemProperty|Uninstall-\w+|Send-MailMessage)\b",
+    re.I,
+)
+
+
+def risky_reason(name: str, args: dict) -> str:
+    """Why an action needs confirmation, or "" if it doesn't."""
+    if name == "PowerShell" and RISKY_POWERSHELL.search(str(args.get("command", ""))):
+        return f"run PowerShell: {args.get('command')}"
+    if name == "FileSystem" and (args.get("mode") in ("delete", "move") or (args.get("mode") == "write" and args.get("overwrite"))):
+        return f"{args.get('mode')} the file {args.get('path')}"
+    if name == "Process" and args.get("mode") == "kill":
+        return f"kill the process {args.get('name') or args.get('pid')}"
+    return ""
+
+
+# plugin tools (notes, databases, git, GitHub...) that change things: by the server's own hint, by name,
+# or SQL that writes. Plain reads and SELECTs don't ask, so unattended tasks aren't held up.
+PLUGIN_RISKY = re.compile(r"(delete|remove|drop|reset|merge|push|move|rename|overwrite|write|update|edit|commit|create|close|truncate)", re.I)
+SQL_WRITE = re.compile(r"\b(delete|drop|update|insert|alter|truncate|replace|create|attach)\b", re.I)
+
+
+def plugin_risky(alias: str, tool, args: dict) -> str:
+    ann = getattr(tool, "annotations", None)
+    sql_write = re.search(r"(query|sql|execute)", tool.name, re.I) and any(isinstance(v, str) and SQL_WRITE.search(v) for v in args.values())
+    if (ann and getattr(ann, "destructive_hint", False)) or PLUGIN_RISKY.search(tool.name) or sql_write:
+        return f"use {alias} with {json.dumps(args, ensure_ascii=False)[:200]}"
+    return ""
+
+
+def image_part(path: Path) -> dict:
+    """An attached image as an OpenAI-style content part, downscaled so it stays cheap for the local model.
+    Phone photos are turned upright, and transparent areas become white instead of black."""
+    from PIL import Image, ImageOps
+
+    with Image.open(path) as src:
+        im = ImageOps.exif_transpose(src)
+        im.thumbnail((1600, 1600))
+        if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+            im = im.convert("RGBA")
+            bg = Image.new("RGB", im.size, "white")
+            bg.paste(im, mask=im.getchannel("A"))
+            im = bg
+        else:
+            im = im.convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=88)
+    return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}}
+
+
+def clean_summary(text: str) -> str:
+    """Drops bookkeeping a small model sometimes copies into its answer from the chat history."""
+    text = re.sub(r"\s*\[actions taken:.*?\]\s*$", "", text or "", flags=re.S)
+    text = re.sub(r"\s*\(context, not part of the request:.*?\)\s*$", "", text, flags=re.S)
+    return text.strip()
+
+
+def text_of(res) -> str:
+    text = "\n".join(getattr(p, "text", "") for p in res.content if getattr(p, "type", "") == "text")
+    if getattr(res, "is_error", False):  # many servers report failures this way, with text that doesn't say "error"
+        return "error: " + (text or "the tool reported a failure")
+    return text
+
+
+def inline_browser_snapshot(result: str, cwd: Path) -> str:
+    """Playwright MCP writes page snapshots to .yml files; inline them so the boss can read the page."""
+    m = re.search(r"\[Snapshot\]\(([^)]+\.yml)\)", result)
+    if not m:
+        return result
+    try:
+        page = (cwd / m.group(1)).read_text(encoding="utf-8")
+    except OSError:
+        return result
+    return result.replace(m.group(0), "\n" + page[:MAX_TOOL_TEXT])
+
+
+async def desktop_context(win: ClientSession) -> str:
+    """Focused and open windows from a Snapshot, for the cloud planner (no UI tree, no screenshot)."""
+    try:
+        raw = text_of(await win.call_tool("Snapshot", {"use_vision": False, "use_annotation": False}))
+        raw = "\n".join(json.loads(raw)) if raw.startswith("[") else raw
+    except Exception:
+        return ""
+    m = re.search(r"Focused Window:(.*?)Opened Windows:(.*)", raw.split("UI Tree:")[0], re.S)
+    return f"Focused window:{m.group(1).rstrip()}\nOpen windows:{m.group(2).rstrip()}"[:2500] if m else ""
+
+
+async def run(task: str, max_steps: int, options: dict | None = None, ask=None, conversation: list[dict] | None = None,
+              images: list[Path] | None = None) -> str:
+    """Runs one task. options: allow_powershell, confirm_risky, browser, files (all bools).
+    ask: async callable(question) -> answer, used by ask_user and risky-action confirmations.
+    conversation: earlier turns of the chat this message belongs to, as [{"role": "user"|"assistant", "content"}],
+    so follow-ups like "now do the same for the other one" make sense."""
+    conversation = conversation or []
+    options = {
+        "allow_powershell": True, "confirm_risky": True, "browser": True, "files": True, "share_context": True,
+        "planner_mode": "always",  # "always": cloud plan at the start; "stuck": only when the local agent gets stuck
+        "cache_plan": False, **(options or {}),
+    }
+    (HERE / "logs").mkdir(exist_ok=True)
+    boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
+    eyes = Eyes()
+
+    windows_tools = MCP_TOOLS.split(",")
+    if not options["allow_powershell"]:
+        windows_tools.remove("PowerShell")
+    if not options["files"]:
+        windows_tools = [t for t in windows_tools if t not in ("FileSystem", "Scrape")]
+    browser_dir = HERE / "data" / "browser"
+    browser_dir.mkdir(parents=True, exist_ok=True)
+
+    async with AsyncExitStack() as stack:
+        win_r, win_w = await stack.enter_async_context(stdio_client(
+            StdioServerParameters(command=str(Path(sys.executable).with_name("windows-mcp.exe")), args=["serve", "--tools", ",".join(windows_tools)]),
+            errlog=sys.stderr,
+        ))
+        win = await stack.enter_async_context(ClientSession(win_r, win_w))
+        await win.initialize()
+        mcp_tools = list((await win.list_tools()).tools)
+        sessions = {t.name: win for t in mcp_tools}
+        if options["browser"]:
+            try:
+                br_r, br_w = await stack.enter_async_context(stdio_client(browser_params(options), errlog=sys.stderr))
+                br = await stack.enter_async_context(ClientSession(br_r, br_w, client_info=BROWSER_CLIENT))
+                await br.initialize()
+                # in your own Chrome, closing is left to you
+                allowed = BROWSER_TOOLS - {"browser_close"} if options.get("browser_mode") == "chrome" else BROWSER_TOOLS
+                for t in (await br.list_tools()).tools:
+                    if t.name in allowed:
+                        sessions[t.name] = br
+                        mcp_tools.append(t)
+            except Exception as e:
+                log("warning", text=f"browser tools unavailable: {e}")
+
+        # installed plugins from the Customize page, exposed as "<plugin>_<tool>"
+        plugin_tools = await plugins.start_enabled(stack, log=lambda m: log("warning", text=m))
+        plugin_defs = {}
+        for alias, _, t in plugin_tools:
+            d = mcp_to_openai(t, hide=set())  # label/labels are only hidden for Windows-MCP
+            d["function"]["name"] = alias
+            plugin_defs[alias] = d
+        # the boss has a 32K context: if the enabled plugins' tool lists are too big, keep the ones the task mentions
+        plugin_tools = plugins.fit_budget(plugin_tools, plugin_defs, task, log=lambda m: log("warning", text=m))
+        aliases, plugin_meta = {}, {}
+        for alias, session, t in plugin_tools:
+            sessions[alias] = session
+            aliases[alias] = t.name
+            plugin_meta[alias] = t
+        extra = [t for t in EXTRA_TOOLS if ask or t["function"]["name"] != "ask_user"]
+        if "browser_navigate" in sessions:
+            extra += [browser_open_tool(options.get("browser_mode", "edge")), BROWSER_READ_TOOL]
+        tools = [mcp_to_openai(t) for t in mcp_tools] + [plugin_defs[alias] for alias, _, _ in plugin_tools] + extra
+        notes = memory_load()
+        skills = plugins.skills_prompt(task)
+        prompt = task
+        if notes or skills:
+            # next to the task, where a small model actually reads it (it overlooks notes in the system prompt)
+            memo = "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:])
+            prompt = (f"Your saved notes (use them when relevant):\n{memo}\n\n" if notes else "") + (f"{skills}\n\n" if skills else "") + f"Task: {task}"
+        if conversation:
+            prompt += "\n\n(This continues the conversation above; resolve words like 'it', 'that', or 'again' from it.)"
+        parts = []
+        for p in images or []:
+            try:
+                parts.append(await asyncio.to_thread(image_part, Path(p)))
+            except Exception as e:  # an unreadable file shouldn't sink the rest of the request
+                log("warning", text=f"couldn't read image {Path(p).name}: {e}")
+        images = parts
+        if images:
+            where = "earlier in this chat" if options.get("images_from_earlier") else "to this message"
+            prompt += (f"\n\n(The user attached {len(images)} image(s) {where}; they are shown above this text. They are the user's own "
+                       "images, not your screen: answer questions about them directly from what you see, without tools. Only use tools if the "
+                       "task also asks you to do something on the PC.)")
+            user_content = [*images, {"type": "text", "text": prompt}]
+        else:
+            user_content = prompt
+        if "browser_navigate" in sessions:
+            system = SYSTEM.replace("{browser_where}", BROWSER_WHERE.get(options.get("browser_mode", "edge"), BROWSER_WHERE["edge"]))
+        else:  # browser off or failed to start: point web work at Scrape or the desktop tools instead
+            system = re.sub(r"- For anything on a website.*?\n", "- For websites, use Scrape to read a page as text; to interact with one, "
+                            "launch the browser with App and use Snapshot, Click and Type.\n", SYSTEM, count=1)
+            system = system.replace(" It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot "
+                                    "(its title, headings and text).", "")
+        messages: list[dict] = [{"role": "system", "content": system}, *conversation, {"role": "user", "content": user_content}]
+        log("start", task=task, tools=[t["function"]["name"] for t in tools])
+        extra_tools = "\n".join(f"- {alias}: {(t.description or '').split('. ')[0][:120]}" for alias, _, t in plugin_tools)
+        last_error, refused_done = "", False
+        repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
+        said_more = False
+        actions: list[str] = []  # short action/result lines, the only context sent to cloud planners
+        error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
+
+        async def get_plan(history: str = "") -> None:
+            context = ""
+            if options["share_context"] and planner.load():
+                # local pre-plan pass: give the cloud planner the PC's state and saved notes
+                parts = [await desktop_context(win)]
+                if notes:
+                    parts.append("Saved notes:\n" + "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:]))
+                if conversation:
+                    turns = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in conversation[-6:])
+                    parts.append("Earlier in this conversation:\n" + turns)
+                context = "\n\n".join(p for p in parts if p)
+            if conversation and not context:
+                # without sharing, the planner still needs the chat to understand a follow-up, but only your own words:
+                # no agent answers and no tool arguments
+                asked = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m["role"] == "user" and isinstance(m["content"], str)]
+                if asked:
+                    context = "Earlier requests in this conversation:\n" + "\n".join(f"user: {a}" for a in asked)
+            if "browser_navigate" not in sessions:
+                context += ("\n\n" if context else "") + ("The agent has no browser tools this time: plan Scrape to read a page, "
+                                                             "or App, Snapshot, Click and Type to use a browser window.")
+            else:
+                where = "IO's own tab in the user's Chrome (tab group 'IO')" if options.get("browser_mode") == "chrome" else "IO's own Edge window"
+                context += ("\n\n" if context else "") + (f"Web pages: browser_open(url) opens {where}; then browser_snapshot, browser_click, "
+                                                             "browser_type work in it. Never plan App, Click, Type or Shortcut on a browser window.")
+            # tool names aren't private, so the planner always hears about plugins; skills only when sharing is on
+            if extra_tools:
+                context += ("\n\n" if context else "") + "Extra tools the agent has (prefer them when they fit):\n" + extra_tools
+            if skills and options["share_context"]:
+                context += ("\n\n" if context else "") + skills
+            plan_task = task + (f" (the user attached {len(images)} image(s), which only the local agent can see)" if images else "")
+            # a cached plan is redone when plugins, skills or the browser setting change
+            salt = hashlib.sha1((extra_tools + skills + options.get("browser_mode", "edge") + str("browser_navigate" in sessions)).encode()).hexdigest()[:10]
+            text, source = await asyncio.to_thread(planner.plan, plan_task, history, context, options["cache_plan"], salt)
+            if text.strip().upper().startswith("NO_PLAN"):  # the planner says this is conversation, not a task
+                log("plan", source=source, reason="conversation, no plan needed")
+            elif text:
+                note = f"Plan from the planner:\n{text}\n\nFollow it step by step, adapting to what Snapshot shows."
+                messages.append({"role": "user", "content": note})
+                log("plan", source=source, plan=text, shared=bool(context))
+            else:
+                log("plan", source="local", reason=source)
+
+        # the cloud planner can't see attached images, so the local model starts with them on its own
+        small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
+        if options["planner_mode"] == "always" and not images and not small_talk:
+            await get_plan()
+
+        for step in range(1, max_steps + 1):
+            stuck = error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS
+            if stuck and replans < MAX_REPLANS and planner.load():
+                replans, last_plan_step, error_streak = replans + 1, step, 0
+                await get_plan("\n".join(actions[-12:]))
+            t0 = time.time()
+            # model calls run in a thread so the web app's event loop stays responsive
+            try:
+                response = await asyncio.to_thread(
+                    boss.chat.completions.create,
+                    model=BOSS_MODEL, messages=compact(messages), tools=tools, temperature=0.2, max_tokens=1024,
+                )
+            except BadRequestError as e:
+                if "context" not in str(e).lower():
+                    raise
+                try:  # over the context: once more with older results cut harder
+                    response = await asyncio.to_thread(
+                        boss.chat.completions.create,
+                        model=BOSS_MODEL, messages=compact(messages, keep=1, trim=400), tools=tools, temperature=0.2, max_tokens=1024,
+                    )
+                except BadRequestError as e2:
+                    if "context" in str(e2).lower():
+                        raise RuntimeError("the request is too large for the local model's context; turn off some plugins or skills") from e2
+                    raise
+            msg = response.choices[0].message
+            calls = msg.tool_calls or []
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {"id": c.id, "type": "function", "function": {"name": c.function.name, "arguments": c.function.arguments}}
+                        for c in calls
+                    ],
+                }
+            )
+            log("think", step=step, secs=round(time.time() - t0, 1), text=msg.content or "")
+            if not calls:
+                # small models sometimes write the call as text, e.g. done(summary="..."), or just answer
+                text = (msg.content or "").strip()
+                # also Gemma's leaked raw form: done{summary:<|"|>...<|"|>}
+                m = re.search(r"done\s*[({]\s*summary\s*[=:]\s*(<\|\"\|>|[\"'])(.*?)\1\s*[)}]", text, re.S)
+                low = intent_text(text)
+                announcing = re.match(r"(i will|i'll|let me|next,|now i|first,|i am going to|i'm going to)\b", low) or \
+                    re.search(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|check|look|search|read|open|scroll)\b", low)
+                if m or (text and (plain_replies >= 1 or not announcing)):
+                    summary = m.group(2).strip() if m else text
+                    summary = clean_summary(summary)
+                    log("done", step=step, summary=summary)
+                    return summary
+                plain_replies += 1
+                messages.append({"role": "user", "content": "Use a tool, or call the done tool with your answer if the task is complete."})
+                continue
+            plain_replies = 0
+
+            for c in calls:
+                name = c.function.name
+                try:
+                    args = json.loads(c.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                t1 = time.time()
+                key = name + json.dumps(args, sort_keys=True, ensure_ascii=False)
+                repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
+                repeat["key"] = key
+                if name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
+                    result = (f"You have made this exact call {repeat['n'] - 1} times in a row. Use what you have, try another way "
+                              "(for a fact on a long web page, browser_read with find), or call done.")
+                    log("tool", step=step, name=name, args=args, result=result)
+                    messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                    last_error = result  # a done right after this is challenged once
+                    error_streak += 1
+                    continue
+                if name == "done":
+                    if last_error and not refused_done:
+                        # small models like to declare victory right after a failed call
+                        refused_done = True
+                        result = f"Not done: your last action failed ({last_error[:200]}). Fix it, or call done again explaining why it can't be done."
+                        log("tool", step=step, name=name, args=args, result=result)
+                        messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                        continue
+                    summary = clean_summary(str(args.get("summary", "")))
+                    if not said_more and step < max_steps and MORE_TO_DO.search(intent_text(summary)):
+                        # "...I will try searching for X" isn't an answer: hold it to that once
+                        said_more = True
+                        result = "Not done: you said you would try something else. Do it now, then call done with the answer."
+                        log("tool", step=step, name=name, args=args, result=result)
+                        messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                        continue
+                    log("done", step=step, summary=summary)
+                    return summary
+
+                if not options["confirm_risky"]:
+                    reason = ""
+                elif name in plugin_meta:
+                    reason = plugin_risky(name, plugin_meta[name], args)
+                else:
+                    reason = risky_reason(name, args)
+                if reason:
+                    answer = (await ask(f"The agent wants to {reason}. Allow it? (yes/no)")) if ask else "no"
+                    if not answer.strip().lower().startswith("y"):
+                        result = f"The user did not allow this action ({reason}). Do not retry it; find another way or call done."
+                        log("tool", step=step, name=name, args=args, result=result)
+                        messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                        actions.append(f"{name} -> refused by user")
+                        continue
+
+                if name == "find_on_screen":
+                    result = json.dumps(await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or "")))
+                elif name == "look_at_screen":
+                    result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
+                elif name == "browser_read":
+                    try:
+                        raw = text_of(await sessions["browser_navigate"].call_tool("browser_evaluate", {"function": "() => document.body.innerText"}))
+                        result = raw if raw.startswith("error") else find_in_text(page_text(raw), str(args.get("find") or ""))
+                    except Exception as e:
+                        result = f"error: {e}"
+                elif name == "browser_open":
+                    # IO's own tab: in Chrome mode the extension connects here and puts the tab in the IO group
+                    url = str(args.get("url") or "about:blank")
+                    try:
+                        result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
+                    except Exception as e:
+                        result = f"error: {e}"
+                elif name == "remember":
+                    result = remember(args.get("note", ""))
+                elif name == "ask_user":
+                    result = "The user answered: " + ((await ask(args.get("question", ""))) or "(no answer)")
+                elif name == "type_text" or (name == "Type" and not args.get("loc")):
+                    # Type without a location is the most common small-model slip: type into the focused control instead
+                    args = {"text": args.get("text", ""), "press_enter": args.get("press_enter", False)}
+                    # paste via clipboard: reliable for any text and keyboard layout
+                    await win.call_tool("Clipboard", {"mode": "set", "text": args.get("text", "")})
+                    await win.call_tool("Shortcut", {"shortcut": "ctrl+v"})
+                    if args.get("press_enter"):
+                        await win.call_tool("Shortcut", {"shortcut": "enter"})
+                    result = "typed"
+                elif name in sessions:
+                    if name not in aliases:
+                        args = fix_args(name, args)
+                    if name == "Snapshot":
+                        # the boss is text-only; skip the screenshot image
+                        args = {**args, "use_vision": False, "use_annotation": False}
+                    try:
+                        # a plugin that stops answering mustn't hang the task (and the queue behind it)
+                        timeout = {"read_timeout_seconds": PLUGIN_CALL_TIMEOUT} if name in aliases else {}
+                        result = text_of(await sessions[name].call_tool(aliases.get(name, name), args, **timeout))
+                        if name == "App" and args.get("mode") == "switch" and "error" in result.lower() and args.get("name"):
+                            # Windows-MCP matches app names exactly; fall back to any window title containing the name
+                            if title := await asyncio.to_thread(focus_window, args["name"]):
+                                result = f"Switched to {title} window."
+                        if name.startswith("browser_"):
+                            result = inline_browser_snapshot(result, browser_dir)
+                        if name == "App" and args.get("mode") == "launch" and args.get("name") and "launched" in result.lower():
+                            # Windows often opens new apps behind the current foreground window
+                            await asyncio.sleep(1.0)
+                            switched = text_of(await win.call_tool("App", {"mode": "switch", "name": args["name"]}))
+                            # a failed switch doesn't mean the launch failed; don't let it read like one
+                            result += " " + (switched if "error" not in switched.lower() else "Use Snapshot to find its window.")
+                    except Exception as e:  # tool errors go back to the boss to recover from
+                        if name in aliases and isinstance(e, MCPError) and e.message == "Connection closed":
+                            # the plugin process died: stop offering its tools
+                            dead = sessions[name]
+                            gone = {a for a in aliases if sessions.get(a) is dead}
+                            tools[:] = [d for d in tools if d["function"]["name"] not in gone]
+                            for a in gone:
+                                sessions.pop(a, None)
+                            result = f"error: the plugin behind {name} stopped; its tools are no longer available, do this another way"
+                        else:
+                            result = f"error: {e}"
+                else:
+                    result = f"error: there is no tool named {name}"
+                result = result[:MAX_TOOL_TEXT] or "ok"
+                last_error = result if re.match(r"(error|\d+ validation error)", result, re.I) or "Error calling tool" in result else ""
+                if not last_error:
+                    refused_done = False
+                error_streak = error_streak + 1 if last_error else 0
+                # replan history goes to a cloud planner: with sharing off it carries no data from the PC
+                actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}" if options["share_context"]
+                               else f"{name} -> {'error' if last_error else 'ok'}")
+                log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
+                messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+
+        log("gave_up", steps=max_steps)
+        return f"stopped after {max_steps} steps without finishing"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("task", help="what to do, in plain language")
+    parser.add_argument("--max-steps", type=int, default=30)
+    args = parser.parse_args()
+    print(asyncio.run(run(args.task, args.max_steps)))
+
+
+if __name__ == "__main__":
+    main()

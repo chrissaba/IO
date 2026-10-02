@@ -1,0 +1,9 @@
+This folder is IO's Chrome extension. It is a modified copy of the Playwright Extension 0.4.0
+(https://github.com/microsoft/playwright/tree/main/packages/extension), Copyright (c) Microsoft Corporation,
+licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+Changes: the name, icons and tab group title say IO, the group colour starts at purple, and a few
+messages are reworded. The extension key (and so its id) is unchanged so Playwright MCP can reach it.
+
+To install: chrome://extensions > turn on Developer mode > Load unpacked > choose this folder.
+Remove the Web Store 'Playwright Extension' first; they share an id.

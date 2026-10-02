@@ -1,0 +1,9 @@
+.venv/
+NVIDIA Corporation/
+__pycache__/
+data/
+icon.ico
+icon-*.ico
+logs/
+mcp/node_modules/
+planners.json

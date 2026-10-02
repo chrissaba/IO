@@ -1,0 +1,1486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IO</title>
+<script defer src="/static/alpine.min.js"></script>
+<script src="/static/lucide.min.js"></script>
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
+<style>
+  @font-face { font-family: Geist; src: url(/static/fonts/geist-400.woff2) format("woff2"); font-weight: 400; }
+  @font-face { font-family: Geist; src: url(/static/fonts/geist-500.woff2) format("woff2"); font-weight: 500; }
+  @font-face { font-family: Geist; src: url(/static/fonts/geist-600.woff2) format("woff2"); font-weight: 600; }
+  @font-face { font-family: "Geist Mono"; src: url(/static/fonts/geist-mono-400.woff2) format("woff2"); font-weight: 400; }
+  @font-face { font-family: Lora; src: url(/static/fonts/lora-400.woff2) format("woff2"); font-weight: 400; }
+  @font-face { font-family: Lora; src: url(/static/fonts/lora-500.woff2) format("woff2"); font-weight: 500; }
+
+  /* warm palette in the style of the Claude apps: parchment surfaces, ink text, terracotta accent */
+  :root {
+    --bg: #faf9f5; --rail: #f5f4ef; --surface: #ffffff; --raised: #f0eee6; --hover: #ebe8de;
+    --line: #e8e5da; --line-strong: #dad6c8; --text: #29261b; --muted: #73705f; --faint: #8a8678;
+    --accent: #c96442; --accent-soft: #f6e4dc; --unread: #4a7fd4;
+    --ok: #4b8a5b; --warn: #c27a1c; --bad: #bf4b3d; --bad-soft: #f7e3df; --warn-soft: #f8efdc;
+    --shadow: 0 1px 2px rgb(41 38 27 / .04), 0 4px 14px -6px rgb(41 38 27 / .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #262624; --rail: #1f1e1d; --surface: #30302e; --raised: #30302e; --hover: #383734;
+      --line: #393835; --line-strong: #4a4945; --text: #f2f0e8; --muted: #b3b0a3; --faint: #959184;
+      --accent: #d97757; --accent-soft: #46302a; --unread: #6f9be6;
+      --ok: #7fbf8e; --warn: #e3a857; --bad: #e8806f; --bad-soft: #452824; --warn-soft: #433824;
+      --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .4);
+    }
+  }
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased; overflow: hidden; }
+  [x-cloak] { display: none !important; }
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 9px; border: 3px solid transparent; background-clip: content-box; }
+  svg.lucide { width: 15px; height: 15px; stroke-width: 1.6; flex: none; }
+  .ic { display: inline-flex; }
+  svg.lucide.sm { width: 13px; height: 13px; }
+  .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  button { font: inherit; color: inherit; }
+  input, select, textarea { font: inherit; color: var(--text); }
+
+  /* ---------- sidebar ---------- */
+  .app { display: grid; grid-template-columns: 236px 1fr; height: 100%; }
+  .app.collapsed { grid-template-columns: 1fr; } .app.collapsed .rail { display: none; }
+  .rail { background: var(--rail); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  /* seamless window: the top bar is part of the page, and dragging it moves the window */
+  .drag { user-select: none; }
+  .railtop, .topbar { height: 34px; flex: none; display: flex; align-items: center; }
+  .railtop { padding: 0 8px; }
+  .topbar { gap: 2px; padding-left: 10px; position: relative; z-index: 4; background: var(--bg); }
+  .topbar .sp { flex: 1; align-self: stretch; }
+  /* pages scrolling under the window bar fade out instead of being cut off */
+  .topbar.fade::after, .chathead::after { content: ""; position: absolute; left: 0; right: 10px; top: 100%; height: 22px; pointer-events: none;
+                                          background: linear-gradient(var(--bg), transparent); }
+  /* the chat's own header sits under the window bar, like Claude's */
+  .chathead { position: relative; z-index: 3; flex: none; display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 14px 0 16px;
+              background: var(--bg); }
+  .chathead .sp { flex: 1; align-self: stretch; }
+  .titlewrap { position: relative; min-width: 0; max-width: 70%; display: flex; }
+  .titlebtn { display: flex; align-items: center; gap: 5px; min-width: 0; border: 0; background: none; padding: 4px 8px; border-radius: 7px; cursor: pointer;
+              font-size: 13.5px; color: var(--text); }
+  .titlebtn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .titlebtn .ic { color: var(--faint); }
+  .titlebtn:hover, .titlebtn.on { background: var(--hover); }
+  .titleedit { font: inherit; font-size: 13.5px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 3px 8px; width: min(420px, 60vw);
+               background: var(--surface); outline: none; }
+  .titleedit:focus { border-color: var(--muted); }
+  .menu.titlemenu { top: calc(100% + 4px); bottom: auto; left: 0; right: auto; min-width: 180px; }
+  .pinmark { color: var(--faint); display: grid; }
+  /* in-app dialogs instead of the browser's "127.0.0.1 says" boxes */
+  .scrim { position: fixed; inset: 0; z-index: 60; background: rgb(20 18 12 / .28); display: grid; place-items: center; padding: 16px; }
+  .dialog { width: min(400px, 100%); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
+            padding: 16px 18px 14px; }
+  .dialog h3 { margin: 0 0 4px; font: 400 18px/1.3 Lora, Georgia, serif; }
+  .dialog p { margin: 0 0 4px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .dialog input { width: 100%; margin-top: 8px; }
+  .dlgbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .btn.dangerfill, .btn.dangerfill:hover { background: var(--bad); border-color: var(--bad); color: #fff; } .btn.dangerfill:hover { opacity: .9; }
+  .winbtns { display: flex; align-self: stretch; margin-left: 6px; }
+  .winbtns button { width: 46px; border: 0; background: none; color: var(--text); display: grid; place-items: center; cursor: default; padding: 0; }
+  .winbtns button:hover { background: var(--hover); }
+  .winbtns button.close:hover { background: #c42b1c; color: #fff; }
+  .winbtns svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: crispEdges; }
+  .grip { position: fixed; z-index: 50; }
+  .grip.t { top: 0; left: 8px; right: 8px; height: 4px; cursor: ns-resize; }
+  .grip.tl { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+  .grip.tr { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+  .nav { display: flex; flex-direction: column; padding: 0 8px; }
+  .navbtn { display: flex; align-items: center; gap: 9px; padding: 3px 9px; line-height: 20px; border-radius: 7px; border: 0; background: none; color: var(--text);
+            cursor: pointer; text-align: left; font-size: 13px; }
+  .navbtn .ic { color: var(--muted); }
+  .navbtn .count { margin-left: auto; font-size: 11px; color: var(--muted); background: var(--raised); border-radius: 8px; padding: 0 6px; }
+  .group { display: flex; align-items: center; gap: 4px; padding: 12px 8px 3px 9px; font-size: 11.5px; color: var(--faint); }
+  .group span { flex: 1; }
+  .group button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 3px; border-radius: 6px; display: grid; }
+  .group button:hover { color: var(--text); background: var(--hover); }
+  .chats { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  .chatitem { position: relative; display: flex; align-items: center; gap: 9px; padding: 3px 8px 3px 9px; line-height: 20px; border-radius: 7px; cursor: pointer; font-size: 13px; outline: none; }
+  .chatitem .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .navbtn:hover, .chatitem:hover { background: color-mix(in srgb, var(--hover) 55%, transparent); }
+  .navbtn.on, .chatitem.on { background: var(--hover); }
+  .chatitem:focus-visible .acts, .chatitem:focus-within .acts { display: flex; }
+  .navbtn:focus-visible, .chatitem:focus-visible, .iconbtn:focus-visible, .send:focus-visible, .chips button:focus-visible, .btn:focus-visible, .me:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -2px; }
+  .chatitem .acts { display: none; gap: 1px; }
+  .chatitem:hover .acts { display: flex; }
+  .chatitem .acts button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 2px; border-radius: 5px; display: grid; }
+  .chatitem .acts button:hover { color: var(--text); }
+  .chatitem .acts button.del:hover { color: var(--bad); }
+  /* status marks like Claude's list: hollow = read, blue = unread reply, terracotta = working */
+  .mk { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid color-mix(in srgb, var(--faint) 75%, transparent); }
+  .mk.unread { background: var(--unread); border-color: var(--unread); }
+  .mk.busy { background: var(--accent); border-color: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  .mk.ask { background: var(--warn); border-color: var(--warn); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .mewrap { position: relative; padding: 5px 8px 7px; border-top: 1px solid var(--line); }
+  .me { width: 100%; display: flex; align-items: center; gap: 9px; padding: 5px 8px; border: 0; background: none; border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left; }
+  .me:hover { background: var(--hover); }
+  .menu { position: absolute; left: 8px; right: 8px; bottom: calc(100% - 2px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
+          box-shadow: var(--shadow); padding: 6px; z-index: 20; }
+  .menu .menuhead { font-size: 12.5px; color: var(--faint); padding: 4px 8px 6px; }
+  .menu button { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; text-align: left; }
+  .menu button:hover { background: var(--hover); }
+  .menu button.danger { color: var(--bad); }
+  .menu kbd { margin-left: auto; font: 11px Geist, sans-serif; color: var(--faint); background: none; border: 0; }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 4px; }
+  .me .av { width: 22px; height: 22px; border-radius: 50%; background: var(--raised); border: 1px solid var(--line-strong); display: grid; place-items: center;
+            font-size: 11px; font-weight: 600; color: var(--muted); }
+  .me .who { flex: 1; } .me .who small { color: var(--faint); font-size: 11.5px; }
+  .iconbtn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px; border-radius: 7px; display: grid; }
+  .iconbtn:hover { background: var(--hover); color: var(--text); }
+  .iconbtn.stop:hover { color: var(--bad); }
+  .iconbtn.on { color: var(--warn); }
+  main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .mainbody { flex: 1; min-height: 0; overflow-y: auto; }
+
+  /* ---------- controls ---------- */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line-strong); background: var(--surface);
+         border-radius: 8px; padding: 5px 11px; font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .12s; }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); } .btn.primary:hover { opacity: .88; }
+  .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; } .btn.accent:hover { opacity: .9; }
+  .btn.danger { color: var(--bad); } .btn.danger:hover { background: var(--bad-soft); }
+  .btn.ghost { border-color: transparent; background: none; color: var(--muted); } .btn.ghost:hover { background: var(--hover); color: var(--text); }
+  .btn.sm { padding: 3px 9px; font-size: 12.5px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  input[type=text], input[type=number], input[type=time], input[type=password], select, .field textarea {
+    border: 1px solid var(--line-strong); background: var(--surface); border-radius: 8px; padding: 6px 10px; min-width: 0; outline: none; font-size: 13.5px; }
+  input:focus, select:focus, .field textarea:focus { border-color: var(--muted); }
+  .switch { position: relative; width: 32px; height: 18px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--line-strong); border-radius: 18px; cursor: pointer; transition: .15s; }
+  .switch span::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::before { transform: translateX(14px); }
+
+  /* ---------- chat ---------- */
+  .chatview { display: flex; flex-direction: column; height: 100%; }
+  .scroller { flex: 1; overflow-y: auto; min-height: 0; }
+  .column { max-width: 760px; margin: 0 auto; padding: 22px 22px 8px; }
+  .scroller { scrollbar-gutter: stable both-edges; scroll-padding-top: 28px; }
+  .msg-user { display: flex; justify-content: flex-end; margin: 4px 0 14px; }
+  .msg-user .bubble { background: var(--raised); border-radius: 13px; padding: 6px 13px; max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+  .msg-agent { margin: 0 0 22px; }
+  .md { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md p { margin: 0 0 .75em; } .md ul, .md ol { margin: .2em 0 .8em; padding-left: 1.3em; } .md li { margin: .2em 0; }
+  .md strong { font-weight: 600; }
+  .md code { font: 12.5px "Geist Mono", ui-monospace, monospace; background: var(--raised); border-radius: 4px; padding: 1px 5px; }
+  .md pre { background: var(--raised); border-radius: 8px; padding: 10px 13px; overflow-x: auto; } .md pre code { padding: 0; background: none; }
+  .md a { color: var(--accent); }
+  .md h1, .md h2, .md h3 { font-size: 1em; font-weight: 600; margin: 1em 0 .35em; }
+  .md h1 { font-size: 1.2em; } .md h2 { font-size: 1.08em; }
+  .md table { border-collapse: collapse; margin: .4em 0 .8em; font-size: 13.5px; } .md th, .md td { border: 1px solid var(--line); padding: 4px 9px; }
+  .md.bad { color: var(--bad); }
+  .meta { font-size: 12px; color: var(--faint); margin-top: 6px; }
+  /* checklist card, like Claude's progress list */
+  .checklist { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 8px 14px; margin: 0 0 12px; }
+  .ck { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; padding: 4px 0; font-size: 13.5px; }
+  .ck[onclick] { cursor: pointer; }
+  .ck[onclick]:hover .cktext > span { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+  .ck .mark { width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; display: grid; place-items: center; border: 1.3px solid var(--line-strong); color: var(--bg); }
+  .ck .mark svg.lucide { width: 10px; height: 10px; stroke-width: 3.2; }
+  .ck.done .mark { background: var(--text); border-color: var(--text); }
+  .ck.fail .mark { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .ck.now .mark { border-color: transparent; color: var(--accent); } .ck.now .mark svg.lucide { width: 16px; height: 16px; stroke-width: 2; }
+  .ck.todo { color: var(--muted); } .ck.fail .cktext { color: var(--bad); }
+  .ckdetail { margin-top: 3px; font-size: 12px; color: var(--faint); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ckdetail code { font: 11.5px "Geist Mono", ui-monospace, monospace; color: var(--muted); }
+  .shimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--text) 40%, var(--muted) 80%); background-size: 200% 100%;
+             -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  .question { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; padding: 11px 14px; margin: 0 0 12px; }
+  .question .q { font-size: 14px; }
+  .qrow { display: flex; gap: 8px; margin-top: 9px; } .qrow input { flex: 1; }
+  /* "New" divider for replies that arrived while you weren't looking */
+  .newline { display: flex; align-items: center; gap: 12px; margin: 6px 0 20px; color: var(--accent); font-size: 12.5px; }
+  .newline i { flex: 1; height: 6px; background: currentColor; opacity: .7;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 0 6 3 T12 3' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") repeat-x center / 12px 6px;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3 Q3 0 6 3 T12 3' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") repeat-x center / 12px 6px; }
+  /* new chat: greeting with the composer centred under it */
+  .home { padding: 0 24px; }
+  .chatview.blank { justify-content: center; padding-bottom: 12vh; }
+  .chatview.blank .composerwrap { padding-top: 0; }
+  .greet { text-align: center; font: 400 28px/1.25 Lora, Georgia, serif; letter-spacing: -.01em; margin: 0 0 22px; color: var(--text); }
+  .greet { display: flex; align-items: center; justify-content: center; gap: 11px; }
+  .greet .mark { width: 30px; height: 30px; border-radius: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; max-width: 700px; margin: 12px auto 0; }
+  .chip-tpl { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 9px; }
+  .chip-tpl button { border: 0 !important; }
+  .chip-tpl .x { padding: 0 8px 0 2px !important; color: var(--faint); font-size: 14px; }
+  .chips .tpltxt { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chips button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); background: transparent; border-radius: 9px; padding: 4px 10px;
+                  font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  .chips button:hover { background: var(--surface); color: var(--text); }
+  .composerwrap { padding: 2px 22px 10px; }
+  .home .composerwrap { padding: 0; }
+  /* composer: as small as it can be while text stays comfortable; grows with what you type */
+  .composer { max-width: 716px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px;
+              box-shadow: var(--shadow); padding: 9px 7px 5px 13px; }
+  .composer:focus-within { border-color: color-mix(in srgb, var(--muted) 25%, var(--line-strong)); }
+  /* the suggestion sits in the same grid cell as the textarea, so a long one grows the box */
+  .typing { display: grid; }
+  .typing > textarea, .typing > .ghost { grid-area: 1 / 1; }
+  .composer textarea, .ghost { width: 100%; border: 0; padding: 0 6px 0 0; font: 14px/21px Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+                               white-space: pre-wrap; overflow-wrap: break-word; letter-spacing: normal; }
+  .composer textarea { position: relative; display: block; outline: 0; background: none; resize: none; height: 21px; min-height: 21px; max-height: 210px; }
+  .composer textarea::placeholder { color: var(--faint); }
+  .ghost { color: transparent; pointer-events: none; }
+  .ghost .hint { color: var(--faint); }
+  .ghost kbd { font: 10.5px/1 Geist, sans-serif; color: var(--faint); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 4px; margin-left: 6px;
+               vertical-align: 1px; }
+  .composer .row { display: flex; align-items: center; gap: 2px; margin: 3px 0 0 -6px; }
+  .notice { max-width: 716px; margin: 0 auto 6px; font-size: 12px; color: var(--warn); padding: 0 4px; }
+  .composer.drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); }
+  .attachments { display: flex; gap: 7px; flex-wrap: wrap; margin: 0 0 8px; }
+  .thumb { position: relative; width: 56px; height: 56px; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb button { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgb(0 0 0 / .55); color: #fff;
+                  display: grid; place-items: center; cursor: pointer; padding: 0; }
+  .msg-user .imgs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 6px; }
+  .msg-user .imgs img { height: 120px; width: auto; max-width: 220px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; cursor: zoom-in; }
+  .msg-user { flex-direction: column; align-items: flex-end; }
+  .templates { display: flex; gap: 5px; flex-wrap: wrap; margin-right: auto; min-width: 0; }
+  .tpl { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 7px; padding: 0 2px 0 8px; font-size: 12px; color: var(--muted); cursor: pointer; max-width: 220px; }
+  .tpl:hover { color: var(--text); background: var(--raised); }
+  .tpl span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tpl button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 1px; display: grid; }
+  .send { width: 28px; height: 28px; border-radius: 8px; border: 0; display: grid; place-items: center; cursor: pointer; color: var(--text); background: none; }
+  .send:hover:not(:disabled) { background: var(--hover); } .send:disabled { color: var(--faint); cursor: default; }
+  .send svg.lucide { width: 16px; height: 16px; }
+  .send.stop { background: var(--text); color: var(--bg); border-radius: 50%; width: 24px; height: 24px; margin: 2px; }
+  .send.stop svg.lucide { width: 10px; height: 10px; }
+  .underbar { max-width: 716px; margin: 5px auto 0; display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--faint); padding: 0 4px; }
+  .underbar .status { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+  .underbar .status span { display: inline-flex; align-items: center; gap: 5px; }
+  .underbar .paused { color: var(--warn); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+
+  /* ---------- pages ---------- */
+  .page { max-width: 740px; margin: 0 auto; padding: 18px 24px 60px; }
+  .pagehead { margin-bottom: 18px; }
+  .pagehead h1 { margin: 0 0 3px; font: 400 23px/1.3 Lora, Georgia, serif; }
+  .pagehead p { margin: 0; color: var(--muted); font-size: 13px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+  .page h2 { font-size: 12px; color: var(--faint); margin: 24px 0 8px; font-weight: 500; }
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+  .field label { font-size: 12.5px; color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .note { font-size: 12.5px; color: var(--muted); }
+  .setting { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .setting:first-child { padding-top: 0; } .setting:last-child { border-bottom: 0; padding-bottom: 0; }
+  .setting .txt { flex: 1; font-size: 13.5px; } .setting .txt div:last-child { font-size: 12.5px; color: var(--muted); }
+  .item { display: flex; align-items: center; gap: 12px; }
+  .card.task, .card.item { background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin: 0; padding: 12px 4px; }
+  .badge.done { display: none; }
+  .item .txt { flex: 1; min-width: 0; font-size: 13.5px; } .item .txt .t { overflow-wrap: anywhere; } .item .txt .s { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .empty { text-align: center; color: var(--faint); padding: 30px 10px; font-size: 13.5px; }
+  .badge { display: inline-flex; font-size: 11.5px; border-radius: 6px; padding: 0 7px; white-space: nowrap; background: var(--raised); color: var(--muted); }
+  .badge.done { color: var(--ok); } .badge.error, .badge.cancelled { color: var(--bad); }
+  .task header { display: flex; align-items: flex-start; gap: 10px; }
+  .task .title { flex: 1; overflow-wrap: anywhere; font-size: 13.5px; }
+  .task .tmeta { font-size: 12px; color: var(--faint); margin-top: 1px; }
+  .task .summary { margin-top: 6px; color: var(--muted); }
+  .task .summary.md { font-size: 13.5px; }
+  .tabs { display: flex; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; background: none; padding: 7px 10px; font-size: 13.5px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--text); }
+  .plugins { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .plugin { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .plugin.installed { border-color: var(--line-strong); }
+  .plugin .ptop { display: flex; align-items: center; gap: 8px; } .plugin .pname { flex: 1; font-size: 13.5px; font-weight: 500; }
+  .plugin .pdesc { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  .plugin .penv { display: flex; flex-direction: column; gap: 6px; }
+  .plugin .pfoot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; margin-top: 2px; }
+  .plugin .ptest { color: var(--muted); flex-basis: 100%; overflow-wrap: anywhere; padding-left: 0; }
+  .badge.warn { color: var(--warn); background: var(--warn-soft); }
+  .linkbtn { border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer; font-size: 12px; text-decoration: none; }
+  .linkbtn:hover { color: var(--text); text-decoration: underline; } .linkbtn.danger:hover { color: var(--bad); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 6px; }
+  .stat { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 14px 16px; }
+  .stat b { display: block; font: 400 26px/1.2 Lora, Georgia, serif; } .stat span { font-size: 12.5px; color: var(--muted); }
+  .urow { display: grid; grid-template-columns: 1fr 2fr auto; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
+  .bar { height: 6px; border-radius: 6px; background: var(--raised); overflow: hidden; } .bar i { display: block; height: 100%; background: var(--accent); }
+  .search { display: flex; gap: 8px; margin-bottom: 12px; } .search input { flex: 1; }
+  .prow { display: grid; grid-template-columns: 86px 1fr 76px 1fr auto; gap: 8px; align-items: center; margin: 10px 0 3px; font-size: 13.5px; }
+  .ptest { font-size: 12px; color: var(--muted); padding-left: 94px; }
+  .mono { font: 12px "Geist Mono", ui-monospace, monospace; }
+  .url { font: 12px "Geist Mono", ui-monospace, monospace; background: var(--raised); border-radius: 5px; padding: 1px 6px; user-select: all; }
+  .checklines { list-style: none; margin: 10px 0 0; padding: 0; } .checklines li { font: 12px "Geist Mono", ui-monospace, monospace; padding: 2px 0; color: var(--muted); }
+  .checklines li.ok { color: var(--ok); } .checklines li.err { color: var(--bad); }
+
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .rail { display: none; position: fixed; inset: 0 auto 0 0; width: 236px; z-index: 30; box-shadow: var(--shadow); }
+    .app.railopen .rail { display: flex; }
+    .grid2, .prow { grid-template-columns: 1fr; } .ptest { padding-left: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app" :class="{ collapsed: railHidden && !narrow, railopen: railOpen }" x-data="agent()" x-cloak>
+  <template x-if="dialog">
+    <div class="scrim" @mousedown.self="$event.detail < 2 && closeDialog(false)">
+      <div class="dialog" role="dialog" aria-modal="true" @keydown.escape.stop="closeDialog(false)"
+           @keydown.enter.capture="($event.repeat || performance.now() - dialog.openedAt < 400) && $event.preventDefault()">
+        <h3 x-text="dialog.title"></h3>
+        <p x-show="dialog.text" x-text="dialog.text"></p>
+        <template x-if="dialog.input"><input type="text" x-ref="dialogInput" x-model="dialog.value" @keydown.enter.prevent="closeDialog(true)"></template>
+        <div class="dlgbtns">
+          <button class="btn ghost" @click="$event.detail < 2 && closeDialog(false)">Cancel</button>
+          <button class="btn" :class="dialog.danger ? 'dangerfill' : 'primary'" x-ref="dialogOk" @click="$event.detail < 2 && closeDialog(true)" x-text="dialog.ok"></button>
+        </div>
+      </div>
+    </div>
+  </template>
+  <!-- the window has no Windows title bar: these let the top edge resize it -->
+  <template x-if="native && !maximized"><div style="display:contents"><i class="grip t" @mousedown="grab('top', $event)"></i><i class="grip tl" @mousedown="grab('topleft', $event)"></i><i class="grip tr" @mousedown="grab('topright', $event)"></i></div></template>
+
+  <!-- ===== sidebar ===== -->
+  <aside class="rail" :inert="!!dialog" @click.outside="railOpen = false">
+    <div class="railtop drag" @mousedown="barDown($event)">
+      <button class="iconbtn" @click="toggleRail()" title="Close sidebar (Ctrl+B)"><span class="ic" x-html="ic('panel-left')"></span></button>
+    </div>
+    <nav class="nav">
+      <template x-for="v in views" :key="v.id">
+        <button class="navbtn" :class="view === v.id && 'on'" @click="go(v.id)"><span class="ic" x-html="ic(v.icon)"></span><span x-text="v.label"></span><span class="count" x-show="v.id === 'history' && background.length" x-text="background.length"></span></button>
+      </template>
+    </nav>
+
+    <div class="chats">
+      <template x-if="pinnedChats.length">
+        <div>
+          <div class="group"><span>Pinned</span></div>
+          <template x-for="c in pinnedChats" :key="c.id"><div class="chatitem" :class="view === 'chat' && chatId === c.id && 'on'" @click="openChat(c.id)" :title="c.title" tabindex="0" @keydown.enter.self="openChat(c.id)">
+            <i class="mk" :class="rowMark(c)"></i><span class="name" x-text="c.title"></span>
+            <span class="acts">
+              <button @click.stop="togglePin(c)" :title="c.pinned ? 'Unpin' : 'Pin'" x-html="ic(c.pinned ? 'pin-off' : 'pin', 'sm')"></button>
+              <button class="del" @click.stop="deleteChat(c)" title="Delete" x-html="ic('trash-2', 'sm')"></button>
+            </span>
+          </div></template>
+        </div>
+      </template>
+      <div class="group"><span>Chats</span><button @click="newChat()" title="New chat (Ctrl+Alt+Q)"><span class="ic" x-html="ic('plus')"></span></button></div>
+      <template x-for="c in otherChats" :key="c.id"><div class="chatitem" :class="view === 'chat' && chatId === c.id && 'on'" @click="openChat(c.id)" :title="c.title" tabindex="0" @keydown.enter.self="openChat(c.id)">
+            <i class="mk" :class="rowMark(c)"></i><span class="name" x-text="c.title"></span>
+            <span class="acts">
+              <button @click.stop="togglePin(c)" :title="c.pinned ? 'Unpin' : 'Pin'" x-html="ic(c.pinned ? 'pin-off' : 'pin', 'sm')"></button>
+              <button class="del" @click.stop="deleteChat(c)" title="Delete" x-html="ic('trash-2', 'sm')"></button>
+            </span>
+          </div></template>
+      <div class="empty" style="padding:10px 18px; text-align:left" x-show="!s.chats.length">No chats yet</div>
+    </div>
+
+    <div class="mewrap" @mousedown.outside="menuOpen = false">
+      <div class="menu" x-show="menuOpen" x-transition.opacity.duration.100ms>
+        <div class="menuhead" x-text="(s.user || 'You') + ' · IO on this PC'"></div>
+        <button @click="go('settings'); menuOpen = false"><span class="ic" x-html="ic('settings')"></span>Settings<kbd>Ctrl+,</kbd></button>
+        <button @click="go('usage'); menuOpen = false"><span class="ic" x-html="ic('gauge')"></span>Usage</button>
+        <button @click="go('customize'); menuOpen = false"><span class="ic" x-html="ic('blocks')"></span>Plugins and skills</button>
+        <hr>
+        <button @click="togglePause(); menuOpen = false"><span class="ic" x-html="ic(s.status.paused ? 'play' : 'pause')"></span><span x-text="s.status.paused ? 'Resume' : 'Pause'"></span></button>
+        <button class="danger" @click="stopAll(); menuOpen = false"><span class="ic" x-html="ic('octagon-x')"></span>Stop everything<kbd>Ctrl+Alt+End</kbd></button>
+      </div>
+      <button class="me" @click="menuOpen = !menuOpen">
+        <span class="av" x-text="(s.user || 'You').slice(0, 1).toUpperCase()"></span>
+        <span class="who"><span x-text="s.user || 'You'"></span> <small x-text="s.status.paused ? '· paused' : '· local'"></small></span>
+        <span class="ic" x-html="ic('chevrons-up-down', 'sm')" style="color:var(--faint)"></span>
+      </button>
+    </div>
+  </aside>
+
+  <main :inert="!!dialog">
+    <header class="topbar drag" :class="view !== 'chat' && 'fade'" @mousedown="barDown($event)">
+      <template x-if="railHidden || narrow">
+        <div style="display:flex; gap:2px">
+          <button class="iconbtn" @click.stop="toggleRail()" title="Open sidebar (Ctrl+B)"><span class="ic" x-html="ic('panel-left')"></span></button>
+          <button class="iconbtn" @click="newChat()" title="New chat"><span class="ic" x-html="ic('square-pen')"></span></button>
+        </div>
+      </template>
+      <div class="sp"></div>
+      <div class="winbtns" x-show="native">
+        <button @click="winApi('minimize')" title="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button>
+        <button @click="winApi('toggle_maximize')" :title="maximized ? 'Restore' : 'Maximize'">
+          <svg viewBox="0 0 10 10" x-show="!maximized"><rect x=".5" y=".5" width="9" height="9"/></svg>
+          <svg viewBox="0 0 10 10" x-show="maximized"><rect x=".5" y="2.5" width="7" height="7"/><path d="M2.5 2.5v-2h7v7h-2"/></svg>
+        </button>
+        <button class="close" @click="winApi('close')" title="Close to the tray"><svg viewBox="0 0 10 10"><path d="M.5 .5l9 9M9.5 .5l-9 9"/></svg></button>
+      </div>
+    </header>
+
+    <div class="mainbody">
+    <!-- ===== chat ===== -->
+    <div class="chatview" :class="!(chat && chat.messages.length) && 'blank'" x-show="view === 'chat'">
+      <template x-if="chat && chat.messages.length">
+        <div class="chathead" @mousedown="barDown($event)">
+          <div class="titlewrap" @mousedown.outside="titleMenu = false">
+            <template x-if="!renaming">
+              <button class="titlebtn" x-ref="titleBtn" :class="titleMenu && 'on'" @click="titleMenu = !titleMenu" :title="chat.title">
+                <span x-text="chat.title"></span><span class="ic" x-html="ic('chevron-down', 'sm')"></span>
+              </button>
+            </template>
+            <template x-if="renaming">
+              <input class="titleedit" x-ref="titleEdit" x-model="renameDraft" maxlength="80"
+                     @keydown.enter.prevent="const r = $refs; saveRename(); $nextTick(() => r.titleBtn?.focus())"
+                     @keydown.escape.prevent.stop="const r = $refs; renaming = false; $nextTick(() => r.titleBtn?.focus())"
+                     @blur="document.hasFocus() && saveRename()">
+            </template>
+            <div class="menu titlemenu" x-show="titleMenu" x-transition.opacity.duration.100ms>
+              <button @click="titleMenu = false; togglePin(chat)"><span class="ic" x-html="ic(chat.pinned ? 'pin-off' : 'pin')"></span><span x-text="chat.pinned ? 'Unpin' : 'Pin'"></span></button>
+              <button @click="titleMenu = false; startRename()"><span class="ic" x-html="ic('pencil')"></span>Rename</button>
+              <hr>
+              <button class="danger" @click="titleMenu = false; deleteChat(chat)"><span class="ic" x-html="ic('trash-2')"></span>Delete</button>
+            </div>
+          </div>
+          <span class="pinmark" x-show="chat.pinned" title="Pinned"><span class="ic" x-html="ic('pin', 'sm')"></span></span>
+          <div class="sp"></div>
+        </div>
+      </template>
+
+      <!-- new chat: greeting above the composer -->
+      <div class="home" x-show="!chat || !chat.messages.length">
+        <div class="greet"><img src="/static/io-64.png" alt="" class="mark"><span x-text="greeting"></span></div>
+      </div>
+
+      <div class="scroller" x-ref="messages" x-show="chat && chat.messages.length">
+        <div class="column">
+          <template x-for="(m, i) in (chat ? chat.messages : [])" :key="m.task_id">
+            <div>
+              <div x-html="turn(m, i)"></div>
+              <template x-if="taskById(m.task_id)?.status === 'waiting'">
+                <div class="msg-agent" style="margin-top:-14px"><div class="question">
+                  <div class="q" x-text="qText(taskById(m.task_id))"></div>
+                  <div class="qrow">
+                    <template x-if="isYesNo(taskById(m.task_id))">
+                      <div style="display:flex; gap:8px"><button class="btn accent sm" @click="answer(m.task_id, 'yes')">Allow</button><button class="btn sm" @click="answer(m.task_id, 'no')">Don't allow</button></div>
+                    </template>
+                    <template x-if="!isYesNo(taskById(m.task_id))">
+                      <div style="display:flex; gap:8px; flex:1"><input type="text" style="flex:1" x-model="answers[m.task_id]" placeholder="Your answer" @keydown.enter="answer(m.task_id)"><button class="btn accent sm" @click="answer(m.task_id)">Send</button></div>
+                    </template>
+                  </div>
+                </div></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="composerwrap">
+        <div class="notice" x-show="notice" x-text="notice"></div>
+        <div class="composer" :class="dragging && 'drag'" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
+             @dragleave="if (--dragDepth <= 0) { dragDepth = 0; dragging = false }"
+             @drop.prevent="dragDepth = 0; dragging = false; addFiles($event.dataTransfer.files)">
+          <div class="attachments" x-show="attachments.length">
+            <template x-for="(a, i) in attachments" :key="i">
+              <div class="thumb"><img :src="a"><button @click="attachments.splice(i, 1)" title="Remove"><span class="ic" x-html="ic('x', 'sm')"></span></button></div>
+            </template>
+          </div>
+          <div class="typing">
+            <div class="ghost" x-ref="ghost" x-show="completion" aria-hidden="true"><span x-text="draft"></span><span class="hint" x-text="completion"></span><kbd>Tab</kbd></div>
+            <textarea x-ref="task" x-model="draft" rows="1" :placeholder="chat && chat.messages.length ? 'Reply…' : 'How can I help you today?'"
+                      @input="autosize($el)" @keydown.enter="if (!$event.shiftKey && !$event.isComposing) { $event.preventDefault(); send(); }" @keydown.tab="acceptCompletion($event)" @keydown.right="acceptCompletion($event)"
+></textarea>
+          </div>
+          <div class="row">
+            <button class="iconbtn" @click="$refs.file.click()" title="Add images (or paste / drop them)"><span class="ic" x-html="ic('plus')"></span></button>
+            <input type="file" accept="image/*" multiple x-ref="file" style="display:none" @change="addFiles($event.target.files); $event.target.value = ''">
+            <div style="margin-right:auto"></div>
+            <button class="iconbtn" x-show="draft.trim()" @click="saveTemplate()" title="Save as a quick start"><span class="ic" x-html="ic('bookmark-plus')"></span></button>
+            <button class="send stop" x-show="chatBusy && !draft.trim() && !attachments.length" @click="stopChat()" title="Stop"><span class="ic" x-html="ic('square')"></span></button>
+            <button class="send" x-show="!(chatBusy && !draft.trim() && !attachments.length)" @click="send()" :disabled="(!draft.trim() && !attachments.length) || pending > 0" title="Send (Enter)"><span class="ic" x-html="ic('corner-down-left')"></span></button>
+          </div>
+        </div>
+        <div class="chips" x-show="!chat || !chat.messages.length">
+          <template x-for="sg in suggestions" :key="sg.label">
+            <button @click="useStarter(sg.text)"><span class="ic" x-html="ic(sg.icon, 'sm')"></span><span x-text="sg.label"></span></button>
+          </template>
+          <template x-for="t in s.templates" :key="'t' + t">
+            <span class="chip-tpl"><button @click="useStarter(t)" :title="t"><span class="ic" x-html="ic('bookmark', 'sm')"></span><span class="tpltxt" x-text="t"></span></button><button class="x" @click="deleteTemplate(t)" title="Remove">×</button></span>
+          </template>
+        </div>
+        <div class="underbar">
+          <span class="paused" x-show="s.status.paused">Paused. Messages wait until you resume.</span>
+          <span class="status">
+            <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
+            <span :title="'Eyes (UI-TARS): ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
+            <span x-show="plannerChip" title="Cloud planner requests used today" x-text="plannerChip"></span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== customize ===== -->
+    <div class="page" x-show="view === 'customize'">
+      <div class="pagehead"><h1>Customize</h1><p>Give me new abilities with plugins, and teach me how you like things done with skills.</p></div>
+      <div class="tabs">
+        <button :class="customTab === 'plugins' && 'on'" @click="customTab = 'plugins'">Plugins</button>
+        <button :class="customTab === 'skills' && 'on'" @click="customTab = 'skills'">Skills</button>
+      </div>
+
+      <div x-show="customTab === 'plugins'">
+        <div class="search"><input type="text" x-model="pluginQuery" placeholder="Search plugins"></div>
+        <template x-for="cat in pluginCategories" :key="cat">
+          <div>
+            <h2 x-text="cat"></h2>
+            <div class="plugins">
+              <template x-for="p in pluginsIn(cat)" :key="p.id">
+                <div class="plugin" :class="custom.installed[p.id] && 'installed'">
+                  <div class="ptop">
+                    <div class="pname" x-text="p.name"></div>
+                    <span class="badge warn" x-show="custom.installed[p.id]?.missing?.length" :title="'Needs ' + (custom.installed[p.id]?.missing || []).join(', ')">Needs setup</span>
+                    <template x-if="!custom.installed[p.id]"><button class="btn sm" @click="installPlugin(p, !(p.env || []).length)">Install</button></template>
+                    <template x-if="custom.installed[p.id]">
+                      <label class="switch" :title="custom.installed[p.id].enabled ? 'On' : 'Off'"><input type="checkbox" :checked="custom.installed[p.id].enabled" @change="installPlugin(p, $event.target.checked)"><span></span></label>
+                    </template>
+                  </div>
+                  <div class="pdesc" x-text="p.description"></div>
+                  <template x-if="custom.installed[p.id] && (p.env || []).length">
+                    <div class="penv">
+                      <template x-for="e in p.env" :key="e.name">
+                        <input :type="e.secret ? 'password' : 'text'" :placeholder="(custom.installed[p.id].env_set || []).includes(e.name) ? e.label + ' (saved)' : e.label"
+                               :value="e.secret ? '' : (custom.installed[p.id].env || {})[e.name] || ''"
+                               @change="pluginEnv[p.id] = { ...(pluginEnv[p.id] || {}), [e.name]: $event.target.value }">
+                      </template>
+                      <button class="btn sm" @click="await installPlugin(p, custom.installed[p.id].enabled || !!custom.installed[p.id].missing?.length); $el.parentElement.querySelectorAll('input[type=password]').forEach((i) => (i.value = ''))">Save</button>
+                    </div>
+                  </template>
+                  <div class="pfoot" x-show="custom.installed[p.id]">
+                    <button class="linkbtn" @click="testPlugin(p)" x-text="pluginTest[p.id] === '…' ? 'Testing…' : 'Test'"></button>
+                    <button class="linkbtn danger" @click="removePlugin(p)">Remove</button>
+                    <a class="linkbtn" :href="p.homepage" target="_blank" x-show="p.homepage">About</a>
+                    <span class="ptest" x-show="pluginTest[p.id] && pluginTest[p.id] !== '…'" x-text="pluginTest[p.id]"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+        <div class="empty" x-show="!custom.catalog.length">No plugins available yet</div>
+        <div class="empty" x-show="custom.catalog.length && !filteredPlugins.length">No plugins match “<span x-text="pluginQuery"></span>”</div>
+        <p class="note" style="margin-top:14px">Plugins are free MCP servers that run on this PC. The first time one starts it's downloaded, so that message takes a little longer.</p>
+      </div>
+
+      <div x-show="customTab === 'skills'">
+        <div class="card">
+          <div class="field"><label>Name</label><input type="text" x-model="skill.name" placeholder="e.g. Weekly report"></div>
+          <div class="field"><label>How to do it <span class="note" style="float:right" x-text="(skill.instructions || '').length + ' / 4000'"></span></label><textarea rows="4" maxlength="4000" x-model="skill.instructions" placeholder="e.g. When I ask for the weekly report, open D:\Reports, copy last week's file, update the dates and save it as Report-<date>.docx"></textarea></div>
+          <button class="btn primary" @click="saveSkill()" x-text="skill.id ? 'Update skill' : 'Add skill'"></button>
+          <button class="btn ghost" x-show="skill.id" @click="skill = { name: '', instructions: '' }">Cancel</button>
+          <span class="note" x-text="skillMsg"></span>
+        </div>
+        <template x-for="k in custom.skills" :key="k.id">
+          <div class="card item">
+            <label class="switch"><input type="checkbox" :checked="k.enabled" @change="post('/api/skills', { ...k, enabled: $event.target.checked }).then((d) => custom = d)"><span></span></label>
+            <div class="txt"><div class="t" x-text="k.name"></div><div class="s" x-text="k.instructions"></div></div>
+            <button class="iconbtn" @click="skill = { ...k }" title="Edit"><span class="ic" x-html="ic('pencil')"></span></button>
+            <button class="iconbtn stop" @click="deleteSkill(k)" title="Delete"><span class="ic" x-html="ic('trash-2')"></span></button>
+          </div>
+        </template>
+        <div class="empty" x-show="!custom.skills.length">No skills yet. Skills are instructions I follow whenever a task matches them.</div>
+      </div>
+    </div>
+
+    <!-- ===== usage ===== -->
+    <div class="page" x-show="view === 'usage'">
+      <div class="pagehead"><h1>Usage</h1><p>How much I've done today, and how much of the free cloud planning is left.</p></div>
+      <div class="stats">
+        <div class="stat"><b x-text="usage.today"></b><span>tasks today</span></div>
+        <div class="stat"><b x-text="usage.success"></b><span>finished successfully</span></div>
+        <div class="stat"><b x-text="usage.avg"></b><span>average time</span></div>
+      </div>
+      <h2>Cloud planner requests today</h2>
+      <div class="card">
+        <template x-for="row in usage.planner" :key="row.name">
+          <div class="urow"><span x-text="row.name"></span><div class="bar"><i :style="`width:${row.pct}%`"></i></div><span class="mono" x-text="row.label"></span></div>
+        </template>
+        <div class="empty" style="padding:6px" x-show="!usage.planner.length">No cloud planning used today</div>
+      </div>
+      <p class="note">Resets at midnight. Your local models have no limits.</p>
+    </div>
+
+    <!-- ===== schedules ===== -->
+    <div class="page" x-show="view === 'schedules'">
+      <div class="pagehead"><h1>Schedules</h1><p>Things to do on their own, every few minutes or at a set time each day.</p></div>
+      <div class="card">
+        <div class="field"><label>What to do</label><textarea rows="2" x-model="sched.text" placeholder="e.g. check my Downloads folder and delete files older than 30 days"></textarea></div>
+        <div class="grid2">
+          <div class="field"><label>Name</label><input type="text" x-model="sched.name" placeholder="optional"></div>
+          <div class="field"><label>When</label>
+            <div style="display:flex; gap:8px; align-items:center">
+              <select x-model="sched.kind"><option value="every">Every</option><option value="daily">Daily at</option></select>
+              <template x-if="sched.kind === 'every'"><div style="display:flex; gap:6px; align-items:center"><input type="number" min="1" x-model.number="sched.minutes" style="width:80px"><span class="note">minutes</span></div></template>
+              <template x-if="sched.kind === 'daily'"><input type="time" x-model="sched.at"></template>
+            </div>
+          </div>
+        </div>
+        <button class="btn primary" @click="saveSchedule()" x-text="sched.id ? 'Update' : 'Add schedule'"></button>
+        <button class="btn ghost" x-show="sched.id" @click="resetSched()">Cancel</button>
+      </div>
+      <template x-for="x in s.schedules" :key="x.id">
+        <div class="card item">
+          <label class="switch"><input type="checkbox" :checked="x.enabled" @change="toggleSchedule(x, $event.target.checked)"><span></span></label>
+          <div class="txt"><div class="t" x-text="x.name || x.text"></div><div class="s" x-text="describeSchedule(x)"></div></div>
+          <button class="btn sm" @click="runNow(x.text, 'schedule: ' + (x.name || x.text))">Run now</button>
+          <button class="iconbtn" @click="editSchedule(x)" title="Edit"><span class="ic" x-html="ic('pencil')"></span></button>
+          <button class="iconbtn stop" @click="deleteSchedule(x)" title="Delete"><span class="ic" x-html="ic('trash-2')"></span></button>
+        </div>
+      </template>
+      <div class="empty" x-show="!s.schedules.length">No schedules yet</div>
+    </div>
+
+    <!-- ===== triggers ===== -->
+    <div class="page" x-show="view === 'triggers'">
+      <div class="pagehead"><h1>Triggers</h1><p>Start something when a file appears in a folder, or when another app calls in.</p></div>
+      <div class="card">
+        <div class="grid2">
+          <div class="field"><label>When</label>
+            <select x-model="trig.kind"><option value="folder">A new file appears in a folder</option><option value="webhook">Another app calls a webhook</option></select></div>
+          <div class="field"><label>Name</label><input type="text" x-model="trig.name" placeholder="e.g. Invoices"></div>
+        </div>
+        <template x-if="trig.kind === 'folder'"><div class="grid2">
+          <div class="field"><label>Folder</label><input type="text" x-model="trig.folder" placeholder="C:\Users\chris\Downloads"></div>
+          <div class="field"><label>Files matching</label><input type="text" x-model="trig.pattern" placeholder="*.pdf (blank = any)"></div>
+        </div></template>
+        <template x-if="trig.kind === 'webhook'"><div class="field"><label>Webhook name</label><input type="text" x-model="trig.slug" placeholder="e.g. new-order"></div></template>
+        <div class="field"><label>What to do</label><textarea rows="2" x-model="trig.template" :placeholder="trigHint()"></textarea>
+          <span class="note" x-text="'You can use ' + trigVars()"></span></div>
+        <button class="btn primary" @click="saveTrigger()" x-text="trig.id ? 'Update' : 'Add trigger'"></button>
+        <button class="btn ghost" x-show="trig.id" @click="resetTrig()">Cancel</button>
+        <span class="note" x-text="trigMsg"></span>
+      </div>
+      <template x-for="x in s.triggers" :key="x.id">
+        <div class="card item">
+          <label class="switch"><input type="checkbox" :checked="x.enabled" @change="toggleTrigger(x, $event.target.checked)"><span></span></label>
+          <div class="txt">
+            <div class="t"><span x-text="x.name || x.kind"></span> <span class="badge" x-text="x.kind"></span></div>
+            <div class="s" x-show="x.kind === 'folder'" x-text="(x.folder || '') + (x.pattern ? '  (' + x.pattern + ')' : '')"></div>
+            <div class="s" x-show="x.kind === 'webhook'">POST <span class="url" x-text="location.origin + '/api/hook/' + x.slug"></span></div>
+            <div class="s" x-show="x.error" style="color:var(--bad)" x-text="x.error"></div>
+          </div>
+          <button class="iconbtn" @click="editTrigger(x)" title="Edit"><span class="ic" x-html="ic('pencil')"></span></button>
+          <button class="iconbtn stop" @click="deleteTrigger(x)" title="Delete"><span class="ic" x-html="ic('trash-2')"></span></button>
+        </div>
+      </template>
+      <div class="empty" x-show="!s.triggers.length">No triggers yet</div>
+    </div>
+
+    <!-- ===== memory ===== -->
+    <div class="page" x-show="view === 'memory'">
+      <div class="pagehead"><h1>Memory</h1><p>Things I should always know about you and your PC. I'll add to this myself too.</p></div>
+      <div class="card" style="display:flex; gap:8px; align-items:center">
+        <input type="text" style="flex:1" x-model="noteDraft" placeholder="e.g. reports are saved in D:\Reports" @keydown.enter="addNote()">
+        <button class="btn primary" @click="addNote()">Add</button>
+      </div>
+      <template x-for="n in notes" :key="n.id">
+        <div class="card item">
+          <div class="txt"><div class="t" x-text="n.text"></div><div class="s" x-text="new Date(n.created * 1000).toLocaleString()"></div></div>
+          <button class="iconbtn stop" @click="deleteNote(n)" title="Forget"><span class="ic" x-html="ic('trash-2')"></span></button>
+        </div>
+      </template>
+      <div class="empty" x-show="!notes.length">Nothing remembered yet</div>
+    </div>
+
+    <!-- ===== history ===== -->
+    <div class="page" x-show="view === 'history'">
+      <div class="pagehead"><h1>History</h1><p>Everything I've done, from chats, schedules, triggers and other apps.</p></div>
+      <div class="search">
+        <input type="text" x-model="filter" placeholder="Search">
+        <select x-model="statusFilter"><option value="">All</option><option>done</option><option>error</option><option>cancelled</option></select>
+        <button class="btn ghost danger" @click="clearHistory()">Clear</button>
+      </div>
+      <template x-for="t in backgroundShown" :key="t.id"><div x-html="taskCard(t)"></div></template>
+      <template x-for="t in history" :key="t.id"><div x-html="taskCard(t)"></div></template>
+      <div class="empty" x-show="!history.length && !backgroundShown.length">Nothing here yet</div>
+    </div>
+
+    <!-- ===== settings ===== -->
+    <div class="page" x-show="view === 'settings'">
+      <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, and how I plan.</p></div>
+      <h2>Permissions</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Max steps per message</div><div>I stop and report back after this many actions.</div></div>
+          <input type="number" min="5" max="100" style="width:76px" x-model.number="s.settings.max_steps" @change="saveSettings()"></div>
+        <div class="setting"><div class="txt"><div>Ask before risky actions</div><div>Deleting or moving files, closing programs, shutting down and similar need your OK.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.confirm_risky" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>PowerShell</div><div>Run commands on your PC. Off means click-and-type only.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.allow_powershell" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Browser</div><div>Use websites by their buttons and fields.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.browser" @change="saveSettings()"><span></span></label></div>
+        <div class="setting" x-show="s.settings.browser"><div class="txt"><div>Where to browse</div>
+            <div x-show="s.settings.browser_mode !== 'chrome'">A separate Edge window with its own profile.</div>
+            <div x-show="s.settings.browser_mode === 'chrome'">Your own Chrome, signed in as you. My tabs stay in a tab group named IO, like Claude in Chrome.</div></div>
+          <select x-model="s.settings.browser_mode" @change="saveSettings()"><option value="edge">Separate Edge window</option><option value="chrome">Your Chrome (IO tab group)</option></select></div>
+        <div class="setting" x-show="s.settings.browser && s.settings.browser_mode === 'chrome'" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>IO's Chrome extension</div>
+            <div>In Chrome, open <span class="url">chrome://extensions</span>, remove "Playwright Extension" if you added it, turn on Developer mode,
+              click Load unpacked and choose IO's extension folder. Then click IO's icon in Chrome and paste its token here.</div></div>
+          <button class="btn sm" @click="post('/api/browser/folder')">Open extension folder</button>
+          <input type="password" style="flex:1" x-model="chromeToken" :placeholder="s.chrome_token_set ? 'token saved (blank keeps it)' : 'PLAYWRIGHT_MCP_EXTENSION_TOKEN'">
+          <button class="btn sm" @click="saveChromeToken()">Save</button>
+          <button class="btn sm" @click="testBrowser()" :disabled="browserTest === 'Testing…'">Test</button>
+          <div class="note" style="flex-basis:100%; overflow-wrap:anywhere" x-show="browserTest" x-text="browserTest"></div>
+        </div>
+        <div class="setting"><div class="txt"><div>Files and web pages</div><div>Read and write files, and read web pages as text.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.files" @change="saveSettings()"><span></span></label></div>
+      </div>
+      <h2>App</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Notifications</div><div>Let you know when something finishes or needs you.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.notify" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Keyboard shortcuts</div><div>Ctrl+Alt+Q for a new message, Ctrl+Alt+End to stop everything. Applies after a restart.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.hotkeys" @change="saveSettings()"><span></span></label></div>
+      </div>
+
+      <h2>Cloud planner</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>When to plan in the cloud</div><div>"Only when stuck" saves daily requests. Repeating tasks reuse their plan for a week.</div></div>
+          <select x-model="s.settings.planner_mode" @change="saveSettings()"><option value="always">Every message</option><option value="stuck">Only when stuck</option></select></div>
+        <div class="setting"><div class="txt"><div>Share local context</div><div>Send notes, open window titles and the conversation so plans fit your PC. Screenshots never leave this PC.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.share_context" @change="saveSettings()"><span></span></label></div>
+        <div style="padding-top:10px">
+          <div class="note">Tried top to bottom. List several models to rotate through them (<span class="mono">model:limit, …</span>); one that hits its daily limit rests until midnight.</div>
+          <template x-for="p in providers" :key="p.name">
+            <div>
+              <div class="prow">
+                <span x-text="p.name"></span>
+                <input type="text" x-model="p.model" placeholder="model, or a list: a:500, b:20">
+                <input type="number" min="0" x-model.number="p.daily_limit" placeholder="per day" title="Default daily limit for models without one (0 = none)">
+                <input type="password" x-model="p.api_key" :placeholder="p.has_key ? 'key saved (blank keeps it)' : 'API key'">
+                <button class="btn sm" @click="testPlanner(p)">Test</button>
+              </div>
+              <div class="ptest" x-show="p.test" x-text="p.test"></div>
+            </div>
+          </template>
+          <div style="margin-top:12px"><button class="btn primary" @click="savePlanners()">Save</button> <span class="note" x-text="plannerSaved"></span></div>
+        </div>
+      </div>
+
+      <h2>Tools</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Tool check</div><div>Test every tool, both models and the cloud planner, without touching the screen.</div></div>
+          <button class="btn" @click="toolCheck()" :disabled="checking" x-text="checking ? 'Checking…' : 'Run check'"></button></div>
+        <ul class="checklines" x-show="checkLines.length">
+          <template x-for="l in checkLines" :key="l"><li :class="l.startsWith('FAIL') ? 'err' : l.startsWith('OK') ? 'ok' : ''" x-text="l"></li></template>
+        </ul>
+      </div>
+    </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json());
+const md = (text) => DOMPurify.sanitize(marked.parse(String(text ?? ""), { breaks: true }));
+// strip tool-call text a small model sometimes leaks into its answer, e.g. done{summary:<|"|>…<|"|>}
+const cleanAnswer = (s) => String(s ?? "").replace(/\s*done\s*[({]\s*summary\s*[=:]\s*(<\|"\|>|["'])([\s\S]*?)\1\s*[)}]\s*/g, "")
+  .replace(/\s*\[actions taken:[\s\S]*?\]\s*$/, "").trim() || String(s ?? "");
+const BUSY = ["queued", "running", "waiting"];
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// "a:500, b, deepseek/deepseek-r1:free" -> [{name, limit}]: only a trailing number is a daily limit
+const parseModels = (p) => String(p.model || "").split(",").map((m) => m.trim()).filter(Boolean).map((m) => {
+  const i = m.lastIndexOf(":"), lim = i >= 0 ? m.slice(i + 1).trim() : "";
+  return /^\d+$/.test(lim) ? { name: m.slice(0, i).trim(), limit: Number(lim) } : { name: m, limit: 0 };
+}).filter((x) => x.name);
+const short = (v, n = 48) => { const x = String(v ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
+
+const iconCache = {};
+function ic(name, cls = "") {
+  const key = name + "|" + cls;
+  if (!(key in iconCache)) {
+    const pascal = name.replace(/(^|-)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
+    const data = lucide.icons[pascal];
+    if (!data) return "";
+    const el = lucide.createElement(data);
+    el.setAttribute("class", `lucide ${cls}`.trim());
+    iconCache[key] = el.outerHTML;
+  }
+  return iconCache[key];
+}
+
+function agent() {
+  return {
+    views: [
+      { id: "customize", label: "Customize", icon: "blocks" },
+      { id: "schedules", label: "Schedules", icon: "calendar-clock" },
+      { id: "triggers", label: "Triggers", icon: "zap" },
+      { id: "memory", label: "Memory", icon: "brain" },
+      { id: "history", label: "History", icon: "history" },
+    ],
+    suggestions: [
+      { icon: "notebook-pen", label: "Write a note", text: "Open Notepad and write a shopping list: eggs, milk, bread" },
+      { icon: "eye", label: "What's on my screen", text: "Tell me what's on my main monitor right now" },
+      { icon: "globe", label: "Look something up", text: "Go to example.com in the browser and tell me the page heading" },
+      { icon: "folder-search", label: "Check my files", text: "List the 5 newest files in my Downloads folder" },
+    ],
+    view: "chat", chatId: "",
+    s: { status: { boss: "…", eyes: "…", paused: false }, tasks: [], chats: [], schedules: [], templates: [], triggers: [], settings: {}, planner_usage: {}, today: { count: 0, done: 0, avg: 0 }, user: "" },
+    draft: "", filter: "", statusFilter: "", open: {}, lastState: "", attachments: [], answers: {}, dragging: false, menuOpen: false,
+    custom: { catalog: [], installed: {}, skills: [] }, customTab: "plugins", pluginEnv: {}, pluginTest: {}, pluginQuery: "",
+    skill: { name: "", instructions: "" }, skillMsg: "",
+    // unread tracking: replies that finish after dividerAt get the "New" line; it stops moving while you're away
+    dividerAt: 0, dividerLocked: false, seenPending: false, watchedId: "", lastInput: Date.now(), ready: false,
+    sched: { kind: "every", minutes: 60, at: "09:00", text: "", name: "" },
+    trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
+    trigMsg: "", notes: [], noteDraft: "",
+    providers: [], plannerSaved: "", checking: false, checkLines: [],
+    chromeToken: "", browserTest: "",
+    titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
+    readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
+    ic,
+
+    async init() {
+      // in the IO window (not a browser tab) the page draws the title bar and window buttons
+      const hookWindow = () => {
+        this.native = !!window.pywebview?.api?.grab;
+        if (this.native) window.pywebview.api.is_maximized().then((v) => { this.maximized = !!v; });
+      };
+      window.addEventListener("pywebviewready", hookWindow);
+      hookWindow();
+      window.setMaximized = (v) => { this.maximized = !!v; };
+      try { this.railHidden = localStorage.getItem("railHidden") === "1"; } catch {}
+      const mq = matchMedia("(max-width: 760px)");
+      this.narrow = mq.matches;
+      const onWidth = () => { if (this.narrow !== mq.matches) { this.narrow = mq.matches; this.railOpen = false; } };
+      mq.addEventListener("change", onWidth);
+      window.addEventListener("resize", onWidth);
+      // a file dropped outside the composer would replace the whole app with that file
+      const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+      window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+      window.addEventListener("drop", (e) => {
+        if (!hasFiles(e)) return;
+        const handled = e.defaultPrevented;  // the composer already took it
+        e.preventDefault();
+        this.dragging = false; this.dragDepth = 0;
+        if (!handled && !this.dialog && this.view === "chat") this.addFiles(e.dataTransfer.files);
+      });
+      // paste a screenshot wherever focus is in the chat, not only in the text box
+      document.addEventListener("paste", (e) => {
+        if (this.dialog || this.view !== "chat") return;
+        const t = e.target;
+        if (t !== this.$refs.task && t.closest?.("input, textarea, select, [contenteditable]")) return;
+        this.onPaste(e);
+        if (t !== this.$refs.task) this.focusComposer();
+      });
+      window.focusTask = () => { if (this.dialog) this.closeDialog(false); this.newChat(); };
+      window.toggleSteps = (id) => { this.open[id] = !this.open[id]; };
+      window.stopTask = (id) => post(`/api/tasks/${id}/stop`).then(() => this.refresh());
+      window.rerun = (id) => {
+        const t = this.s.tasks.find((x) => x.id === id);
+        if (t) post("/api/tasks", { task: t.text, source: "re-run", images: t.images || [] }).then(() => { this.go("history"); this.refresh(); });
+      };
+      window.answerTask = async (id, value) => {
+        const answer = value ?? (document.getElementById(`ans-${id}`)?.value || "");
+        await post(`/api/tasks/${id}/answer`, { answer });
+        this.refresh();
+      };
+      window.chatAction = (action, id) => {
+        const c = this.s.chats.find((x) => x.id === id);
+        if (!c) return;
+        if (action === "open") this.openChat(id);
+        else if (action === "pin") this.togglePin(c);
+        else if (action === "delete") this.deleteChat(c);
+      };
+      // what counts as "looking at it": visible, focused, not hidden to the tray, and touched recently
+      ["pointerdown", "keydown", "wheel"].forEach((ev) => window.addEventListener(ev, () => { this.lastInput = Date.now(); }, { capture: true, passive: true }));
+      window.addEventListener("mousemove", (e) => { if (e.movementX || e.movementY) this.lastInput = Date.now(); }, { passive: true });
+      window.addEventListener("focus", () => { this.lastInput = Date.now(); this.refresh(); });
+      document.addEventListener("visibilitychange", () => this.refresh());
+      try { this.chatId = localStorage.getItem("chatId") || ""; } catch {}
+      await Promise.all([this.refresh(false), this.loadPlanners(), this.loadNotes(), this.loadCustomize()]);
+      window.addEventListener("keydown", (e) => {
+        if (this.dialog) { if (e.key === "Escape") this.closeDialog(false); return; }
+        if (e.ctrlKey && e.key === ",") { e.preventDefault(); this.go("settings"); }
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") { e.preventDefault(); this.toggleRail(); }
+        if (e.key === "Escape") { this.menuOpen = false; this.titleMenu = false; }
+      });
+      if (this.chat) this.lockDividerIfUnseen(); else this.chatId = "";
+      this.ready = true;
+      this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "chat") this.scrollToStart(); });
+      setInterval(() => this.refresh(), 1000);
+      this.scrollToStart();
+      this.$refs.task.focus();
+    },
+    go(v) {
+      if (this.renaming) this.saveRename();  // leaving with Ctrl+, or the hotkey keeps what you typed
+      this.view = v; this.menuOpen = false; this.railOpen = false; this.titleMenu = false;
+    },
+
+    // ----- in-app dialogs: askUser({ title, text, ok, danger, input, value }) -> true/false, or the typed text / null -----
+    askUser(opts) {
+      if (this.dialog) this.closeDialog(false);
+      return new Promise((resolve) => {
+        this.dialog = { title: "", text: "", ok: "OK", danger: false, input: false, value: "", ...opts, resolve, returnFocus: document.activeElement, openedAt: performance.now() };
+        this.$nextTick(() => requestAnimationFrame(() => {
+          const el = this.$refs.dialogInput || this.$refs.dialogOk;
+          el?.focus();
+          if (el === this.$refs.dialogInput) el.select();
+        }));
+      });
+    },
+    closeDialog(ok) {
+      const d = this.dialog;
+      if (!d) return;
+      this.dialog = null;
+      d.resolve(d.input ? (ok ? d.value : null) : !!ok);
+      const r = d.returnFocus;
+      this.$nextTick(() => requestAnimationFrame(() => {
+        if (this.dialog) return;
+        if (r && r.isConnected && r !== document.body) {
+          const row = !ok && !r.offsetParent ? r.closest(".chatitem") : null;
+          if (row && row.offsetParent) row.focus();  // :focus-within shows the row's buttons again
+          if (r.offsetParent) { r.focus(); return; }
+        }
+        if (this.view === "chat") this.$refs.task.focus();
+      }));
+    },
+
+    // ----- window -----
+    winApi(name) { window.pywebview?.api?.[name]?.(); },
+    // mouse down on an empty part of the top bar: Windows takes over the drag (snapping included);
+    // a second press within the double-click time maximizes or restores
+    barDown(e) {
+      if (e.button !== 0 || e.target.closest("button, input, textarea, a, .menu")) return;
+      // the native drag swallows the mouse-up, so outside-clicks and blur never fire: a press on empty bar
+      // space first dismisses an open menu or finishes a rename, like a native menu
+      if (this.titleMenu || this.menuOpen || this.renaming) {
+        this.titleMenu = this.menuOpen = false;
+        if (this.renaming) this.saveRename();
+        return;
+      }
+      if (!this.native) return;
+      e.preventDefault();
+      window.pywebview.api.grab("move");
+    },
+    grab(edge, e) { if (e.button === 0) { e.preventDefault(); window.pywebview?.api?.grab(edge); } },
+    toggleRail() {
+      if (this.narrow) { this.railOpen = !this.railOpen; return; }
+      this.railHidden = !this.railHidden;
+      try { localStorage.setItem("railHidden", this.railHidden ? "1" : "0"); } catch {}
+    },
+
+    // ----- Tab to complete: past messages, quick starts and suggestions that begin with what you typed -----
+    get completions() {
+      const seen = new Set(), out = [];
+      const add = (text) => {
+        const x = String(text || "").trim(), key = x.toLowerCase();
+        if (!x || x.includes("\n") || x.length > 300 || x === "(see the attached image)" || seen.has(key)) return;
+        seen.add(key); out.push(x);
+      };
+      (this.s.templates || []).forEach(add);
+      [...this.s.tasks].sort((a, b) => (b.created || 0) - (a.created || 0)).forEach((t) => add(t.text));
+      this.suggestions.forEach((sg) => add(sg.text));
+      return out;
+    },
+    get completion() {
+      const d = this.draft;
+      if (d.trim().length < 2 || d.includes("\n") || d.length > 300) return "";
+      const low = d.toLowerCase();
+      const hit = this.completions.find((c) => c.length > d.length && c.toLowerCase().startsWith(low));
+      return hit ? hit.slice(d.length) : "";
+    },
+    // Tab takes the whole suggestion; → at the end takes the next word
+    acceptCompletion(e) {
+      const el = e.target, c = this.completion, end = this.draft.length;
+      if (!c || e.shiftKey || e.ctrlKey || e.altKey || el.selectionStart !== end || el.selectionEnd !== end) return;
+      e.preventDefault();
+      this.draft += e.key === "Tab" ? c : (c.match(/^\s*\S+/) || [c])[0];
+      this.$nextTick(() => { el.setSelectionRange(this.draft.length, this.draft.length); this.autosize(el); });
+    },
+    async refresh(track = true) {
+      let text;
+      try { text = await (await fetch("/api/state")).text(); } catch { return; }
+      if (text !== this.lastState) {
+        this.lastState = text;
+        const el = this.$refs.messages;
+        const atBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        this.s = JSON.parse(text);
+        if (atBottom) this.scrollDown();
+      }
+      if (track && this.ready) this.trackSeen();
+    },
+    get greeting() {
+      const h = new Date().getHours();
+      const part = h < 5 ? "Up late" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+      return this.s.user ? `${part}, ${this.s.user}` : part;
+    },
+    get background() { return this.s.tasks.filter((t) => BUSY.includes(t.status) && !t.chat_id); },
+    // the History page's running tasks, following its search and filter (the sidebar badge counts them all)
+    get backgroundShown() {
+      if (this.statusFilter) return [];
+      const q = this.filter.toLowerCase();
+      return this.background.filter((t) => !q || (t.text + " " + t.summary).toLowerCase().includes(q));
+    },
+    get history() {
+      const q = this.filter.toLowerCase();
+      return this.s.tasks.filter((t) => !BUSY.includes(t.status) && (!this.statusFilter || t.status === this.statusFilter) &&
+        (!q || (t.text + " " + t.summary).toLowerCase().includes(q)));
+    },
+    get plannerChip() {
+      const used = this.s.planner_usage || {};
+      return this.providers.filter((p) => p.has_key && p.model).map((p) => {
+        const n = Object.entries(used).filter(([k]) => k === p.name || k.startsWith(p.name + "/")).reduce((a, [, v]) => a + v, 0);
+        const limits = parseModels(p).map((x) => x.limit || Number(p.daily_limit) || 0);
+        const total = limits.every(Boolean) ? limits.reduce((a, b) => a + b, 0) : 0;
+        return `${p.name} ${n}${total ? "/" + total : ""}`;
+      }).join(" · ");
+    },
+    dot(st) { return st === "ready" ? "ok" : /fail|couldn/.test(st || "") ? "bad" : ""; },
+    // grow with the text, from one line up to ten
+    autosize(el) { this.$nextTick(() => { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 210) + "px"; }); },
+
+    // ----- chats -----
+    get chat() { return this.s.chats.find((c) => c.id === this.chatId) || null; },
+    get pinnedChats() { return this.s.chats.filter((c) => c.pinned); },
+    get otherChats() { return this.s.chats.filter((c) => !c.pinned); },
+    taskById(id) { return this.s.tasks.find((t) => t.id === id); },
+    chatTasks(c) { return c.messages.map((m) => this.taskById(m.task_id)).filter(Boolean); },
+    chatIsBusy(c) { return this.chatTasks(c).some((t) => BUSY.includes(t.status)); },
+    chatUnread(c) {
+      if (c.id === this.chatId && this.isWatching()) return false;
+      return this.hasUnseen(c);
+    },
+    get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
+    rowMark(c) {
+      const tasks = this.chatTasks(c);
+      return tasks.some((t) => t.status === "waiting") ? "ask" : tasks.some((t) => BUSY.includes(t.status)) ? "busy" : this.chatUnread(c) ? "unread" : "";
+    },
+    isWatching() {
+      return this.view === "chat" && !!this.chat && document.visibilityState === "visible" && document.hasFocus() &&
+        !window.panelHidden && Date.now() - this.lastInput < 120000;
+    },
+    openChat(id) {
+      if (id === this.chatId && this.view === "chat") { this.scrollToStart(); return; }
+      this.chatId = id; this.go("chat"); this.dividerLocked = false; this.notice = "";
+      try { localStorage.setItem("chatId", id); } catch {}
+      this.lockDividerIfUnseen();
+      this.watchedId = "";
+      this.scrollToStart();
+    },
+    newChat() {
+      this.chatId = ""; this.go("chat"); this.attachments = [];
+      try { localStorage.setItem("chatId", ""); } catch {}
+      this.focusComposer();
+    },
+    useStarter(text) { this.draft = text; this.$nextTick(() => this.autosize(this.$refs.task)); this.focusComposer(); },
+    hasUnseen(c) { return this.chatTasks(c).some((t) => t.finished && t.finished > (c.seen_at || 0)); },
+    // pin the "New" line where you left off if replies arrived while you were away
+    lockDividerIfUnseen() {
+      const c = this.chat;
+      if (!c) return;
+      this.dividerAt = c.seen_at || 0;
+      this.dividerLocked = this.hasUnseen(c);
+    },
+    // runs after every fresh /api/state: replies you watch arrive are seen; ones that landed while you were away get "New"
+    trackSeen() {
+      const c = this.chat;
+      const watching = c && this.isWatching() ? c.id : "";
+      if (watching && watching !== this.watchedId && this.hasUnseen(c)) {
+        // back from the tray or another app: open at the "New" line, not the bottom
+        const before = this.dividerAt;
+        this.lockDividerIfUnseen();
+        if (this.dividerLocked && this.dividerAt !== before) this.scrollToStart();
+      }
+      this.watchedId = watching;
+      if (!watching) return;
+      if (!this.dividerLocked) this.dividerAt = Date.now() / 1000;
+      if (this.hasUnseen(c) && !this.seenPending) {
+        this.seenPending = true;
+        post(`/api/chats/${c.id}/seen`).finally(() => { this.seenPending = false; });
+        c.seen_at = Date.now() / 1000;
+      }
+    },
+    get dividerTaskId() {
+      if (!this.dividerLocked || !this.chat) return null;
+      const t = this.chatTasks(this.chat).find((x) => x.finished && x.finished > this.dividerAt);
+      return t ? t.id : null;
+    },
+    togglePin(c) { post(`/api/chats/${c.id}/pin`, { pinned: !c.pinned }).then(() => this.refresh()); },
+    async deleteChat(c) {
+      if (!(await this.askUser({ title: "Delete this chat?", text: `"${c.title}" and its messages will be removed.`, ok: "Delete", danger: true }))) return;
+      fetch(`/api/chats/${c.id}`, { method: "DELETE" }).then(() => {
+        if (this.chatId === c.id) {
+          if (this.view === "chat") this.newChat();
+          else { this.chatId = ""; try { localStorage.setItem("chatId", ""); } catch {} }
+        }
+        this.refresh();
+      });
+    },
+    // rename in place, in the header
+    startRename() {
+      if (!this.chat) return;
+      this.renameDraft = this.chat.title;
+      this.renameId = this.chat.id;
+      this.renaming = true;
+      this.$nextTick(() => requestAnimationFrame(() => { const el = this.$refs.titleEdit; if (el) { el.focus(); el.select(); } }));
+    },
+    async saveRename() {
+      if (!this.renaming) return;
+      this.renaming = false;
+      const title = this.renameDraft.trim(), c = this.s.chats.find((x) => x.id === this.renameId);
+      if (c && title && title !== c.title) {
+        c.title = title;  // show it right away
+        await post(`/api/chats/${c.id}/rename`, { title });
+        this.refresh();
+      }
+    },
+    isYesNo(t) { return /\(yes\/no\)\s*$/i.test(t?.question || ""); },
+    qText(t) { return String(t?.question || "").replace(/\s*\(yes\/no\)\s*$/i, ""); },
+    async answer(id, value) {
+      await post(`/api/tasks/${id}/answer`, { answer: value ?? (this.answers[id] || "") });
+      delete this.answers[id];
+      this.refresh();
+    },
+    onPaste(e) {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const text = (cd.getData("text/plain") || "").trim();
+      const files = [...cd.files].filter((f) => f.type.startsWith("image/"));
+      if (!files.length || (text && !/^https?:\/\/\S+$/.test(text))) {
+        // plain text (or Excel/OneNote cells, which also carry a picture): a paste outside the box still lands in it
+        if (text && e.target !== this.$refs.task) { e.preventDefault(); this.draft += text; this.autosize(this.$refs.task); }
+        return;
+      }
+      e.preventDefault();
+      this.addFiles(files);
+    },
+    // images are shrunk to at most 2048 px before attaching, so big screenshots and photos always go through
+    async addFiles(list) {
+      const files = [...list].filter((f) => f.type.startsWith("image/"));
+      const room = Math.max(0, 6 - this.attachments.length - this.pending);
+      if (files.length > room) this.notice = `Up to 6 images per message; ${files.length - room} left out.`;
+      for (const f of files.slice(0, room)) {
+        this.pending++;
+        try {
+          const bmp = await createImageBitmap(f);
+          const k = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+          const c = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+          const g = c.getContext("2d"), jpg = f.type === "image/jpeg";
+          if (jpg) { g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); }
+          g.drawImage(bmp, 0, 0, c.width, c.height);
+          bmp.close();
+          this.attachments.push(c.toDataURL(jpg ? "image/jpeg" : "image/png", 0.9));
+        } catch {
+          this.readFails++;
+          this.notice = `Couldn't read ${f.name || "that image"} (try PNG or JPEG).`;
+        } finally {
+          this.pending--;
+        }
+      }
+      this.$refs.task.focus();
+    },
+    async send() {
+      if (this.pending > 0) {
+        const fails = this.readFails, target = this.chatId;
+        while (this.pending > 0) await new Promise((r) => setTimeout(r, 50));  // an image still being read
+        // a picture couldn't be read, or you moved to another chat meanwhile: keep everything and don't send
+        if (this.readFails !== fails || this.chatId !== target) return;
+      }
+      const text = this.draft.trim();
+      const images = this.attachments.slice();
+      if (!text && !images.length) return;
+      this.draft = "";
+      this.attachments = [];
+      this.notice = "";
+      this.$nextTick(() => this.autosize(this.$refs.task));
+      const restore = (msg) => { this.draft = text; this.attachments = images; this.notice = msg; this.$nextTick(() => this.autosize(this.$refs.task)); };
+      const waiting = this.chat && !images.length && this.chatTasks(this.chat).find((t) => t.status === "waiting");
+      if (waiting) {
+        let answer = text;
+        if (this.isYesNo(waiting)) {
+          if (/^(y|yes|yeah|yep|ok|okay|sure|allow|go( ahead)?|do it)\b/i.test(text)) answer = "yes";
+          else if (/^(n|no|nope|don'?t|stop|cancel|deny)\b/i.test(text)) answer = "no";
+          else return restore("Answer the question above with Allow or Don't allow (or type yes or no).");
+        }
+        await this.answer(waiting.id, answer);
+        this.focusComposer();
+        return;
+      }
+      try {
+        if (!this.chat) {
+          const c = await post("/api/chats");
+          this.chatId = c.id;
+          try { localStorage.setItem("chatId", c.id); } catch {}
+        }
+        this.dividerLocked = false;  // replying means you've caught up
+        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); return restore(d.error || "Couldn't send that. Try again."); }
+      } catch { return restore("Couldn't reach IO. Try again."); }
+      await this.refresh();
+      this.scrollDown();
+      this.focusComposer();
+    },
+    stopChat() {
+      this.chatTasks(this.chat).forEach((t) => { if (BUSY.includes(t.status)) post(`/api/tasks/${t.id}/stop`); });
+    },
+    scrollDown() { this.$nextTick(() => requestAnimationFrame(() => { const el = this.$refs.messages; if (el) el.scrollTop = el.scrollHeight; })); },
+    focusComposer() { this.$nextTick(() => requestAnimationFrame(() => { if (!this.dialog) this.$refs.task.focus(); })); },
+    // open a chat at the "New" line if there is one, otherwise at the bottom
+    scrollToStart() {
+      this.$nextTick(() => requestAnimationFrame(() => {
+        const el = this.$refs.messages;
+        if (!el) return;
+        const nl = this.dividerLocked && el.querySelector(".newline");
+        if (nl) nl.scrollIntoView({ block: "start" }); else el.scrollTop = el.scrollHeight;
+      }));
+    },
+    turn(m, i) {
+      const t = this.taskById(m.task_id);
+      if (!t) return `<div class="meta" style="margin:0 0 18px">This message was cleared from history</div>`;
+      // "New" goes above the first reply that finished after you last looked
+      const divider = t.id === this.dividerTaskId ? `<div class="newline"><i></i>New<i></i></div>` : "";
+      const busy = BUSY.includes(t.status);
+      const secs = t.finished && t.started ? Math.round(t.finished - t.started) : 0;
+      const items = checklist(t);
+      const card = items.length
+        ? `<div class="checklist">${items.map((it) => `
+            <div class="ck ${it.state}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}')"` : ""}>
+              <span class="mark">${it.state === "done" ? ic("check") : it.state === "fail" ? ic("x") : it.state === "now" ? ic("loader-circle", "spin") : ""}</span>
+              <div class="cktext"><span class="${it.state === "now" ? "shimmer" : ""}">${esc(it.text)}</span>
+                ${it.detail && this.open[t.id + ":" + it.key] ? `<div class="ckdetail">${it.detail}</div>` : ""}</div>
+            </div>`).join("")}</div>`
+        : "";
+      const answer = t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "";
+      const meta = !busy && secs ? `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>` : "";
+      const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
+      const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
+      return `<div class="msg-user">${imgs}${said}</div>${divider}
+        <div class="msg-agent">${card}${answer}
+          ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${meta}</div>`;
+    },
+
+    // ----- tasks & history -----
+    async runNow(text, source) { await post("/api/tasks", { task: text, source }); this.go("history"); this.refresh(); },
+    togglePause() { post("/api/pause", { paused: !this.s.status.paused }).then(() => this.refresh()); },
+    stopAll() { post("/api/stop_all").then(() => this.refresh()); },
+    saveTemplate() { post("/api/templates", { text: this.draft.trim() }).then(() => this.refresh()); },
+    deleteTemplate(t) { post("/api/templates/delete", { text: t }).then(() => this.refresh()); },
+    async clearHistory() {
+      if (await this.askUser({ title: "Clear history?", text: "Finished items are removed. Chats that used them will lose those messages.", ok: "Clear", danger: true }))
+        post("/api/history/clear").then(() => this.refresh());
+    },
+    saveSettings() { post("/api/settings", this.s.settings); },
+    async saveChromeToken() {
+      if (!this.chromeToken.trim()) return;
+      await post("/api/browser", { token: this.chromeToken });
+      this.chromeToken = ""; this.browserTest = "Token saved."; this.refresh();
+    },
+    async testBrowser() {
+      this.browserTest = "Testing…";
+      const r = await post("/api/browser/test");
+      this.browserTest = (r.ok ? "Connected. " : "Couldn't connect: ") + r.result;
+    },
+    taskCard(t) {
+      const when = new Date((t.started || t.created) * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const secs = t.finished && t.started ? ` · ${Math.round(t.finished - t.started)}s` : "";
+      return `<div class="card task"><header>
+          <div style="flex:1"><div class="title">${esc(t.text)}</div><div class="tmeta">${esc(when)} · ${esc(t.source || "you")}${secs}</div></div>
+          <span class="badge ${t.status}">${t.status === "running" ? ic("loader-circle", "spin sm") + " " : ""}${t.status}</span>
+          ${BUSY.includes(t.status)
+            ? `<button class="iconbtn stop" onclick="stopTask('${t.id}')" title="Stop">${ic("square")}</button>`
+            : `<button class="iconbtn" onclick="rerun('${t.id}')" title="Run again">${ic("rotate-cw")}</button>`}</header>
+        ${t.status === "waiting" ? questionBox(t) : ""}
+        ${t.summary ? `<div class="summary md">${md(cleanAnswer(t.summary))}</div>` : ""}</div>`;
+    },
+
+    // ----- schedules -----
+    resetSched() { this.sched = { kind: "every", minutes: 60, at: "09:00", text: "", name: "" }; },
+    editSchedule(x) { this.sched = { ...x }; },
+    async saveSchedule() { if (!this.sched.text.trim()) return; await post("/api/schedules", this.sched); this.resetSched(); this.refresh(); },
+    toggleSchedule(x, on) { post("/api/schedules", { ...x, enabled: on }).then(() => this.refresh()); },
+    async deleteSchedule(x) {
+      if (await this.askUser({ title: "Delete this schedule?", text: x.name || x.text, ok: "Delete", danger: true }))
+        fetch(`/api/schedules/${x.id}`, { method: "DELETE" }).then(() => this.refresh());
+    },
+    describeSchedule(x) {
+      const when = x.kind === "daily" ? `Daily at ${x.at}` : `Every ${x.minutes} min`;
+      const next = x.enabled && x.next_run ? ` · next ${new Date(x.next_run * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : " · off";
+      const last = x.last_run ? ` · last ${new Date(x.last_run * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+      return when + next + last;
+    },
+
+    // ----- triggers -----
+    resetTrig() { this.trig = { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" }; },
+    editTrigger(x) { this.trig = { ...x }; },
+    trigVars() { return { folder: "{file} and {name}", webhook: "{payload} or any JSON field, e.g. {customer}" }[this.trig.kind]; },
+    trigHint() { return { folder: "e.g. Open {file} and print it", webhook: "e.g. Look up order {order_id} in the browser" }[this.trig.kind]; },
+    async saveTrigger() {
+      const r = await post("/api/triggers", this.trig);
+      if (r.error) { this.trigMsg = r.error; return; }
+      this.trigMsg = ""; this.resetTrig(); this.refresh();
+    },
+    toggleTrigger(x, on) { post("/api/triggers", { ...x, enabled: on }).then(() => this.refresh()); },
+    async deleteTrigger(x) {
+      if (await this.askUser({ title: "Delete this trigger?", text: x.name || x.kind, ok: "Delete", danger: true }))
+        fetch(`/api/triggers/${x.id}`, { method: "DELETE" }).then(() => this.refresh());
+    },
+
+    // ----- memory -----
+    async loadNotes() { this.notes = (await (await fetch("/api/memory")).json()).notes.slice().reverse(); },
+    async addNote() { if (!this.noteDraft.trim()) return; await post("/api/memory", { text: this.noteDraft }); this.noteDraft = ""; this.loadNotes(); },
+    async deleteNote(n) { await fetch(`/api/memory/${n.id}`, { method: "DELETE" }); this.loadNotes(); },
+
+    // ----- customize -----
+    post,
+    async loadCustomize() { this.custom = await (await fetch("/api/customize")).json(); },
+    get pluginCategories() { return [...new Set(this.filteredPlugins.map((p) => p.category || "Other"))]; },
+    get filteredPlugins() {
+      const q = this.pluginQuery.toLowerCase();
+      return this.custom.catalog.filter((p) => !q || (p.name + " " + p.description + " " + p.category).toLowerCase().includes(q));
+    },
+    pluginsIn(cat) { return this.filteredPlugins.filter((p) => (p.category || "Other") === cat); },
+    async installPlugin(p, enabled = true) {
+      this.custom = await post(`/api/plugins/${p.id}`, { enabled, env: this.pluginEnv[p.id] || {} });
+      this.pluginEnv[p.id] = {};
+    },
+    async removePlugin(p) {
+      if (await this.askUser({ title: `Remove ${p.name}?`, text: "Its saved settings and keys are removed too.", ok: "Remove", danger: true }))
+        this.custom = await (await fetch(`/api/plugins/${p.id}`, { method: "DELETE" })).json();
+    },
+    async testPlugin(p) { this.pluginTest[p.id] = "…"; this.pluginTest[p.id] = (await post(`/api/plugins/${p.id}/test`)).result; },
+    async saveSkill() {
+      const r = await post("/api/skills", this.skill);
+      if (r.error) { this.skillMsg = r.error; return; }
+      this.custom = r; this.skill = { name: "", instructions: "" }; this.skillMsg = "";
+    },
+    async deleteSkill(k) {
+      if (await this.askUser({ title: "Delete this skill?", text: k.name, ok: "Delete", danger: true }))
+        this.custom = await (await fetch(`/api/skills/${k.id}`, { method: "DELETE" })).json();
+    },
+
+    // ----- usage -----
+    get usage() {
+      const today = this.s.today || { count: 0, done: 0, avg: 0 };
+      const used = this.s.planner_usage || {};
+      const planner = [];
+      this.providers.filter((p) => p.has_key && p.model).forEach((p) => {
+        const list = parseModels(p);
+        list.forEach(({ name, limit: l }) => {
+          const slot = list.length > 1 ? `${p.name}/${name}` : p.name;
+          const n = used[slot] || 0, limit = l || Number(p.daily_limit) || 0;
+          planner.push({ name: `${p.name} · ${name}`, pct: limit ? Math.min(100, (n / limit) * 100) : (n ? 4 : 0), label: limit ? `${n} / ${limit}` : `${n}` });
+        });
+      });
+      return { today: today.count, success: today.done, avg: today.avg ? `${today.avg}s` : "–", planner };
+    },
+
+    // ----- planner & tools -----
+    async loadPlanners() {
+      const d = await (await fetch("/api/planners")).json();
+      const saved = Object.fromEntries(d.providers.map((p) => [p.name, p]));
+      this.providers = d.presets.map((pre) => ({ ...pre, test: "", ...(saved[pre.name] || {}), api_key: "" }));
+    },
+    async savePlanners() {
+      const providers = this.providers.filter((p) => p.model || p.api_key || p.has_key)
+        .map(({ name, base_url, model, api_key, daily_limit }) => ({ name, base_url, model, api_key, daily_limit }));
+      await post("/api/planners", { providers });
+      await this.loadPlanners();
+      this.plannerSaved = "Saved";
+      setTimeout(() => (this.plannerSaved = ""), 2000);
+    },
+    async testPlanner(p) { p.test = "Testing…"; p.test = (await post("/api/planners/test", { name: p.name })).result; },
+    async toolCheck() {
+      this.checking = true; this.checkLines = [];
+      try { this.checkLines = (await post("/api/toolcheck")).lines; } finally { this.checking = false; }
+    },
+  };
+}
+
+function niceTool(name) {
+  return ({ App: "opening an app", Snapshot: "reading the screen", Click: "clicking", Type: "typing", type_text: "typing", Shortcut: "pressing keys",
+    Scroll: "scrolling", Wait: "waiting", WaitFor: "waiting", PowerShell: "running a command", find_on_screen: "looking for something",
+    look_at_screen: "looking at the screen", FileSystem: "working with files", Scrape: "reading a web page", ask_user: "asking you",
+    remember: "saving a note" }[name]) || (String(name).startsWith("browser_") ? "using the browser" : name);
+}
+
+// a finished action, in plain past tense
+function stepText(name, a = {}) {
+  switch (name) {
+    case "App": return a.mode === "switch" ? `Switched to ${a.name}` : a.mode === "resize" ? `Resized ${a.name || "the window"}` : `Opened ${a.name || a.executable || "an app"}`;
+    case "Snapshot": return "Read what's on screen";
+    case "Click": return a.clicks === 2 ? "Double-clicked" : a.button === "right" ? "Right-clicked" : "Clicked";
+    case "Type": case "type_text": return `Typed "${short(a.text, 40)}"${a.press_enter ? " and pressed Enter" : ""}`;
+    case "Shortcut": return `Pressed ${a.shortcut}`;
+    case "Scroll": return `Scrolled ${a.direction || "down"}`;
+    case "Wait": return `Waited ${a.duration}s`;
+    case "WaitFor": return `Waited for ${short(a.text || a.condition, 40)}`;
+    case "PowerShell": return "Ran a command";
+    case "Clipboard": return a.mode === "set" ? "Copied text to the clipboard" : "Read the clipboard";
+    case "Process": return a.mode === "kill" ? `Closed ${a.name || "a program"}` : "Checked running programs";
+    case "find_on_screen": return `Found "${short(a.description, 40)}"${a.window ? " in " + a.window : ""}`;
+    case "look_at_screen": return `Looked at ${a.window ? "the " + a.window + " window" : "the screen"}`;
+    case "FileSystem": return `${({ read: "Read", write: "Wrote", delete: "Deleted", move: "Moved", copy: "Copied", list: "Listed", search: "Searched", info: "Checked" })[a.mode] || "Used"} ${short(a.path, 44)}`;
+    case "Scrape": return `Read ${short(a.url, 44)}`;
+    case "ask_user": return "Asked you a question";
+    case "remember": return `Remembered: ${short(a.note, 40)}`;
+    case "browser_navigate": return `Opened ${short(a.url, 44)}`;
+    case "browser_click": return `Clicked ${short(a.element || "a link", 40)}`;
+    case "browser_type": return `Typed "${short(a.text, 36)}" on the page`;
+    case "browser_fill_form": return "Filled in a form";
+    case "browser_press_key": return `Pressed ${a.key}`;
+    case "browser_snapshot": return "Read the web page";
+    case "browser_wait_for": return "Waited for the page";
+    default: return String(name).startsWith("browser_") ? "Used the browser" : name;
+  }
+}
+
+// Claude-style checklist: finished actions ticked, the current one spinning, the rest of the plan still open
+function checklist(t) {
+  const events = t.events || [];
+  const items = [];
+  const hidden = new Set(["Snapshot", "Wait", "WaitFor", "browser_snapshot", "browser_wait_for"]);  // bookkeeping, not progress
+  const isError = (r) => /^(error|\d+ validation error)|Error calling tool|did not allow/i.test(r || "");
+  events.forEach((e, i) => {
+    if (e.event !== "tool" || (hidden.has(e.name) && !isError(e.result))) return;
+    const failed = isError(e.result);
+    const text = (failed ? "Couldn't: " : "") + stepText(e.name, e.args || {});
+    const prev = items[items.length - 1];
+    if (prev && prev.text === text && prev.state === (failed ? "fail" : "done")) return;  // repeated identical step
+    const args = Object.entries(e.args || {}).filter(([k]) => !["use_vision", "use_annotation"].includes(k)).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ");
+    items.push({ key: i, state: failed ? "fail" : "done", text, detail: `<code>${esc(e.name)}(${esc(args)})</code><div>${esc(short(e.result, 400))}</div>` });
+  });
+  if (BUSY.includes(t.status)) {
+    const plan = [...events].reverse().find((e) => e.event === "plan" && e.plan);
+    const planned = plan ? plan.plan.split("\n").map((l) => l.match(/^\s*\d+[.)]\s*(.+)/)).filter(Boolean).map((m) => m[1]) : [];
+    const doneCount = items.filter((x) => x.state === "done").length;
+    const last = [...events].reverse().find((e) => e.event === "tool");
+    const label = t.status === "waiting" ? "Waiting for your answer" : t.status === "queued" ? "Waiting for the current task to finish"
+      : last ? niceTool(last.name).replace(/^./, (c) => c.toUpperCase()) + "…" : "Thinking…";
+    items.push({ key: "now", state: "now", text: label });
+    planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));
+  }
+  return items;
+}
+
+// "**App** – Switch to the BlueStacks window." -> "Switch to the BlueStacks window"
+function cleanPlanStep(p) {
+  const x = p.replace(/\*\*/g, "").replace(/`/g, "");
+  const m = x.match(/^[A-Za-z_]+\s*(?:\([^)]*\))?\s*[–—:-]\s*(.+)$/);
+  return short((m ? m[1] : x).replace(/\.$/, ""), 90);
+}
+
+function questionBox(t) {
+  const yesNo = /\(yes\/no\)\s*$/i.test(t.question || "");
+  const q = yesNo ? t.question.replace(/\s*\(yes\/no\)\s*$/i, "") : t.question;
+  return `<div class="question"><div class="q">${esc(q)}</div>
+    <div class="qrow">${yesNo
+      ? `<button class="btn accent sm" onclick="answerTask('${t.id}', 'yes')">Allow</button><button class="btn sm" onclick="answerTask('${t.id}', 'no')">Don't allow</button>`
+      : `<input type="text" id="ans-${t.id}" placeholder="Your answer" onkeydown="if(event.key==='Enter')answerTask('${t.id}')"><button class="btn accent sm" onclick="answerTask('${t.id}')">Send</button>`}</div></div>`;
+}
+</script>
+</body>
+</html>

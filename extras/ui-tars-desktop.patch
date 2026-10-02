@@ -1,0 +1,472 @@
+diff --git a/apps/ui-tars/src/main/agent/operator.ts b/apps/ui-tars/src/main/agent/operator.ts
+index 5214a327..7a32e18e 100644
+--- a/apps/ui-tars/src/main/agent/operator.ts
++++ b/apps/ui-tars/src/main/agent/operator.ts
+@@ -16,6 +16,7 @@ import * as env from '@main/env';
+ import { logger } from '@main/logger';
+ import { sleep } from '@ui-tars/shared/utils';
+ import { getScreenSize } from '@main/utils/screen';
++import { pullWindowsToPrimary, snapClick } from '@main/utils/winHelper';
+ 
+ export class NutJSElectronOperator extends NutJSOperator {
+   static MANUAL = {
+@@ -34,6 +35,9 @@ export class NutJSElectronOperator extends NutJSOperator {
+   };
+ 
+   public async screenshot(): Promise<ScreenshotOutput> {
++    // only the primary display is captured, so bring stray windows onto it first
++    await pullWindowsToPrimary();
++
+     const {
+       physicalSize,
+       logicalSize,
+@@ -96,10 +100,49 @@ export class NutJSElectronOperator extends NutJSOperator {
+       await keyboard.pressKey(Key.LeftControl, Key.V);
+       await sleep(50);
+       await keyboard.releaseKey(Key.LeftControl, Key.V);
+-      await sleep(50);
++      // WinUI apps (e.g. Windows 11 Notepad) read the clipboard asynchronously; restoring it too soon pastes the old content
++      await sleep(500);
+       clipboard.writeText(originalClipboard);
+     } else {
+-      return await super.execute(params);
++      return await super.execute(await this.snapToControl(params));
++    }
++  }
++
++  /** On Windows, moves near-miss clicks onto the closest clickable UI Automation control. */
++  private async snapToControl(params: ExecuteParams): Promise<ExecuteParams> {
++    const { parsedPrediction, screenWidth, screenHeight } = params;
++    const box = parsedPrediction.action_inputs?.start_box;
++    if (!env.isWindows || !box || !SNAPPABLE_ACTIONS.has(parsedPrediction.action_type)) {
++      return params;
+     }
++
++    // start_box is relative [x1, y1, x2?, y2?]; the operator clicks its centre in physical pixels
++    const [x1, y1, x2 = x1, y2 = y1] = box.replace(/[[\]]/g, '').split(',').map(Number);
++    if ([x1, y1, x2, y2].some((n) => !Number.isFinite(n))) return params;
++    const x = ((x1 + x2) / 2) * screenWidth;
++    const y = ((y1 + y2) / 2) * screenHeight;
++
++    const snapped = await snapClick(x, y);
++    if (snapped.x === Math.round(x) && snapped.y === Math.round(y)) return params;
++
++    const rx = snapped.x / screenWidth;
++    const ry = snapped.y / screenHeight;
++    return {
++      ...params,
++      parsedPrediction: {
++        ...parsedPrediction,
++        action_inputs: { ...parsedPrediction.action_inputs, start_box: `[${rx},${ry},${rx},${ry}]` },
++      },
++    };
+   }
+ }
++
++const SNAPPABLE_ACTIONS = new Set([
++  'click',
++  'left_click',
++  'left_single',
++  'left_double',
++  'double_click',
++  'right_single',
++  'right_click',
++]);
+diff --git a/apps/ui-tars/src/main/agent/prompts.ts b/apps/ui-tars/src/main/agent/prompts.ts
+index d8a45871..9504c533 100644
+--- a/apps/ui-tars/src/main/agent/prompts.ts
++++ b/apps/ui-tars/src/main/agent/prompts.ts
+@@ -52,6 +52,7 @@ call_user() # Submit the task and call the user when the task is unsolvable, or
+ ## Note
+ - Use ${language === 'zh' ? 'Chinese' : 'English'} in \`Thought\` part.
+ - ${useCase === 'normal' ? 'Generate a well-defined and practical strategy in the `Thought` section, summarizing your next move and its objective.' : 'Compose a step-by-step approach in the `Thought` part, specifying your next action and its focus.'}
++- Do only what the User Instruction asks. Do not save files, close windows, or double-check results unless the instruction asks for it. Call finished() as soon as the instruction is done.
+ 
+ ## User Instruction
+ `;
+diff --git a/apps/ui-tars/src/main/services/runAgent.ts b/apps/ui-tars/src/main/services/runAgent.ts
+index 3189ac5e..3966a85a 100644
+--- a/apps/ui-tars/src/main/services/runAgent.ts
++++ b/apps/ui-tars/src/main/services/runAgent.ts
+@@ -227,6 +227,8 @@ export const runAgent = async (
+     },
+     maxLoopCount: settings.maxLoopCount,
+     loopIntervalInMs: settings.loopIntervalInMs,
++    // few screenshots per request keep local-model prompts short; 2 lets the model compare before/after an action
++    maxImageLength: Number(process.env.UI_TARS_MAX_IMAGES) || 2,
+     uiTarsVersion: modelVersion,
+   });
+ 
+diff --git a/packages/ui-tars/sdk/src/GUIAgent.ts b/packages/ui-tars/sdk/src/GUIAgent.ts
+index 02603ca5..896f5307 100644
+--- a/packages/ui-tars/sdk/src/GUIAgent.ts
++++ b/packages/ui-tars/sdk/src/GUIAgent.ts
+@@ -245,7 +245,11 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
+         });
+         // sliding images window to vlm model
+         const vlmParams: InvokeParams = {
+-          ...processVlmParams(modelFormat.conversations, modelFormat.images),
++          ...processVlmParams(
++            modelFormat.conversations,
++            modelFormat.images,
++            this.config.maxImageLength,
++          ),
+           screenContext: {
+             width,
+             height,
+@@ -268,6 +272,10 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
+           async (bail) => {
+             try {
+               const result = await model.invoke(vlmParams);
++              // a previous attempt may have marked the run as errored; clear it once a retry succeeds
++              if (data.status === StatusEnum.ERROR) {
++                Object.assign(data, { status: StatusEnum.RUNNING, error: undefined });
++              }
+               return result;
+             } catch (error: unknown) {
+               if (
+@@ -294,7 +302,7 @@ export class GUIAgent<T extends Operator> extends BaseGUIAgent<
+           },
+           {
+             retries: retry?.model?.maxRetries ?? 0,
+-            minTimeout: 1000 * 30,
++            minTimeout: 1000 * 3,
+             onRetry: retry?.model?.onRetry,
+           },
+         );
+diff --git a/packages/ui-tars/sdk/src/Model.ts b/packages/ui-tars/sdk/src/Model.ts
+index 68f52b99..06a44091 100644
+--- a/packages/ui-tars/sdk/src/Model.ts
++++ b/packages/ui-tars/sdk/src/Model.ts
+@@ -115,7 +115,7 @@ export class UITarsModel extends Model {
+ 
+     const openai = new OpenAI({
+       ...restOptions,
+-      maxRetries: 0,
++      maxRetries: 3, // retry dropped keep-alive sockets (ECONNRESET) quickly
+       baseURL,
+       apiKey,
+     });
+@@ -124,10 +124,7 @@ export class UITarsModel extends Model {
+       model,
+       messages,
+       stream: false,
+-      seed: null,
+-      stop: null,
+-      frequency_penalty: null,
+-      presence_penalty: null,
++      // seed/stop/penalties omitted: strict OpenAI-compatible servers (e.g. Unsloth Studio) reject explicit nulls
+       // custom options
+       max_tokens,
+       temperature,
+@@ -224,7 +221,7 @@ export class UITarsModel extends Model {
+ 
+         result = await openai.responses.create(responseParams, {
+           ...options,
+-          timeout: 1000 * 30,
++          timeout: 1000 * 120,
+           headers,
+         });
+         logger.info('[ResponseAPI] [result]: ', result);
+@@ -261,7 +258,7 @@ export class UITarsModel extends Model {
+       createCompletionPramsThinkingVp,
+       {
+         ...options,
+-        timeout: 1000 * 30,
++        timeout: 1000 * 120,
+         headers,
+       },
+     );
+@@ -318,7 +315,7 @@ export class UITarsModel extends Model {
+       headers,
+     )
+       .catch((e) => {
+-        logger?.error('[UITarsModel] error', e);
++        logger?.error('[UITarsModel] error', e, 'cause:', (e as any)?.cause?.message, (e as any)?.cause?.code, (e as any)?.cause?.cause?.code);
+         throw e;
+       })
+       .finally(() => {
+diff --git a/packages/ui-tars/sdk/src/types.ts b/packages/ui-tars/sdk/src/types.ts
+index 75a8e48b..aee8b6c9 100644
+--- a/packages/ui-tars/sdk/src/types.ts
++++ b/packages/ui-tars/sdk/src/types.ts
+@@ -105,6 +105,8 @@ export interface GUIAgentConfig<TOperator> {
+   maxLoopCount?: number;
+   /** Time interval between two loop iterations (in milliseconds), @default 0 */
+   loopIntervalInMs?: number;
++  /** max screenshots kept in the model context (default MAX_IMAGE_LENGTH); fewer = faster steps on local models */
++  maxImageLength?: number;
+   uiTarsVersion?: UITarsModelVersion;
+ }
+ 
+diff --git a/packages/ui-tars/shared/src/constants/vlm.ts b/packages/ui-tars/shared/src/constants/vlm.ts
+index 389d68eb..2d1e91b5 100644
+--- a/packages/ui-tars/shared/src/constants/vlm.ts
++++ b/packages/ui-tars/shared/src/constants/vlm.ts
+@@ -11,7 +11,8 @@ export const DEFAULT_FACTOR = 1000;
+ export const MIN_PIXELS = 100 * IMAGE_FACTOR * IMAGE_FACTOR;
+ export const MAX_PIXELS_V1_0 = 2700 * IMAGE_FACTOR * IMAGE_FACTOR;
+ export const MAX_PIXELS_DOUBAO = 5120 * IMAGE_FACTOR * IMAGE_FACTOR;
+-export const MAX_PIXELS_V1_5 = 16384 * IMAGE_FACTOR * IMAGE_FACTOR;
++// 4096 visual tokens: llama.cpp caps Qwen2.5-VL images here, so screenshot resize + coordinate mapping must match it
++export const MAX_PIXELS_V1_5 = 4096 * IMAGE_FACTOR * IMAGE_FACTOR;
+ export const MAX_RATIO = 200;
+ 
+ export enum VlmModeEnum {
+diff --git a/apps/ui-tars/src/main/utils/winHelper.ts b/apps/ui-tars/src/main/utils/winHelper.ts
+new file mode 100644
+index 00000000..b9bcd390
+--- /dev/null
++++ b/apps/ui-tars/src/main/utils/winHelper.ts
+@@ -0,0 +1,251 @@
++/**
++ * Windows-side helpers for the local computer operator:
++ * - pullWindowsToPrimary: keeps the active window on the primary display, the only one screenshotted
++ * - snapClick: nudges a near-miss click onto the closest clickable UI Automation control
++ *
++ * A long-lived PowerShell process hosts the C# helper so each call costs milliseconds
++ * instead of a PowerShell cold start per step.
++ */
++import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
++import { mkdtempSync, writeFileSync } from 'fs';
++import { tmpdir } from 'os';
++import { join } from 'path';
++
++import { logger } from '@main/logger';
++
++const HELPER_SOURCE = String.raw`
++using System;
++using System.Collections.Generic;
++using System.Runtime.InteropServices;
++using System.Text;
++using System.Windows;
++using System.Windows.Automation;
++
++public static class WindowPull {
++  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
++  [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
++  [StructLayout(LayoutKind.Sequential)] struct WINDOWPLACEMENT { public int length, flags, showCmd; public int ptMinX, ptMinY, ptMaxX, ptMaxY; public RECT rcNormal; }
++
++  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
++  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
++  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
++  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
++  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hWnd);
++  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder s, int n);
++  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
++  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
++  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int idx);
++  [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
++  [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(long pt, uint flags);
++  [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFO mi);
++  [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT wp);
++  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
++  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
++  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
++  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out int val, int size);
++
++  const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80;
++  const uint GW_OWNER = 4, MONITOR_DEFAULTTONEAREST = 2, MONITOR_DEFAULTTOPRIMARY = 1, MONITORINFOF_PRIMARY = 1;
++  const uint SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10;
++  const int SW_RESTORE = 9, SW_MAXIMIZE = 3, SW_SHOWMAXIMIZED = 3, DWMWA_CLOAKED = 14;
++
++  public static void Init() { SetProcessDpiAwarenessContext(new IntPtr(-4)); }
++
++  static MONITORINFO Info(IntPtr mon) { var mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(mi); GetMonitorInfo(mon, ref mi); return mi; }
++
++  // Moves the foreground window onto the primary monitor (keeping its offset within the work
++  // area) when it sits on another monitor. Only the foreground window is touched, so windows
++  // the user parks on other monitors stay put until the agent switches to them.
++  // Returns the moved window's title, or "".
++  public static string Pull(uint skipPid) {
++    var primary = Info(MonitorFromPoint(0, MONITOR_DEFAULTTOPRIMARY)).rcWork;
++    var moved = new List<string>();
++    IntPtr fg = GetForegroundWindow();
++    if (fg == IntPtr.Zero) return "";
++    Func<IntPtr, bool> visit = (h) => {
++      if (!IsWindowVisible(h) || IsIconic(h) || GetWindow(h, GW_OWNER) != IntPtr.Zero) return true;
++      if ((GetWindowLong(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
++      int cloaked; if (DwmGetWindowAttribute(h, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return true;
++      uint pid; GetWindowThreadProcessId(h, out pid); if (pid == skipPid) return true;
++      int len = GetWindowTextLength(h); if (len == 0) return true;
++      var mi = Info(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST));
++      if ((mi.dwFlags & MONITORINFOF_PRIMARY) != 0) return true;
++
++      var wp = new WINDOWPLACEMENT(); wp.length = Marshal.SizeOf(wp); GetWindowPlacement(h, ref wp);
++      bool maximized = wp.showCmd == SW_SHOWMAXIMIZED;
++      if (maximized) ShowWindow(h, SW_RESTORE);
++      RECT r; GetWindowRect(h, out r);
++      int w = Math.Min(r.R - r.L, primary.R - primary.L), ht = Math.Min(r.B - r.T, primary.B - primary.T);
++      int x = primary.L + Math.Max(0, Math.Min(r.L - mi.rcWork.L, (primary.R - primary.L) - w));
++      int y = primary.T + Math.Max(0, Math.Min(r.T - mi.rcWork.T, (primary.B - primary.T) - ht));
++      SetWindowPos(h, IntPtr.Zero, x, y, w, ht, SWP_NOZORDER | SWP_NOACTIVATE);
++      if (maximized) ShowWindow(h, SW_MAXIMIZE);
++
++      var sb = new StringBuilder(len + 1); GetWindowText(h, sb, sb.Capacity); moved.Add(sb.ToString());
++      return true;
++    };
++    visit(fg);
++    return string.Join(" | ", moved);
++  }
++
++  static readonly HashSet<int> Clickable = new HashSet<int> {
++    ControlType.Button.Id, ControlType.SplitButton.Id, ControlType.MenuItem.Id, ControlType.ListItem.Id,
++    ControlType.TabItem.Id, ControlType.TreeItem.Id, ControlType.Hyperlink.Id, ControlType.CheckBox.Id,
++    ControlType.RadioButton.Id, ControlType.ComboBox.Id, ControlType.Edit.Id, ControlType.DataItem.Id,
++  };
++  // controls bigger than this (physical px) are areas, not targets worth snapping onto
++  const int MaxSnapW = 900, MaxSnapH = 300;
++
++  // FromPoint stops at XAML island / Chromium host panes, so descend into children that contain the point.
++  static AutomationElement Deepest(AutomationElement e, Point p) {
++    for (int depth = 0; depth < 12; depth++) {
++      AutomationElement next = null;
++      for (var c = TreeWalker.ControlViewWalker.GetFirstChild(e); c != null; c = TreeWalker.ControlViewWalker.GetNextSibling(c)) {
++        var b = c.Current.BoundingRectangle;
++        if (!b.IsEmpty && b.Contains(p)) { next = c; break; }
++      }
++      if (next == null) return e;
++      e = next;
++    }
++    return e;
++  }
++
++  // The clickable control at a point, looking a few levels up so a label inside a button counts.
++  static AutomationElement ClickableAt(int x, int y) {
++    try {
++      var p = new Point(x, y);
++      var e = AutomationElement.FromPoint(p);
++      if (e != null && !Clickable.Contains(e.Current.ControlType.Id)) e = Deepest(e, p);
++      for (int i = 0; e != null && i < 3; i++) {
++        if (Clickable.Contains(e.Current.ControlType.Id) && !e.Current.BoundingRectangle.IsEmpty) return e;
++        e = TreeWalker.ControlViewWalker.GetParent(e);
++      }
++    } catch { }
++    return null;
++  }
++
++  static string Describe(AutomationElement e) {
++    try { return e.Current.ControlType.ProgrammaticName.Replace("ControlType.", "") + " '" + e.Current.Name + "'"; } catch { return "?"; }
++  }
++
++  // Returns "x,y|note". A click already on a clickable control is left alone; otherwise the
++  // nearest clickable control within radius (searched in rings) gets the click at its centre.
++  public static string Snap(int x, int y, int radius) {
++    var hit = ClickableAt(x, y);
++    if (hit != null) return x + "," + y + "|on " + Describe(hit);
++    for (int ring = 1; ring <= 3; ring++) {
++      int r = radius * ring / 3;
++      AutomationElement best = null; double bestD = double.MaxValue;
++      for (int a = 0; a < 360; a += 45) {
++        double rad = a * Math.PI / 180;
++        var e = ClickableAt(x + (int)(r * Math.Cos(rad)), y + (int)(r * Math.Sin(rad)));
++        if (e == null) continue;
++        var b = e.Current.BoundingRectangle;
++        if (b.Width > MaxSnapW || b.Height > MaxSnapH) continue;
++        double dx = Math.Max(Math.Max(b.Left - x, 0), x - b.Right), dy = Math.Max(Math.Max(b.Top - y, 0), y - b.Bottom);
++        double d = Math.Sqrt(dx * dx + dy * dy);
++        if (d < bestD) { bestD = d; best = e; }
++      }
++      if (best != null) {
++        var b = best.Current.BoundingRectangle;
++        return (int)(b.Left + b.Width / 2) + "," + (int)(b.Top + b.Height / 2) + "|snapped to " + Describe(best);
++      }
++    }
++    return x + "," + y + "|no control nearby";
++  }
++}
++`;
++
++const DONE = '__HELPER_DONE__';
++// near-miss tolerance for snapClick, in physical pixels (~1% of a 4K screen)
++const SNAP_RADIUS = 45;
++let ps: ChildProcessWithoutNullStreams | null = null;
++let pending: Promise<string> = Promise.resolve('');
++
++// PowerShell's "-Command -" buffers piped stdin, so run a script that reads one command per
++// line and prints a marker after each, flushing so the reply arrives immediately.
++const LOOP_SCRIPT = (csPath: string) => `
++$ErrorActionPreference = 'Continue'
++Add-Type -ReferencedAssemblies UIAutomationClient,UIAutomationTypes,WindowsBase -TypeDefinition ([IO.File]::ReadAllText('${csPath}'))
++[WindowPull]::Init()
++while ($null -ne ($line = [Console]::In.ReadLine())) {
++  try { $r = Invoke-Expression $line; if ($null -ne $r) { [Console]::Out.WriteLine([string]$r) } } catch { [Console]::Error.WriteLine($_) }
++  [Console]::Out.WriteLine('${DONE}'); [Console]::Out.Flush()
++}
++`;
++
++const start = () => {
++  const dir = mkdtempSync(join(tmpdir(), 'ui-tars-winhelper-'));
++  const csPath = join(dir, 'WindowPull.cs');
++  const ps1Path = join(dir, 'loop.ps1');
++  writeFileSync(csPath, HELPER_SOURCE);
++  writeFileSync(ps1Path, LOOP_SCRIPT(csPath.replace(/'/g, "''")));
++  const proc = spawn(
++    'powershell.exe',
++    ['-NoProfile', '-NoLogo', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1Path],
++    { windowsHide: true },
++  );
++  proc.stderr.on('data', (d) => logger.warn('[winHelper]', d.toString().trim()));
++  proc.on('exit', () => {
++    if (ps === proc) ps = null;
++  });
++  return proc;
++};
++
++const run = (proc: ChildProcessWithoutNullStreams, command: string) =>
++  new Promise<string>((resolve) => {
++    let out = '';
++    // the first call also waits for Add-Type to compile the helper
++    const timer = setTimeout(() => finish(''), 15000);
++    const onData = (chunk: Buffer) => {
++      out += chunk.toString();
++      if (out.includes(DONE)) finish(out.slice(0, out.indexOf(DONE)).trim());
++    };
++    const finish = (result: string) => {
++      clearTimeout(timer);
++      proc.stdout.off('data', onData);
++      resolve(result);
++    };
++    proc.stdout.on('data', onData);
++    proc.stdin.write(`${command}\n`);
++  });
++
++// Calls are serialized through one PowerShell process; failures resolve to ''.
++const call = (command: string): Promise<string> => {
++  if (process.platform !== 'win32') return Promise.resolve('');
++  pending = pending.then(async () => {
++    try {
++      ps ??= start();
++      return await run(ps, command);
++    } catch (e) {
++      logger.error('[winHelper] failed', command, e);
++      return '';
++    }
++  });
++  return pending;
++};
++
++/** Moves the foreground window from a secondary monitor onto the primary display. Never throws. */
++export const pullWindowsToPrimary = async (): Promise<string> => {
++  const moved = await call(`[WindowPull]::Pull(${process.pid})`);
++  if (moved) logger.info('[winHelper] moved to primary:', moved);
++  return moved;
++};
++
++/**
++ * Snaps a click (physical screen pixels) onto the nearest clickable control within SNAP_RADIUS.
++ * Returns the original point when nothing better is found or the helper is unavailable.
++ */
++export const snapClick = async (
++  x: number,
++  y: number,
++): Promise<{ x: number; y: number }> => {
++  const out = await call(
++    `[WindowPull]::Snap(${Math.round(x)}, ${Math.round(y)}, ${SNAP_RADIUS})`,
++  );
++  const [coords, note] = out.split('|');
++  const [sx, sy] = (coords || '').split(',').map(Number);
++  if (!Number.isFinite(sx) || !Number.isFinite(sy)) return { x, y };
++  logger.info(`[winHelper] snap (${Math.round(x)}, ${Math.round(y)}) -> (${sx}, ${sy}): ${note}`);
++  return { x: sx, y: sy };
++};
