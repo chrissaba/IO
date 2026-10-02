@@ -89,6 +89,12 @@ SYSTEM = """You are IO, the user's assistant on their Windows PC. You can chat, 
 HOW TO DECIDE
 - Chatting (hello, thanks, how are you, what can you do) or a question you can answer from general knowledge: reply in plain text, no tools.
 - You are IO. "What is IO?", "who are you" and questions about yourself are about you: answer them yourself, no tools.
+- Well-known facts (countries and capitals, famous people and companies, science, history): answer directly, no search.
+- A name or word you don't confidently know (a small website, company, product, app, person, slang): search the web before
+  answering, with browser_open on https://www.bing.com/search?q=<the words>. The result lists the top results with their
+  addresses: answer from them if they already say what it is, otherwise browser_open the best result's address (don't click
+  results). Don't guess a similar-sounding word, don't assume it means one of your tools, and don't ask the user what it is
+  until you've searched. If it looks like a brand or website name, also try browser_open https://<name>.com.
 - Needs live or personal information (the time, files, what's open or on screen, a web page, weather, prices): get it with a tool, then answer.
 - Asks you to do something on the PC: do exactly that, nothing extra (no saving, closing or double-checking unless asked).
 - Ambiguous, or needs something only the user knows (which file, which account): call ask_user instead of guessing.
@@ -488,6 +494,35 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
 DISAMBIGUATION = re.compile(r"\b(may|can|most commonly|commonly|usually|often) (also )?refers? to\b|\(disambiguation\)|topics referred to by the same term", re.I)
 LINKS_JS = ("() => [...(document.querySelector('#mw-content-text, article, main') || document.body).querySelectorAll('a')]"
             ".map(a => [a.innerText.trim(), a.href]).filter(([t, h]) => t && h.startsWith(location.origin) && !h.includes('#')).slice(0, 300)")
+
+
+RESULTS_JS = r"""() => [...document.querySelectorAll('li.b_algo')].slice(0, 8).map(r => {
+  const h = r.querySelector('h2'), cite = r.querySelector('cite'), p = r.querySelector('p, .b_caption');
+  return [(h && h.innerText || '').trim(), (cite && cite.innerText || '').trim(), (p && p.innerText || '').replace(/\s+/g, ' ').slice(0, 250)];
+})"""
+
+
+def _result_rows(raw: str):
+    m = re.search(r"### Result\s*\n(.*?)(?:\n###|$)", raw, re.S)
+    return json.loads(m.group(1) if m else raw)
+
+
+async def search_results(session) -> str:
+    """A Bing results page as a short list of results with their real addresses, so the agent can answer from them or open one with browser_open."""
+    try:
+        rows = _result_rows(text_of(await session.call_tool("browser_evaluate", {"function": RESULTS_JS})))
+    except Exception:
+        return ""
+    out = []
+    for i, (title, cite, snippet) in enumerate(rows, 1):
+        url = cite.replace(" › ", "/").replace("›", "/").strip()  # "https://site.com › a › b" -> "https://site.com/a/b"
+        if url and not url.startswith("http"):
+            url = "https://" + url
+        out.append(f"{i}. {title or '(no title)'}\n   {url}\n   {snippet}")
+    if not out:
+        return ""
+    return ("Search results (answer from these if they already say enough, otherwise browser_open the best one's address):\n"
+            + "\n".join(out))
 
 
 async def meanings_hint(session, page: str, task: str) -> str:
@@ -1102,7 +1137,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     url = str(args.get("url") or "about:blank")
                     try:
                         result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
-                        if DISAMBIGUATION.search(result):
+                        if "bing.com/search" in url or "google.com/search" in url or "duckduckgo.com" in url:
+                            result = (await search_results(sessions["browser_navigate"])) or result
+                        elif DISAMBIGUATION.search(result):
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
