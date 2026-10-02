@@ -53,12 +53,16 @@ def icon_image() -> Image.Image:
     return Image.new("RGBA", (64, 64), (38, 38, 80, 255))
 
 
+shown = {"startup": False}  # what the tray menu last showed; clicking flips that
+
+
 def starts_with_windows(_item=None) -> bool:
-    return install.startup_enabled()  # also follows the switch in Windows' Startup apps
+    shown["startup"] = install.startup_enabled()  # also follows the switch in Windows' Startup apps
+    return shown["startup"]
 
 
 def toggle_startup(_icon, _item) -> None:
-    install.set_startup(not install.startup_enabled())
+    install.set_startup(not shown["startup"])
 
 
 def show(*_args) -> None:
@@ -345,7 +349,7 @@ def main() -> None:
     except OSError:
         print("port", panel.PORT, "is in use; is IO already running?")
         return
-    server = uvicorn.Server(uvicorn.Config(panel.app, host="127.0.0.1", port=panel.PORT, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(panel.app, host="127.0.0.1", port=panel.PORT, log_level="warning", timeout_graceful_shutdown=2))
     server_thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     server_thread.start()
     for _ in range(100):  # wait for the server so the window doesn't open on an error page

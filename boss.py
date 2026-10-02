@@ -678,7 +678,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
 
     async with AsyncExitStack() as stack:
         win_r, win_w = await stack.enter_async_context(stdio_client(
-            StdioServerParameters(command=str(Path(sys.executable).with_name("windows-mcp.exe")), args=["serve", "--tools", ",".join(windows_tools)]),
+            # through the venv interpreter, not the windows-mcp.exe launcher, which has the venv path baked in
+            StdioServerParameters(command=str(Path(sys.executable).with_name("python.exe")), args=["-m", "windows_mcp", "serve", "--tools", ",".join(windows_tools)]),
             errlog=sys.stderr,
         ))
         win = await stack.enter_async_context(ClientSession(win_r, win_w))
