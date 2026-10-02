@@ -357,6 +357,10 @@ async def worker() -> None:
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
+        # a standing goal ("...until I tell you to stop", "/loop ...", or the loop button): runs until you press Stop
+        options["loop"] = bool(task.get("loop") or boss.LOOP_REQUEST.search(task["text"]))
+        if options["loop"]:
+            task["loop"] = True
         current["job"] = asyncio.create_task(
             boss.run(task["text"], task["max_steps"], options, asker(task), chat_context(task), [UPLOADS / n for n in imgs])
         )
@@ -546,6 +550,8 @@ async def chat_message(request: Request) -> JSONResponse:
     if images and not saved:
         return JSONResponse({"error": "couldn't read the attached image(s)"}, status_code=400)
     task = new_task(text or "(see the attached image)", source="chat", chat_id=chat["id"], images=saved, task_id=task_id)
+    if body.get("loop"):
+        task["loop"] = True
     chat["messages"].append({"task_id": task["id"], "at": time.time()})
     # an image-only first message gets a placeholder name; the first message with text names the chat
     if chat["title"] in ("New chat", "Image", "Images") and text:

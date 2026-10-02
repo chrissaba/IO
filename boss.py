@@ -13,6 +13,7 @@ import ctypes
 import ctypes.wintypes as wt
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -213,6 +214,21 @@ EXTRA_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "hold",
+            "description": "Press and hold the left mouse button at a point for some seconds, then release. For games and controls that say 'hold' (hold to mine, hold to charge); Click only taps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "loc": {"type": "array", "items": {"type": "integer"}, "description": "[x, y] screen coordinates, e.g. from find_on_screen"},
+                    "seconds": {"type": "number", "description": "How long to hold (0.2 to 15)", "default": 2},
+                },
+                "required": ["loc"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "done",
             "description": "Finish the task. Call as soon as the task is complete or cannot be completed.",
             "parameters": {
@@ -307,6 +323,43 @@ def find_window(title: str) -> tuple[int, tuple[int, int, int, int]] | None:
     return found[0] if found else None
 
 
+def content_rect(title: str) -> tuple[int, int, int, int] | None:
+    """The part of a window that holds its actual content. Emulators and players draw it in one big child window
+    (BlueStacks' game surface sits beside its ad and tool bars), so the largest child that fills a good share of the
+    window is used; otherwise the whole window."""
+    hit = find_window(title)
+    if not hit:
+        return None
+    hwnd, (l, t, r, b) = hit
+    user32 = ctypes.windll.user32
+    best: list = []
+
+    def cb(child, _):
+        if user32.IsWindowVisible(child):
+            rc = wt.RECT()
+            user32.GetWindowRect(child, ctypes.byref(rc))
+            area = max(0, rc.right - rc.left) * max(0, rc.bottom - rc.top)
+            if not best or area > best[0]:
+                best[:] = [area, (rc.left, rc.top, rc.right, rc.bottom)]
+        return True
+
+    user32.EnumChildWindows(hwnd, ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)(cb), 0)
+    whole = (r - l) * (b - t)
+    if best and 0.3 * whole <= best[0] < 0.97 * whole:
+        return best[1]
+    return (l, t, r, b)
+
+
+def window_in(text: str) -> str:
+    """The open window a request is about, by a word of its title (e.g. 'BlueStacks' in 'play the game in BlueStacks')."""
+    low = text.lower()
+    for _, title in open_windows():
+        for word in re.findall(r"[A-Za-z][\w.-]{3,}", title):
+            if word.lower() not in ("window", "player", "app", "windows", "microsoft") and re.search(r"\b" + re.escape(word.lower()) + r"\b", low):
+                return word
+    return ""
+
+
 def open_windows() -> list[tuple[int, str]]:
     """Visible top-level app windows (hwnd, title), skipping system UI and IO itself."""
     user32 = ctypes.windll.user32
@@ -352,6 +405,21 @@ def close_windows(titles: list[str], all_but: list[str] | None = None) -> str:
     return msg
 
 
+def hold_mouse(x: int, y: int, seconds: float) -> str:
+    """Left button down at (x, y), held, then up: what a long press in a game or emulator needs."""
+    user32 = ctypes.windll.user32
+    user32.SetProcessDPIAware()
+    seconds = max(0.2, min(15.0, float(seconds or 2)))
+    user32.SetCursorPos(int(x), int(y))
+    time.sleep(0.05)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)  # left down
+    try:
+        time.sleep(seconds)
+    finally:
+        user32.mouse_event(0x0004, 0, 0, 0, 0)  # left up, even if the task is stopped mid-hold
+    return f"held the mouse at ({int(x)}, {int(y)}) for {seconds:g}s"
+
+
 def focus_window(title: str) -> str:
     """Brings the window whose title contains `title` to the front (fallback when App switch fails)."""
     hit = find_window(title)
@@ -369,13 +437,15 @@ def focus_window(title: str) -> str:
     return buf.value
 
 
-def capture_area(display: int, window: str) -> tuple[tuple[int, int, int, int], str]:
+def capture_area(display: int, window: str, content: bool = False) -> tuple[tuple[int, int, int, int], str]:
     """Screen rect to look at: the named window if given, else the display. Returns (rect, error)."""
     if window:
         # screenshots show whatever is on top, and clicks land there too: bring the window up first
         if not focus_window(window):
             return (0, 0, 0, 0), f"no visible window with '{window}' in its title"
         time.sleep(0.4)
+        if content and (rect := content_rect(window)):
+            return rect, ""
         hit = find_window(window)
         return hit[1], ""
     rects = displays()
@@ -398,9 +468,10 @@ class Eyes:
             self.client, self.model = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=180), BOSS_MODEL
         else:
             self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL
+        self.content = False  # loops: look only at the window's content area (a game without its emulator's side bars)
 
     def find(self, description: str, display: int = 0, window: str = "") -> dict:
-        (left, top, right, bottom), err = capture_area(display, window)
+        (left, top, right, bottom), err = capture_area(display, window, self.content)
         if err:
             return {"error": err}
         shot = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
@@ -441,7 +512,7 @@ class Eyes:
 
     def describe(self, question: str, display: int = 0, window: str = "") -> str:
         """Answers a question about a display's (or one window's) contents with the boss model's own vision."""
-        rect, err = capture_area(display, window)
+        rect, err = capture_area(display, window, self.content)
         if err:
             return err
         shot = ImageGrab.grab(bbox=rect, all_screens=True)
@@ -823,6 +894,26 @@ MAX_REDOS = 2
 COMPACT_AT = 40000  # characters of working messages before older steps are summarized
 KEEP_RECENT = 6  # newest messages always kept word for word
 
+# Loop mode: a standing goal IO keeps working on until you press Stop. It never finishes: "done" is a progress report,
+# the goal stays pinned at the top of its context, and older steps are folded into a running summary much sooner, so
+# it can go on indefinitely inside the local model's context.
+LOOP_REQUEST = re.compile(r"^\s*/loop\b|\buntil i (tell (you|it|io) to |say (to )?|ask (you|it) to )?stop\b|\buntil i stop (you|it)\b|\b(forever|endlessly|"
+                          r"indefinitely|non-?stop|on (a )?loop)\b|\bkeep (going|playing|doing (it|this|that)) until\b", re.I)
+LOOP_COMPACT_AT = 14000
+LOOP_KEEP_RECENT = 6
+LOOP_REPEAT_LIMIT = 25  # the same call this many times in a row is a rut, even in a game
+LOOP_NOTE = """LOOP MODE (the user approved it): this goal has no end. Keep working toward it, action after action, until the
+user presses Stop. You are never finished, so never stop to ask the user anything: decide for yourself.
+- Things change while you work: look again (look_at_screen / find_on_screen) before acting on old information.
+- Never guess coordinates: get every point to Click or hold from find_on_screen first.
+- Calling done only records a short progress note (what you did, what changed, what you'll do next); then you carry on.
+- If something isn't working, try a different approach instead of repeating it.
+- Older steps get folded into a progress summary to save space; the goal above always stays."""
+
+
+def loop_goal(task: str) -> str:
+    return re.sub(r"^\s*/loop\b\s*", "", task).strip() or task
+
 
 def local_chat(system: str, user: str, max_tokens: int = 300) -> str:
     client = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=1, timeout=90)
@@ -906,6 +997,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     conversation: earlier turns of the chat this message belongs to, as [{"role": "user"|"assistant", "content"}],
     so follow-ups like "now do the same for the other one" make sense."""
     conversation = conversation or []
+    loop = bool((options or {}).get("loop"))
+    if loop:
+        task = loop_goal(task)
     options = {
         "allow_powershell": True, "confirm_risky": True, "browser": True, "files": True,
         **(options or {}),
@@ -960,7 +1054,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             sessions[alias] = session
             aliases[alias] = t.name
             plugin_meta[alias] = t
-        extra = [t for t in EXTRA_TOOLS if ask or t["function"]["name"] != "ask_user"]
+        extra = [t for t in EXTRA_TOOLS if (ask and not loop) or t["function"]["name"] != "ask_user"]
         if "browser_navigate" in sessions:
             extra += [browser_open_tool(options.get("browser_mode", "edge")), BROWSER_READ_TOOL]
         tools = [mcp_to_openai(t) for t in mcp_tools] + [plugin_defs[alias] for alias, _, _ in plugin_tools] + extra
@@ -989,6 +1083,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             except Exception as e:  # an unreadable file shouldn't sink the rest of the request
                 log("warning", text=f"couldn't read image {Path(p).name}: {e}")
         images = parts
+        if loop:
+            prompt += "\n\n" + LOOP_NOTE
         if images:
             where = "earlier in this chat" if options.get("images_from_earlier") else "to this message"
             prompt += (f"\n\n(The user attached {len(images)} image(s) {where}; they are shown above this text. They are the user's own "
@@ -1066,18 +1162,43 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
             log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
 
+        if loop:
+            # you confirm every loop before it starts: it keeps acting on the PC until you press Stop
+            if ask:
+                answer = await ask(f"Start a loop? I'll keep working on this until you press Stop: {task} (yes/no)")
+                if not answer.strip().lower().startswith("y"):
+                    log("done", step=0, summary="Loop not started.")
+                    return "Loop not started."
+            focus = await asyncio.to_thread(window_in, task)
+            if focus:
+                # every screenshot, find and click stays inside this window's content, so nothing beside it gets hit
+                eyes.content = True
+                prompt_note = (f"\nThe goal is in the '{focus}' window. find_on_screen and look_at_screen only see its content area, and "
+                               "clicks outside it are blocked.")
+                if isinstance(messages[head - 1]["content"], str):
+                    messages[head - 1]["content"] += prompt_note
+            log("loop", goal=task, window=focus)
+
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
         if not images and not small_talk:
             await get_plan()
+        compact_at, keep_recent = (LOOP_COMPACT_AT, LOOP_KEEP_RECENT) if loop else (COMPACT_AT, KEEP_RECENT)
+        progress_notes = 0
+        if not loop:
+            focus = ""
+        found_points: list[tuple[int, int]] = []  # recent find_on_screen answers: loop clicks must come from one
 
-        for step in range(1, max_steps + 1):
-            stuck = error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS
-            if stuck and replans < MAX_REPLANS:
+        for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
+            if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
+                stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
+            else:
+                stuck = (error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS) and replans < MAX_REPLANS
+            if stuck:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
                 await get_plan("\n".join(actions[-12:]))
-            if sum(len(str(m.get("content") or "")) for m in messages[head:]) > COMPACT_AT:
-                cut = len(messages) - KEEP_RECENT
+            if sum(len(str(m.get("content") or "")) for m in messages[head:]) > compact_at:
+                cut = len(messages) - keep_recent
                 while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
                     cut -= 1
                 if cut - head >= 4:
@@ -1090,7 +1211,22 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             t0 = time.time()
             # model calls run in a thread so the web app's event loop stays responsive
             try:
-                response = await asyncio.to_thread(
+                if loop:
+                    try:
+                        response = await asyncio.to_thread(
+                            boss.chat.completions.create,
+                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=800), tools=tools, temperature=0.3, max_tokens=1024,
+                        )
+                    except Exception as e:
+                        log("warning", text=f"loop step {step} failed, retrying: {e}"[:300])
+                        if "context" in str(e).lower() and len(messages) - head > 2:
+                            messages[head:len(messages) - 2] = [{"role": "user", "content": "Progress so far: (older steps dropped to save space)"}]
+                            while len(messages) > head + 1 and messages[head + 1]["role"] == "tool":
+                                messages.pop(head + 1)  # never start with a result whose call was dropped
+                        await asyncio.sleep(10)
+                        continue
+                else:
+                    response = await asyncio.to_thread(
                     boss.chat.completions.create,
                     model=BOSS_MODEL, messages=compact(messages), tools=tools, temperature=0.2, max_tokens=1024,
                 )
@@ -1127,6 +1263,12 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 low = intent_text(text)
                 announcing = re.match(r"(i will|i'll|let me|next,|now i|first,|i am going to|i'm going to)\b", low) or \
                     re.search(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|check|look|search|read|open|scroll)\b", low)
+                if loop and text:
+                    # a plain reply in a loop is a progress note, not an ending
+                    progress_notes += 1
+                    log("progress", step=step, n=progress_notes, summary=clean_summary(m.group(2) if m else text)[:600])
+                    messages.append({"role": "user", "content": f"Keep going with the goal: {task}\nUse a tool for your next action."})
+                    continue
                 if m or (text and (plain_replies >= 1 or not announcing)):
                     summary = m.group(2).strip() if m else text
                     summary = fill_empty(clean_summary(summary), last_info)
@@ -1150,7 +1292,25 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 t1 = time.time()
                 key = name + json.dumps(args, sort_keys=True, ensure_ascii=False)
                 recent.append(key)
-                if name in LOOP_PRONE and len(recent) >= 6 and all(k.split("{")[0] in LOOP_PRONE for k in recent[-6:]) and len(set(recent[-6:])) <= 3:
+                if loop and name == "done":
+                    progress_notes += 1
+                    note = clean_summary(str(args.get("summary", "")))[:600]
+                    log("progress", step=step, n=progress_notes, summary=note)
+                    result = f"Progress noted. The loop continues: keep working on the goal ({task}). Look at the screen for what changed, then act."
+                    messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                    continue
+                if loop and name != "done":
+                    # games and dashboards repeat on purpose: only a long run of the exact same call is a rut
+                    repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
+                    repeat["key"] = key
+                    if repeat["n"] >= LOOP_REPEAT_LIMIT:
+                        repeat["n"] = 0
+                        result = (f"You have made this exact call {LOOP_REPEAT_LIMIT} times in a row. Check the screen with look_at_screen "
+                                  "and try something different that moves the goal forward.")
+                        log("tool", step=step, name=name, args=args, result=result)
+                        messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                        continue
+                elif name in LOOP_PRONE and len(recent) >= 6 and all(k.split("{")[0] in LOOP_PRONE for k in recent[-6:]) and len(set(recent[-6:])) <= 3:
                     recent.clear()
                     result = ("You keep re-reading the same page without getting closer. Do something different: open a more specific page "
                               "(for example the exact article, like https://en.wikipedia.org/wiki/Io_(moon)), click a link by its ref from "
@@ -1158,9 +1318,10 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     log("tool", step=step, name=name, args=args, result=result)
                     messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                     continue
-                repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
-                repeat["key"] = key
-                if name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
+                if not loop:
+                    repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
+                    repeat["key"] = key
+                if not loop and name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
                     result = (f"You have made this exact call {repeat['n'] - 1} times in a row. Use what you have, try another way "
                               "(for a fact on a long web page, browser_read with find), or call done.")
                     log("tool", step=step, name=name, args=args, result=result)
@@ -1207,8 +1368,33 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                         actions.append(f"{name} -> refused by user")
                         continue
 
-                if name == "find_on_screen":
+                if loop and focus and name in ("find_on_screen", "look_at_screen"):
+                    args = {**args, "window": focus}
+                point = None
+                if loop and focus and name in ("Click", "hold", "Scroll", "Move", "Drag"):
+                    loc = args.get("loc") or []
+                    try:
+                        point = (int(float(loc[0])), int(float(loc[1])))
+                    except (TypeError, ValueError, IndexError):
+                        point = None
+                blocked = ""
+                if point:
+                    area = await asyncio.to_thread(content_rect, focus)
+                    if area and not (area[0] <= point[0] < area[2] and area[1] <= point[1] < area[3]):
+                        blocked = (f"error: ({point[0]}, {point[1]}) is outside the {focus} content area {area}; nothing was clicked. "
+                                   "Get the point from find_on_screen.")
+                    elif name in ("Click", "hold") and not any(abs(point[0] - x) <= 40 and abs(point[1] - y) <= 40 for x, y in found_points):
+                        blocked = "error: nothing was clicked. Don't guess coordinates: call find_on_screen for what you want, then use its x, y."
+                if blocked:
+                    result = blocked
+                elif name == "find_on_screen":
                     result = json.dumps(await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or "")))
+                    try:
+                        got = json.loads(result)
+                        if "x" in got:
+                            found_points[:] = (found_points + [(int(got["x"]), int(got["y"]))])[-8:]
+                    except (ValueError, TypeError):
+                        pass
                 elif name == "look_at_screen":
                     result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
                 elif name == "browser_read" and not browser_tab_open:
@@ -1233,6 +1419,12 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "hold":
+                    loc = args.get("loc") or [args.get("x"), args.get("y")]
+                    try:
+                        result = await asyncio.to_thread(hold_mouse, int(float(loc[0])), int(float(loc[1])), args.get("seconds", 2))
+                    except (TypeError, ValueError, IndexError):
+                        result = "error: hold needs loc=[x, y]"
                 elif name == "close_windows":
                     all_but = args.get("all_except")
                     result = await asyncio.to_thread(close_windows, list(args.get("titles") or []), list(all_but) if all_but is not None else None)

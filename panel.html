@@ -241,6 +241,17 @@
   .ghost kbd { font: 10.5px/1 Geist, sans-serif; color: var(--faint); border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 4px; margin-left: 6px;
                vertical-align: 1px; }
   .composer .row { display: flex; align-items: center; gap: 2px; margin: 3px 0 0 -6px; }
+  /* a loop is running in this chat: say so plainly, with the way to stop it right there */
+  .loopbar { max-width: 716px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 8px 6px 11px;
+             border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-strong)); border-radius: 10px;
+             background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
+  .loopbar .ic { color: var(--accent); }
+  .loopbar .goal { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .loopbar .goal b { font-weight: 600; }
+  .loopbar small { color: var(--muted); white-space: nowrap; }
+  .loopbar button { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 3px 10px; font: inherit; cursor: pointer; }
+  .loopbar button:hover { background: var(--hover); }
+  .iconbtn.on { color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
   .notice { max-width: 716px; margin: 0 auto 6px; font-size: 12px; color: var(--warn); padding: 0 4px; }
   .composer.drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); }
   .attachments { display: flex; gap: 7px; flex-wrap: wrap; margin: 0 0 8px; }
@@ -489,6 +500,14 @@
 
       <div class="composerwrap">
         <div class="notice" x-show="notice" x-text="notice"></div>
+        <template x-if="loopTask">
+          <div class="loopbar">
+            <span class="ic" x-html="ic('repeat', 'sm')"></span>
+            <span class="goal" :title="loopTask.text"><b x-text="loopTask.status === 'waiting' ? 'Loop waiting for you:' : 'Looping:'"></b> <span x-text="loopTask.text"></span></span>
+            <small x-text="loopSteps(loopTask)"></small>
+            <button @click="post(`/api/tasks/${loopTask.id}/stop`)">Stop</button>
+          </div>
+        </template>
         <div class="composer" :class="dragging && 'drag'" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
              @dragleave="if (--dragDepth <= 0) { dragDepth = 0; dragging = false }"
              @drop.prevent="dragDepth = 0; dragging = false; addFiles($event.dataTransfer.files)">
@@ -506,6 +525,8 @@
           <div class="row">
             <button class="iconbtn" @click="$refs.file.click()" title="Add images (or paste / drop them)"><span class="ic" x-html="ic('plus')"></span></button>
             <input type="file" accept="image/*" multiple x-ref="file" style="display:none" @change="addFiles($event.target.files); $event.target.value = ''">
+            <button class="iconbtn" :class="loopNext && 'on'" @click="loopNext = !loopNext; focusComposer()"
+                    :title="loopNext ? 'Loop on: IO will keep working on this until you press Stop' : 'Loop: keep working on a goal until you press Stop'"><span class="ic" x-html="ic('repeat')"></span></button>
             <div style="margin-right:auto"></div>
             <button class="iconbtn" x-show="draft.trim()" @click="saveTemplate()" title="Save as a quick start"><span class="ic" x-html="ic('bookmark-plus')"></span></button>
             <button class="send stop" x-show="chatBusy && !draft.trim() && !attachments.length" @click="stopChat()" title="Stop"><span class="ic" x-html="ic('square')"></span></button>
@@ -1040,6 +1061,14 @@ function agent() {
       return this.hasUnseen(c);
     },
     get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
+    loopNext: false,
+    get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },
+    loopSteps(t) {
+      const ev = t.events || [];
+      const steps = ev.filter((e) => e.event === "tool").length, notes = [...ev].reverse().find((e) => e.event === "progress")?.n || 0;
+      const mins = t.started ? Math.floor((Date.now() / 1000 - t.started) / 60) : 0;
+      return `${mins} min` + (notes ? ` · ${plural(notes, "update")}` : "") + (steps ? "" : " · starting");
+    },
     rowMark(c) {
       const tasks = this.chatTasks(c);
       return tasks.some((t) => t.status === "waiting") ? "ask" : tasks.some((t) => BUSY.includes(t.status)) ? "busy" : this.chatUnread(c) ? "unread" : "";
@@ -1195,6 +1224,7 @@ function agent() {
         this.focusComposer();
         return;
       }
+      if (this.loopTask && this.loopTask.status !== "waiting") return restore("A loop is running in this chat. Press Stop on it first, then send this.");
       try {
         if (!this.chat) {
           const c = await post("/api/chats");
@@ -1202,7 +1232,8 @@ function agent() {
           try { localStorage.setItem("chatId", c.id); } catch {}
         }
         this.dividerLocked = false;  // replying means you've caught up
-        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images }) });
+        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext }) });
+        this.loopNext = false;
         if (!r.ok) { const d = await r.json().catch(() => ({})); return restore(d.error || "Couldn't send that. Try again."); }
       } catch { return restore("Couldn't reach IO. Try again."); }
       await this.refresh();
@@ -1397,6 +1428,7 @@ function stepText(name, a = {}) {
     case "Clipboard": return a.mode === "set" ? "Copied text to the clipboard" : "Read the clipboard";
     case "Process": return a.mode === "kill" ? `Closed ${a.name || "a program"}` : "Checked running programs";
     case "find_on_screen": return `Found "${short(a.description, 40)}"${a.window ? " in " + a.window : ""}`;
+    case "hold": return `Held at ${(a.loc || []).join(", ")} for ${a.seconds ?? 2}s`;
     case "look_at_screen": return `Looked at ${a.window ? "the " + a.window + " window" : "the screen"}`;
     case "FileSystem": return `${({ read: "Read", write: "Wrote", delete: "Deleted", move: "Moved", copy: "Copied", list: "Listed", search: "Searched", info: "Checked" })[a.mode] || "Used"} ${short(a.path, 44)}`;
     case "Scrape": return `Read ${short(a.url, 44)}`;
@@ -1420,6 +1452,7 @@ function checklist(t) {
   const hidden = new Set(["Snapshot", "Wait", "WaitFor", "browser_snapshot", "browser_wait_for"]);  // bookkeeping, not progress
   const isError = (r) => /^(error|\d+ validation error)|Error calling tool|did not allow/i.test(r || "");
   events.forEach((e, i) => {
+    if (e.event === "progress" && e.summary) { items.push({ key: i, state: "done", text: "Progress: " + short(e.summary, 90), detail: `<div>${esc(e.summary)}</div>` }); return; }
     if (e.event !== "tool" || (hidden.has(e.name) && !isError(e.result))) return;
     const failed = isError(e.result);
     const text = (failed ? "Couldn't: " : "") + stepText(e.name, e.args || {});
@@ -1435,6 +1468,7 @@ function checklist(t) {
     const last = [...events].reverse().find((e) => e.event === "tool");
     const label = t.status === "waiting" ? "Waiting for your answer" : t.status === "queued" ? "Queued behind another task"
       : last ? niceTool(last.name).replace(/^./, (c) => c.toUpperCase()) + "…" : "Thinking…";
+    if (t.loop) { const recent = items.slice(-12); recent.push({ key: "now", state: "now", text: t.status === "waiting" ? label : "Looping: " + label }); return recent; }
     items.push({ key: "now", state: "now", text: label });
     planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));
   }
