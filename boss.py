@@ -841,11 +841,30 @@ Reply with at most 120 words: concrete next steps (which button, menu or item, i
 
 
 class Gemini:
-    """Opt-in: asks Gemini in the user's own Chrome (IO's tab group) for advice. Text only, a fresh chat each time,
-    and at most once every GEMINI_EVERY seconds."""
+    """Opt-in: asks Gemini for advice, a fresh chat each time, at most once every GEMINI_EVERY seconds.
+    private: a throwaway signed-out browser (hidden, in-memory profile, Gemini's default model) that is closed after
+    each question, so nothing is saved anywhere. Otherwise: the user's own Chrome (IO's tab group) and account."""
 
-    def __init__(self, stack: AsyncExitStack, token: str) -> None:
-        self.stack, self.token, self.session, self.last = stack, token, None, 0.0
+    def __init__(self, stack: AsyncExitStack, token: str, private: bool = True) -> None:
+        self.stack, self.token, self.session, self.last, self.private = stack, token, None, 0.0, private
+
+    async def ask(self, prompt: str, image: bytes = b"") -> str:
+        if not self.private:
+            return await self._ask(prompt, image)
+        if wait := self.ready_in():
+            return f"error: Gemini was asked recently; it can be asked again in {wait}s. Keep going with what you have."
+        async with AsyncExitStack() as throwaway:
+            out_dir = HERE / "data" / "gemini"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            params = StdioServerParameters(command="node", args=[str(BROWSER_CLI), "--headless", "--browser", "msedge", "--isolated",
+                                                                 "--output-dir", str(out_dir), "--codegen", "none", "--image-responses", "omit"])
+            r, w = await throwaway.enter_async_context(stdio_client(params, errlog=sys.stderr))
+            self.session = await throwaway.enter_async_context(ClientSession(r, w))
+            await self.session.initialize()
+            try:
+                return await self._ask(prompt, image)
+            finally:
+                self.session = None  # the browser and its in-memory profile go away with this block
 
     async def _session(self):
         if self.session is None:
@@ -857,7 +876,7 @@ class Gemini:
     def ready_in(self) -> int:
         return max(0, round(self.last + GEMINI_EVERY - time.time()))
 
-    async def ask(self, prompt: str, image: bytes = b"") -> str:
+    async def _ask(self, prompt: str, image: bytes = b"") -> str:
         if wait := self.ready_in():
             return f"error: Gemini was asked recently; it can be asked again in {wait}s. Keep going with what you have."
         self.last = time.time()
@@ -875,6 +894,7 @@ class Gemini:
                     break
             else:
                 log("warning", text="the screenshot didn't attach in Gemini; asking without it")
+                prompt = prompt.replace("A screenshot of the window I'm working in is attached.\n\n", "")
             await asyncio.sleep(1)
         sent = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_SEND_JS % json.dumps(prompt)})))
         if "no-editor" in sent:
@@ -1412,7 +1432,9 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
             log("loop", goal=task, window=focus)
             tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack)
-            gemini = Gemini(stack, options.get("chrome_token", "")) if options.get("ask_gemini") and options.get("chrome_token") else None
+            private = options.get("gemini_mode", "private") != "account"
+            allowed = options.get("ask_gemini") and (private or options.get("chrome_token"))
+            gemini = Gemini(stack, options.get("chrome_token", ""), private) if allowed else None
             if gemini:
                 tools.append(ASK_GEMINI_TOOL)
                 if isinstance(messages[head - 1]["content"], str):
@@ -1431,7 +1453,8 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                 return buf.getvalue()
 
             async def consult(question: str) -> str:
-                image = await asyncio.to_thread(window_shot)
+                # signed-out Gemini takes no uploads: private asks go with the screen described in words instead
+                image = b"" if gemini.private else await asyncio.to_thread(window_shot)
                 prompt = GEMINI_PROMPT.format(shot="A screenshot of the window I'm working in is attached.\n\n" if image else "", goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info[:1200] or "(not looked yet)",
                                               actions="\n".join(actions[-10:]) or "(none yet)", question=question)
                 t0 = time.time()

@@ -57,7 +57,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False,
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private",
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -355,6 +355,7 @@ async def worker() -> None:
         options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode", "model_mode")}
         options["chrome_token"] = chrome_token()
         options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
+        options["gemini_mode"] = state["settings"].get("gemini_mode", "private")
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -704,6 +705,8 @@ async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
+    if body.get("gemini_mode") in ("private", "account"):
+        s["gemini_mode"] = body["gemini_mode"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
