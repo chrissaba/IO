@@ -1388,7 +1388,7 @@ function checklist(t) {
     const planned = plan ? plan.plan.split("\n").map((l) => l.match(/^\s*\d+[.)]\s*(.+)/)).filter(Boolean).map((m) => m[1]) : [];
     const doneCount = items.filter((x) => x.state === "done").length;
     const last = [...events].reverse().find((e) => e.event === "tool");
-    const label = t.status === "waiting" ? "Waiting for your answer" : t.status === "queued" ? "Waiting for the current task to finish"
+    const label = t.status === "waiting" ? "Waiting for your answer" : t.status === "queued" ? "Queued behind another task"
       : last ? niceTool(last.name).replace(/^./, (c) => c.toUpperCase()) + "…" : "Thinking…";
     items.push({ key: "now", state: "now", text: label });
     planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));

@@ -91,7 +91,7 @@ HOW TO DECIDE
 - You are IO. "What is IO?", "who are you" and questions about yourself are about you: answer them yourself, no tools.
 - Well-known facts (countries and capitals, famous people and companies, science, history): answer directly, no search.
 - A name or word you don't confidently know (a small website, company, product, app, person, slang): search the web before
-  answering, with browser_open on https://www.bing.com/search?q=<the words>. The result lists the top results with their
+  answering, with browser_open on https://www.google.com/search?q=<the words> (always Google, never Bing). The result lists the top results with their
   addresses: answer from them if they already say what it is, otherwise browser_open the best result's address (don't click
   results). Don't guess a similar-sounding word, don't assume it means one of your tools, and don't ask the user what it is
   until you've searched. If it looks like a brand or website name, also try browser_open https://<name>.com.
@@ -496,9 +496,10 @@ LINKS_JS = ("() => [...(document.querySelector('#mw-content-text, article, main'
             ".map(a => [a.innerText.trim(), a.href]).filter(([t, h]) => t && h.startsWith(location.origin) && !h.includes('#')).slice(0, 300)")
 
 
-RESULTS_JS = r"""() => [...document.querySelectorAll('li.b_algo')].slice(0, 8).map(r => {
-  const h = r.querySelector('h2'), cite = r.querySelector('cite'), p = r.querySelector('p, .b_caption');
-  return [(h && h.innerText || '').trim(), (cite && cite.innerText || '').trim(), (p && p.innerText || '').replace(/\s+/g, ' ').slice(0, 250)];
+RESULTS_JS = r"""() => [...document.querySelectorAll('#search a:has(h3), #rso a:has(h3)')].filter(a => a.href.startsWith('http')).slice(0, 8).map(a => {
+  const box = a.closest('div[data-hveid], div.g') || a.parentElement;
+  const text = (box && box.innerText || '').replace(/\s+/g, ' ');
+  return [a.querySelector('h3').innerText.trim(), a.href, text.slice(0, 300)];
 })"""
 
 
@@ -508,16 +509,13 @@ def _result_rows(raw: str):
 
 
 async def search_results(session) -> str:
-    """A Bing results page as a short list of results with their real addresses, so the agent can answer from them or open one with browser_open."""
+    """A Google results page as a short list of results with their real addresses, so the agent can answer from them or open one with browser_open."""
     try:
         rows = _result_rows(text_of(await session.call_tool("browser_evaluate", {"function": RESULTS_JS})))
     except Exception:
         return ""
     out = []
-    for i, (title, cite, snippet) in enumerate(rows, 1):
-        url = cite.replace(" › ", "/").replace("›", "/").strip()  # "https://site.com › a › b" -> "https://site.com/a/b"
-        if url and not url.startswith("http"):
-            url = "https://" + url
+    for i, (title, url, snippet) in enumerate(rows, 1):
         out.append(f"{i}. {title or '(no title)'}\n   {url}\n   {snippet}")
     if not out:
         return ""
@@ -1137,7 +1135,7 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
                     url = str(args.get("url") or "about:blank")
                     try:
                         result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
-                        if "bing.com/search" in url or "google.com/search" in url or "duckduckgo.com" in url:
+                        if "google." in url and "/search" in url:
                             result = (await search_results(sessions["browser_navigate"])) or result
                         elif DISAMBIGUATION.search(result):
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result

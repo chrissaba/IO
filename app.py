@@ -489,6 +489,7 @@ async def chat_message(request: Request) -> JSONResponse:
     images = [u for u in body.get("images", []) if isinstance(u, str) and u.startswith("data:image/")][:MAX_IMAGES]
     if not text and not images:
         return JSONResponse({"error": "text is required"}, status_code=400)
+    release_questions(except_chat=chat["id"])
     task_id = uuid.uuid4().hex[:8]
     saved = save_images(task_id, images)
     if images and not saved:
@@ -689,6 +690,15 @@ async def test_browser(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "result": result[:600]})
     except Exception as e:
         return JSONResponse({"ok": False, "result": f"{type(e).__name__}: {e}"[:600]})
+
+
+def release_questions(except_chat: str = "") -> None:
+    """You moved on to something else: a task still waiting on your answer stops waiting (and reports what it has),
+    so it doesn't hold up the queue."""
+    for task in state["tasks"]:
+        future = answers.get(task["id"])
+        if task["status"] == "waiting" and task.get("chat_id") != except_chat and future and not future.done():
+            future.set_result("(no answer: the user moved on to something else. Stop here and report what you have.)")
 
 
 async def answer_task(request: Request) -> JSONResponse:
