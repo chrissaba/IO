@@ -19,6 +19,9 @@ Write a short numbered plan, at most 8 steps. Each step is one concrete action n
 Prefer App launches, keyboard shortcuts and PowerShell over clicking. Do only what the task asks.
 For websites, or when the user mentions the browser, Chrome or IO's tab, start with browser_open and use browser_* tools; never App, Click, Type or Shortcut on a browser window.
 PowerShell is a tool that runs a command and returns its output: never open a PowerShell or Terminal window to run one.
+What's installed (apps, Steam games), an app's settings or saved data: plan one PowerShell step that reads the registry or the app's
+files, not opening the app and clicking through it (e.g. Steam games are the "name" lines in C:\\Program Files (x86)\\Steam\\steamapps\\appmanifest_*.acf).
+If the user also asks to open the app, open it too, but still get the facts with PowerShell.
 To read text in a window, use Snapshot (it lists the text of controls) or look_at_screen, never select-all and copy: that replaces the user's clipboard.
 For games and emulators, use find_on_screen/look_at_screen with window set to the app's title, and close menus with their X button, never Esc/Back.
 If a web page turns out to be a list of different meanings (a disambiguation page), plan browser_open on the matching link's address.

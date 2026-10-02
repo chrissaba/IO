@@ -58,7 +58,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "focus_glow": True,
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "focus_glow": True, "theme": "system",
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -342,6 +342,14 @@ def earlier_images(task: dict, turns: int = 2) -> list[str]:
     return next((t["images"] for t in reversed(prev[-turns:]) if t.get("images")), [])
 
 
+def error_text(e: BaseException) -> str:
+    """The real error: the MCP clients' task groups wrap whatever went wrong as 'unhandled errors in a TaskGroup'."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    print("task failed:", type(e).__name__, e, file=sys.stderr)
+    return str(e) or type(e).__name__
+
+
 async def worker() -> None:
     while True:
         task = await queue.get()
@@ -376,7 +384,7 @@ async def worker() -> None:
         except asyncio.CancelledError:
             task["status"], task["summary"] = "cancelled", "stopped"
         except Exception as e:
-            task["status"], task["summary"] = "error", str(e)
+            task["status"], task["summary"] = "error", error_text(e)
         task["finished"] = time.time()
         current.update(task=None, job=None)
         overlay.hide()
@@ -712,6 +720,8 @@ async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
+    if body.get("theme") in ("system", "light", "dark"):
+        s["theme"] = body["theme"]
     if body.get("gemini_mode") in ("private", "account", "duck"):
         s["gemini_mode"] = body["gemini_mode"]
     if body.get("browser_mode") in ("edge", "chrome"):

@@ -284,9 +284,15 @@ class WindowApi:
 
 
 def theme_background() -> str:
-    """The page's background colour for the current Windows theme, shown while the page loads."""
+    """The page's background colour for IO's theme (Settings > Appearance, else Windows'), shown while the page loads."""
     import winreg
 
+    try:  # the window is made before the server has loaded the saved settings
+        theme = json.loads(panel.STORE.read_text(encoding="utf-8"))["settings"].get("theme", "system")
+    except (OSError, ValueError, KeyError):
+        theme = "system"
+    if theme in ("light", "dark"):
+        return "#faf9fc" if theme == "light" else "#23222a"
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
             light = winreg.QueryValueEx(key, "AppsUseLightTheme")[0]

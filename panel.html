@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IO</title>
+<script>
+  // the chosen theme before anything paints, so a dark IO never flashes light while it loads
+  try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 <script defer src="/static/alpine.min.js"></script>
 <script src="/static/lucide.min.js"></script>
 <script src="/static/marked.min.js"></script>
@@ -28,8 +32,9 @@
     --spark-1: #c4b5fb; --spark-2: #9a80f5; --spark-3: #6d4ae3;
     --shadow: 0 1px 2px rgb(31 26 51 / .04), 0 4px 14px -6px rgb(31 26 51 / .1);
   }
+  /* dark: follows Windows unless Settings > Appearance picks one (data-theme on <html>); the two blocks must match */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #23222a; --rail: #1c1b22; --surface: #2d2c35; --raised: #2d2c35; --hover: #36343f;
       --line: #37353f; --line-strong: #484651; --text: #f1f0f7; --muted: #aeabbd; --faint: #9492a4;
       --accent: #7c5cf0; --accent-text: #b4a2fb; --accent-soft: #352d55; --unread: #66a6ec;
@@ -38,7 +43,17 @@
       --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .45);
     }
   }
+  :root[data-theme="dark"] {
+    --bg: #23222a; --rail: #1c1b22; --surface: #2d2c35; --raised: #2d2c35; --hover: #36343f;
+    --line: #37353f; --line-strong: #484651; --text: #f1f0f7; --muted: #aeabbd; --faint: #9492a4;
+    --accent: #7c5cf0; --accent-text: #b4a2fb; --accent-soft: #352d55; --unread: #66a6ec;
+    --ok: #7cc496; --warn: #e3a857; --bad: #ec8476; --bad-soft: #45262a; --warn-soft: #433824;
+    --spark-1: #7c5cf0; --spark-2: #b9a8fb; --spark-3: #ffffff;
+    --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .45);
+  }
   :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 Geist, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -452,6 +467,7 @@
         <button @click="go('usage'); menuOpen = false"><span class="ic" x-html="ic('gauge')"></span>Usage</button>
         <button @click="go('customize'); menuOpen = false"><span class="ic" x-html="ic('blocks')"></span>Plugins and skills</button>
         <hr>
+        <button @click="s.settings.theme = isDark() ? 'light' : 'dark'; saveSettings()"><span class="ic" x-html="ic(isDark() ? 'sun' : 'moon')"></span><span x-text="isDark() ? 'Light mode' : 'Dark mode'"></span></button>
         <button @click="togglePause(); menuOpen = false"><span class="ic" x-html="ic(s.status.paused ? 'play' : 'pause')"></span><span x-text="s.status.paused ? 'Resume' : 'Pause'"></span></button>
         <button class="danger" @click="stopAll(); menuOpen = false"><span class="ic" x-html="ic('octagon-x')"></span>Stop everything<kbd>Ctrl+Alt+End</kbd></button>
       </div>
@@ -833,6 +849,8 @@
       </div>
       <h2>App</h2>
       <div class="card">
+        <div class="setting"><div class="txt"><div>Appearance</div><div>Light, dark, or follow Windows. Dark mode is also in the menu under your name.</div></div>
+          <select x-model="s.settings.theme" @change="saveSettings()"><option value="system">Match Windows</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
         <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Notifications</div><div>Let you know when something finishes or needs you.</div></div>
@@ -922,6 +940,7 @@ function agent() {
       hookWindow();
       window.setMaximized = (v) => { this.maximized = !!v; };
       try { this.railHidden = localStorage.getItem("railHidden") === "1"; } catch {}
+      this.$watch("s.settings.theme", (t) => applyTheme(t));
       const mq = matchMedia("(max-width: 760px)");
       this.narrow = mq.matches;
       const onWidth = () => { if (this.narrow !== mq.matches) { this.narrow = mq.matches; this.railOpen = false; } };
@@ -1370,6 +1389,7 @@ function agent() {
         post("/api/history/clear").then(() => this.refresh());
     },
     saveSettings() { post("/api/settings", this.s.settings); },
+    isDark() { const t = this.s.settings.theme; return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); },
     MODELS: [
       { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },
       { id: "balanced", name: "Balanced", about: "Qwen 3.6 35B-A3B. Sharper eyes, still quick." },
@@ -1576,6 +1596,14 @@ function sparkle(canvas, opts) { return new Sparkle(canvas, opts); }
 window.addEventListener("focus", () => Sparkle.kick());  // also how the tray's Open tells the page it's showing again
 document.addEventListener("visibilitychange", () => Sparkle.kick());
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => Sparkle.all.forEach((s) => s.layout()));
+
+// Settings > Appearance: "system" follows Windows; "light"/"dark" pin it. Remembered locally too, for the first paint.
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === "light" || t === "dark") root.dataset.theme = t; else delete root.dataset.theme;
+  try { localStorage.setItem("theme", t || "system"); } catch {}
+  Sparkle.all.forEach((s) => s.layout());  // its colours come from the theme's --spark-* tokens
+}
 Sparkle.still.addEventListener("change", () => { Sparkle.all.forEach((s) => s.layout()); Sparkle.kick(); });
 
 function niceTool(name) {

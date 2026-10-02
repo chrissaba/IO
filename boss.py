@@ -21,6 +21,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.request
 from contextlib import AsyncExitStack
 from pathlib import Path
 
@@ -108,6 +109,9 @@ PICK THE RIGHT TOOL (cheapest reliable one first)
   find files: Get-ChildItem "$env:USERPROFILE" -Recurse -File -Filter *report* -ErrorAction SilentlyContinue | Select-Object -First 20 FullName
   disk space: Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
   system: Get-CimInstance Win32_OperatingSystem, Get-Process | Sort-Object CPU -Descending | Select-Object -First 10, Get-NetIPAddress
+  installed apps: Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*, HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*, HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Where-Object DisplayName | Sort-Object DisplayName | Select-Object DisplayName
+  installed Steam games: Get-ChildItem "C:\\Program Files (x86)\\Steam\\steamapps\\appmanifest_*.acf" | ForEach-Object { (Select-String -Path $_.FullName -Pattern '"name"\\s+"(.+?)"').Matches[0].Groups[1].Value } (more game folders are listed in steamapps\\libraryfolders.vdf)
+  What's installed, an app's settings or saved data: read it like this (registry, the app's own files) rather than clicking through the app's window, which is slow and its window lists can be huge.
   Quote paths with spaces. If a command errors, read the error, fix the command and run it again.
 - Snapshot lists open windows and on-screen controls as text with (x,y) coordinates. Use it to see what's open, to read text in a window, and before clicking.
 - close_windows closes windows like their X button: by title, or everything except some (IO is never closed).
@@ -1119,9 +1123,10 @@ def fix_args(name: str, args: dict) -> dict:
     return args
 
 
-def compact(messages: list[dict], keep: int = 2, trim: int = 1500) -> list[dict]:
+def compact(messages: list[dict], keep: int = 2, trim: int = 1500, snaps_kept: int = KEEP_FULL_SNAPSHOTS, cap: int = 0) -> list[dict]:
     """Keep only the newest tool results in full. Older Snapshots are dropped (huge and stale); other
-    older results (web pages, documents, plugin output) are cut short so the context doesn't overflow."""
+    older results (web pages, documents, plugin output) are cut short so the context doesn't overflow.
+    cap: also cut any single remaining result to this many characters (0 = no limit)."""
     snapshot_ids = {
         tc["id"]
         for m in messages
@@ -1132,7 +1137,7 @@ def compact(messages: list[dict], keep: int = 2, trim: int = 1500) -> list[dict]
     results = [m for m in messages if m["role"] == "tool"]
     snaps = [m for m in results if m["tool_call_id"] in snapshot_ids]
     others = [m for m in results if m["tool_call_id"] not in snapshot_ids]
-    stale_snaps = {id(m) for m in snaps[:-KEEP_FULL_SNAPSHOTS]}
+    stale_snaps = {id(m) for m in (snaps[:-snaps_kept] if snaps_kept else snaps)}
     stale_others = {id(m) for m in (others[:-keep] if keep else others)}
     out = []
     for m in messages:
@@ -1140,8 +1145,42 @@ def compact(messages: list[dict], keep: int = 2, trim: int = 1500) -> list[dict]
             m = {**m, "content": "[older snapshot omitted; call Snapshot again if needed]"}
         elif id(m) in stale_others and len(m["content"]) > trim:
             m = {**m, "content": m["content"][:trim] + "\n[older result trimmed; call the tool again if you need the rest]"}
+        elif cap and m["role"] == "tool" and len(m["content"]) > cap:
+            m = {**m, "content": m["content"][:cap] + "\n[result cut to fit the model's memory; ask for less (a window, a find) if you need more]"}
         out.append(m)
     return out
+
+
+# Windows PowerShell 5.1 writes its output in the ANSI code page, so names like "Battlefield™ 6" came back garbled or the
+# line went missing, and its first-run progress records arrived as CLIXML noise. The command's output is passed back as
+# base64 UTF-8 instead, with progress records off, and files are read as UTF-8 (5.1 assumes ANSI).
+PS_WRAP = "$ProgressPreference = 'SilentlyContinue'; $PSDefaultParameterValues['*:Encoding'] = 'utf8'; $__io = & {{\n{cmd}\n}} 2>&1 | Out-String -Width 300; 'IO64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($__io))"
+
+
+def ps_wrap(cmd: str) -> str:
+    return PS_WRAP.format(cmd=cmd)
+
+
+def ps_unwrap(result: str) -> str:
+    m = re.search(r"IO64:([A-Za-z0-9+/=]*)", result)
+    if not m:
+        return result  # e.g. the command didn't parse: PowerShell's own error is the answer
+    try:
+        text = base64.b64decode(m.group(1)).decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
+    except ValueError:
+        return result
+    status = re.search(r"Status Code: *(-?\d+)", result)
+    return f"Response: {text or '(no output)'}\n\nStatus Code: {status.group(1) if status else 0}"
+
+
+def model_context(default: int = 16384) -> int:
+    """The loaded boss model's context size in tokens, from llama-server (it differs per model mode)."""
+    try:
+        with urllib.request.urlopen(BOSS_URL.rsplit("/v1", 1)[0] + "/props", timeout=3) as r:
+            props = json.load(r)
+        return int(props.get("default_generation_settings", {}).get("n_ctx") or props.get("n_ctx") or default)
+    except Exception:
+        return default
 
 
 # callbacks that receive every log record (the web app streams these to the page)
@@ -1673,6 +1712,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         if not images and not small_talk:
             await get_plan()
         compact_at, keep_recent = (LOOP_COMPACT_AT, LOOP_KEEP_RECENT) if loop else (COMPACT_AT, KEEP_RECENT)
+        # what fits: the model's context (16K for Qwen 3.6, 32K for the others) less the fixed prompt, the tool list and the
+        # reply, at ~2.5 characters a token (UI trees and JSON tokenize worse than prose)
+        fixed = len(json.dumps(tools)) + sum(len(str(m.get("content") or "")) for m in messages[:head])
+        room = max(6000, int((await asyncio.to_thread(model_context) - 1400) * 2.5) - fixed)
+        compact_at = min(compact_at, int(room * 0.6))
+        snaps_kept = KEEP_FULL_SNAPSHOTS if room > 40000 else 1
+        tool_cap = min(MAX_TOOL_TEXT, room // 3)
         progress_notes = 0
         if not loop:
             focus = ""
@@ -1726,7 +1772,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     try:
                         response = await asyncio.to_thread(
                             boss.chat.completions.create,
-                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=800), tools=tools, temperature=0.3, max_tokens=1024,
+                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap), tools=tools,
+                            temperature=0.3, max_tokens=1024,
                         )
                     except Exception as e:
                         log("warning", text=f"loop step {step} failed, retrying: {e}"[:300])
@@ -1739,20 +1786,40 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 else:
                     response = await asyncio.to_thread(
                     boss.chat.completions.create,
-                    model=BOSS_MODEL, messages=compact(messages), tools=tools, temperature=0.2, max_tokens=1024,
+                    model=BOSS_MODEL, messages=compact(messages, snaps_kept=snaps_kept), tools=tools, temperature=0.2, max_tokens=1024,
                 )
             except BadRequestError as e:
                 if "context" not in str(e).lower():
                     raise
-                try:  # over the context: once more with older results cut harder
-                    response = await asyncio.to_thread(
-                        boss.chat.completions.create,
-                        model=BOSS_MODEL, messages=compact(messages, keep=1, trim=400), tools=tools, temperature=0.2, max_tokens=1024,
-                    )
-                except BadRequestError as e2:
-                    if "context" in str(e2).lower():
-                        raise RuntimeError("the request is too large for the local model's context; turn off some plugins or skills") from e2
-                    raise
+                # over the model's memory: cut harder, then fold everything but the last step into a summary, then give up
+                log("warning", text=f"step {step} was over the model's context; trimming and retrying")
+                response = None
+                for attempt in range(2):
+                    if attempt == 1:
+                        cut = len(messages) - 2
+                        while cut > head and messages[cut]["role"] != "assistant":
+                            cut -= 1
+                        if cut - head < 1:
+                            break
+                        try:
+                            summary_text = await asyncio.to_thread(summarize_steps, task, compact(messages[head:cut], keep=0, trim=300, snaps_kept=0))
+                        except Exception:
+                            summary_text = "(older steps dropped to save space)"
+                        messages[head:cut] = [{"role": "user", "content": f"Progress so far (older steps summarized to save space):\n{summary_text}"}]
+                        log("compact", step=step, text=summary_text)
+                    try:
+                        response = await asyncio.to_thread(
+                            boss.chat.completions.create,
+                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=400, snaps_kept=1, cap=min(tool_cap, 4000)), tools=tools,
+                            temperature=0.2, max_tokens=1024,
+                        )
+                        break
+                    except BadRequestError as e2:
+                        if "context" not in str(e2).lower():
+                            raise
+                if response is None:
+                    raise RuntimeError("this step needs more memory than the local model has, even after trimming; try a narrower request, "
+                                       "or turn off some plugins or skills")
             msg = response.choices[0].message
             calls = msg.tool_calls or []
             messages.append(
@@ -2001,7 +2068,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     try:
                         # a plugin that stops answering mustn't hang the task (and the queue behind it)
                         timeout = {"read_timeout_seconds": PLUGIN_CALL_TIMEOUT} if name in aliases else {}
-                        result = text_of(await sessions[name].call_tool(aliases.get(name, name), args, **timeout))
+                        call_args = {**args, "command": ps_wrap(args["command"])} if name == "PowerShell" and args.get("command") else args
+                        result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
+                        if name == "PowerShell":
+                            result = ps_unwrap(result)
                         if name == "App" and args.get("mode") == "switch" and "error" in result.lower() and args.get("name"):
                             # Windows-MCP matches app names exactly; fall back to any window title containing the name
                             if title := await asyncio.to_thread(focus_window, args["name"]):
@@ -2027,7 +2097,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result = f"error: {e}"
                 else:
                     result = f"error: there is no tool named {name}"
-                result = result[:MAX_TOOL_TEXT] or "ok"
+                result = result[:tool_cap] or "ok"
                 last_error = result if re.match(r"(error|\d+ validation error)", result, re.I) or "Error calling tool" in result else ""
                 if not last_error:
                     refused_done = False
