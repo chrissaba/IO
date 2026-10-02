@@ -23,8 +23,11 @@ To read text in a window, use Snapshot (it lists the text of controls) or look_a
 For games and emulators, use find_on_screen/look_at_screen with window set to the app's title, and close menus with their X button, never Esc/Back.
 If a web page turns out to be a list of different meanings (a disambiguation page), plan browser_open on the matching link's address.
 Write steps, never answers or facts read from the current state.
+The agent itself is called IO. Questions about IO, about the agent, or what it can do are conversation.
 If the message is conversation rather than something to do on the PC (a greeting, thanks, small talk, or a question
 answerable from general knowledge), output exactly NO_PLAN.
+When replanning after failures, never repeat a step that failed: use a different tool or source (for a fact, Wikipedia
+or a web search; for a site that won't load, another site), or plan done explaining what blocked it.
 Output only the plan."""
 
 
