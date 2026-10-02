@@ -1,5 +1,5 @@
-"""IO's focus glow: while a task runs, the window IO is working in gets a soft violet bloom with a field of tiny
-twinkling pixel blocks around it, so you can see where it is acting.
+"""IO's focus glow: while a task runs, the window IO is working in glows outward, a soft violet bloom shining through a
+grid of tiny twinkling pixel squares, so you can see where it is acting.
 
 The glow is invisible to IO itself: every overlay window is excluded from screen capture (IO's screenshots and
 Windows-MCP's never contain it), click-through, never focusable, untitled and kept out of the taskbar and Alt+Tab.
@@ -107,8 +107,9 @@ SKIP_CLASSES = {CLASS, "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTr
 
 FPS = 30
 POLL = 0.1  # how often the target window is looked up again
-GLOW, EXT = 48, 30  # how far the bloom and the pixel blocks reach out from the edge, at 100% scaling
+GLOW, EXT = 40, 30  # how far the bloom and the pixel grid reach out from the edge, at 100% scaling
 INNER = 0.6  # inward glows (maximized and snapped windows) reach less far, so they don't veil the window's content
+RIM_GLOW = 0.6  # the rim's brightness between pulses (it brightens as each band of light leaves it)
 # palette (RGB), lightest first: near-white, lavenders, violets, deep purple; panel.html's --spark-* and --accent
 # tones, so the glow and the app read as one violet
 LAVENDER, VIOLET, DEEP, WHITE = (196, 181, 251), (154, 128, 245), (84, 52, 204), (248, 246, 255)
@@ -191,7 +192,7 @@ def _pack4(bgra, a):
 
 
 def _hash(i, j, salt: int, k: int):
-    """Stable pseudo-random 0..1 per grid cell, so the block field keeps its pattern as the window moves."""
+    """Stable pseudo-random 0..1 per grid square, so the grid keeps its pattern as the window moves or resizes."""
     h = (i.astype(np.int64) * 0x9E3779B1 + j.astype(np.int64) * 0x85EBCA77 + (salt * 31 + k) * 0xC2B2AE3D) & 0xFFFFFFFF
     h ^= h >> 15
     h = (h * 0x2C1B3C6D) & 0xFFFFFFFF
@@ -208,15 +209,20 @@ def _glint(s, t: float):
     return np.exp(-(dist / 0.045) ** 2)
 
 
-# the rim's colours by position around it x edge softness; the lights only drift, so each frame just rotates it
-RIM_BINS, RIM_LEVELS = 1024, 8
+# the rim's colours by position around it x edge softness, at BRIGHT + 1 brightness steps; its lights only drift, so
+# a frame just picks a brightness and rotates it
+RIM_BINS, RIM_LEVELS, BRIGHT = 1024, 8, 16
 _g = _glint((np.arange(RIM_BINS) + 0.5) / RIM_BINS, 0.0)
-RIM = _pack(np.repeat(np.array(LAVENDER, np.float32) + (np.array(WHITE, np.float32) - LAVENDER) * _g[:, None], RIM_LEVELS, 0),
-            ((0.7 + 0.3 * _g)[:, None] * (np.arange(RIM_LEVELS) / (RIM_LEVELS - 1))[None, :]).ravel()).reshape(RIM_BINS, RIM_LEVELS)
+_rim = (_bgra(np.repeat(np.array(LAVENDER, np.float32) + (np.array(WHITE, np.float32) - LAVENDER) * _g[:, None], RIM_LEVELS, 0))
+        * ((0.7 + 0.3 * _g)[:, None] * (np.arange(RIM_LEVELS) / (RIM_LEVELS - 1))[None, :]).reshape(-1, 1))
+RIM = np.concatenate([(_rim * (b / BRIGHT) + 0.5).astype(np.uint8).view(np.uint32)[:, 0] for b in range(BRIGHT + 1)]).reshape(-1, RIM_LEVELS)
+_BINS = np.arange(RIM_BINS)
 
 
-def _rim_table(t: float):
-    return np.roll(RIM, int(t / 9.0 * RIM_BINS) % RIM_BINS, axis=0).ravel()
+def _rim_table(t: float, f: float = 1.0):
+    """The rim's colours this frame, at brightness f (0..1)."""
+    rows = (_BINS - int(t / 9.0 * RIM_BINS)) % RIM_BINS + int(min(max(f, 0.0), 1.0) * BRIGHT + 0.5) * RIM_BINS
+    return RIM[rows].ravel()
 
 
 class Surface:
@@ -233,7 +239,7 @@ class Surface:
         self.size = (0, 0)
         self.pos, self.level = (0, 0), -1
         self.shown = False
-        self.px = None
+        self.px = self.flat = None
 
     def canvas(self, w: int, h: int):
         """A cleared (h, w) uint32 pixel view of the window's bitmap, resized if needed."""
@@ -249,7 +255,8 @@ class Surface:
             else:
                 self.old = old
             self.bmp, self.size = bmp, (w, h)
-            self.px = np.ctypeslib.as_array((ctypes.c_uint32 * (w * h)).from_address(bits.value)).reshape(h, w)
+            self.flat = np.ctypeslib.as_array((ctypes.c_uint32 * (w * h)).from_address(bits.value))
+            self.px = self.flat.reshape(h, w)
         self.px[:] = 0
         return self.px
 
@@ -288,92 +295,122 @@ class Surface:
         gdi32.DeleteDC(self.dc)
 
 
-class Sparkle:
-    """The animated layer of one border strip: the rim and the twinkling blocks, as fixed pixel indices into the strip."""
+SQUARE, GAP = 2, 1  # the grid's squares and the gaps between them, px at 100%: panel.html's sparkle while a chat runs
+WAVE = 2.8  # s between the soft bands of light that leave the rim and travel out through the grid
+DSTEPS, TSTEPS, LEVELS = 64, 64, 32  # table steps: distance out from the edge, twinkle phase, opacity
+DIST = (np.arange(DSTEPS) + 0.5) / DSTEPS  # a step's fraction of the way out
+SHINE = (0.85 * (1 - DIST) ** 1.6).astype(np.float32)  # brightest at the edge, dimming outward
+_tw = 0.5 + 0.5 * np.sin(np.arange(TSTEPS) * (2 * math.pi / TSTEPS))
+TWINKLE = (0.3 + 0.7 * _tw ** 3).astype(np.float32)  # like the app's: mostly soft, now and then bright, never out
+CREST = 0.4  # how much a band of light adds as it passes, fading as it travels out
+# a square's premultiplied colour by palette entry x opacity: the brightest turn whiter, like light running hot
+_a = np.tile(np.arange(LEVELS) / (LEVELS - 1), len(PALETTE))
+_rgb = np.repeat(PALETTE, LEVELS, 0)
+SQUARE_COL = _pack(_rgb + (np.array(WHITE, np.float32) - _rgb) * (0.7 * np.clip((_a - 0.5) / 0.5, 0, 1) ** 1.5)[:, None], _a)
 
-    def __init__(self, side: int, rect, w: int, h: int, r: int, s: float, ext: int, inner: bool) -> None:
-        x0, y0, x1, y1 = rect
-        sw = x1 - x0
-        sign = -1 if inner else 1  # distances count inward for a glow drawn inside the window
-        # rim: a thin bright line hugging the window's (rounded) edge
-        ys, xs = np.mgrid[y0:y1, x0:x1]
-        d = sign * _sdf(xs + 0.5, ys + 0.5, w, h, r)
-        on = (d > -1.0) & (d < 2.4 * s)
-        self.rim = np.flatnonzero(on)
-        weight = np.clip(1 - np.abs(d.ravel()[self.rim] - 0.5) / (1.0 + 0.8 * s), 0, 1) ** 1.6
-        at = _around(xs.ravel()[self.rim] + 0.5, ys.ravel()[self.rim] + 0.5, w, h)
-        self.rim_key = (np.minimum(at * RIM_BINS, RIM_BINS - 1).astype(np.int32) * RIM_LEVELS
-                        + np.rint(weight * (RIM_LEVELS - 1)).astype(np.int32))
 
-        # pixel blocks on a grid anchored to this strip's edge, so they ride along with it: dense at the edge,
-        # thinning out with distance, a few cells left empty or holding a smaller block
-        c = max(4, round(4.5 * s))
-        gap = max(1, round(0.9 * s))
-        span = (x0, x1) if side < 2 else (y0, y1)
-        if inner:
-            out = {0: (y0, y1), 1: (h - y1, h - y0), 2: (x0, x1), 3: (w - x1, w - x0)}[side]
-        else:
-            out = {0: (-y1, -y0), 1: (y0 - h, y1 - h), 2: (-x1, -x0), 3: (x0 - w, x1 - w)}[side]
-        i, j = np.meshgrid(np.arange(span[0] // c, span[1] // c + 1), np.arange(out[0] // c, out[1] // c + 1))
-        i, j = i.ravel(), j.ravel()
-        rnd = [_hash(i, j, side, k) for k in range(8)]
-        k = np.where(rnd[0] < 0.22, c - 2 * gap, c - gap).astype(int)
-        u = i * c + (rnd[1] * (c - gap - k + 1)).astype(int)
-        v = j * c + gap
-        if inner:
-            bx, by = {0: (u, v), 1: (u, h - v - k), 2: (v, u), 3: (w - v - k, u)}[side]
-        else:
-            bx, by = {0: (u, -v - k), 1: (u, h + v), 2: (-v - k, u), 3: (w + v, u)}[side]
-        dc = sign * _sdf(bx + k / 2, by + k / 2, w, h, r)
-        t = np.clip(dc / ext, 0, 1)
-        keep = ((dc >= 0.75 * k + 1.5 * s) & (rnd[3] < 0.97 * (1 - t) ** 1.3)
-                & (bx >= x0) & (by >= y0) & (bx + k <= x1) & (by + k <= y1))
-        bx, by, k, t = bx[keep], by[keep], k[keep], t[keep]
-        rnd = [q[keep] for q in rnd]
-        # near the edge mostly lavender and white, further out violet and deep purple
-        pick = np.clip((rnd[4] * 0.5 + t * 0.55) * len(PALETTE), 1, len(PALETTE) - 1).astype(int)
-        pick[rnd[5] < 0.07 * (1 - t)] = 0
-        self.col = PALETTE[pick]
-        self.amp = ((1 - t) ** 0.6 * (0.6 + 0.4 * rnd[6])).astype(np.float32)
-        self.amp[pick == 0] = np.minimum(1, self.amp[pick == 0] * 1.3)
-        self.omega = (2 * math.pi * (0.15 + 0.35 * rnd[7])).astype(np.float32)
-        self.phase = (rnd[5] * 2 * math.pi * 7.3 % (2 * math.pi)).astype(np.float32)
-        self.reveal = (0.6 * t + 0.25 * rnd[2]).astype(np.float32)  # when it sparkles in: the field grows out from the rim
-        self.bs = _around(bx + k / 2, by + k / 2, w, h)
-        kmax = int(k.max()) if len(k) else 1
-        oy, ox = np.mgrid[0:kmax, 0:kmax]
-        mask = (ox.ravel()[None, :] < k[:, None]) & (oy.ravel()[None, :] < k[:, None])
-        pix = (by[:, None] - y0 + oy.ravel()[None, :]) * sw + (bx[:, None] - x0 + ox.ravel()[None, :])
-        self.pix = pix[mask]
-        self.blk = np.repeat(np.arange(len(k)), mask.sum(1))
+def _lane(n: int, k: int, p: int, g: int, reach: int, inner: bool) -> tuple:
+    """Square positions along one axis of a side n px long, squares k px on a pitch of p: the half nearer 0 lined up
+    with the edge at 0 and the other half with the edge at n, counting out from it (the first square g px off it)
+    past it by reach, or inside it. The halves meet mid-side a pitch or a little more apart. Returns the positions,
+    each one's index from its edge (the far half's offset), and which lie in the band along the edges."""
+    m = n // 2 // p + 2
+    if inner:
+        jn = jf = np.arange(m)
+        near, far = g + jn * p, n - g - k - jf * p
+    else:
+        jn = jf = np.arange(-m, reach // p + 2)
+        near, far = -(g + k) - jn * p, n + g + jf * p
+    on = near + k / 2 < n / 2
+    near, jn = near[on], jn[on]
+    on = (far + k / 2 >= n / 2) & (far >= near.max() + p)
+    far, jf = far[on], jf[on]
+    pos = np.concatenate((near, far))
+    mid = pos + k / 2
+    return pos, np.concatenate((jn, jf + (1 << 16))), ((mid <= reach) | (mid >= n - reach)) if inner else ((mid < 0) | (mid > n))
 
-    def draw(self, px, blocks, rim) -> None:
-        """blocks: this frame's colour of every block (all strips); rim: _rim_table."""
-        flat = px.reshape(-1)
-        flat[self.pix] = blocks[self.blk]
-        flat[self.rim] = rim[self.rim_key]
+
+def _grid(w: int, h: int, r: int, s: float, reach: int, inner: bool) -> tuple:
+    """The glow's pixel grid around (or, inner, just inside) a w x h window: uniform squares on a fixed pitch, filling
+    a band reach px deep, each quarter of it lined up with the two edges it touches so it hugs every side alike.
+    Returns the squares' left and top, their size, their centres' distance out from the edge (fraction of reach),
+    and a stable random number generator for them."""
+    k = max(1, int(SQUARE * s + 0.5))
+    p = k + max(1, int(GAP * s + 0.5))
+    g = max(1, int(2 * s + 0.5))  # the rim's room
+    xs, ix, ex = _lane(w, k, p, g, reach, inner)
+    ys, iy, ey = _lane(h, k, p, g, reach, inner)
+    # the bands along the top and bottom (corners included), then the sides between them
+    x = np.concatenate((np.tile(xs, ey.sum()), np.repeat(xs[ex], (~ey).sum())))
+    y = np.concatenate((np.repeat(ys[ey], len(xs)), np.tile(ys[~ey], ex.sum())))
+    i = np.concatenate((np.tile(ix, ey.sum()), np.repeat(ix[ex], (~ey).sum())))
+    j = np.concatenate((np.repeat(iy[ey], len(xs)), np.tile(iy[~ey], ex.sum())))
+    # distance from a squarer corner than the window's, so the grid wraps its corners about as fully as its sides
+    d = (-1 if inner else 1) * _sdf(x + k / 2, y + k / 2, w, h, r / 3)
+    on = (d >= g + k / 2 - 0.75) & (d <= reach)
+    return x[on], y[on], k, d[on] / reach, lambda salt: _hash(i[on], j[on], int(inner), salt)
 
 
 class Field:
-    """Every strip's blocks in one set of arrays, so each frame's twinkle is a handful of numpy calls."""
+    """Every square of the grid, in one set of arrays: each frame's light is a few table lookups."""
 
-    def __init__(self, sparks: list) -> None:
-        n = 0
-        for sp in sparks:
-            sp.blk = sp.blk + n
-            n += len(sp.amp)
-        for name in ("col", "amp", "omega", "phase", "reveal", "bs"):
-            setattr(self, name, np.concatenate([getattr(sp, name) for sp in sparks]) if sparks else np.zeros((0, 3) if name == "col" else 0, np.float32))
-        self.col = _bgra(self.col)
+    def __init__(self, t, rnd) -> None:
+        # near the edge densest and mostly lavender, further out sparser, violet and deep purple
+        keep = rnd(0) < 0.97 * (1 - t) ** 0.7
+        self.keep = np.flatnonzero(keep)
+        t = t[keep]
+        r1, r2, r3, r4, r5 = (rnd(n)[keep] for n in range(1, 6))
+        pick = np.clip((r1 * 0.35 + t * 0.75) * len(PALETTE), 2, len(PALETTE) - 1).astype(np.intp)
+        pick[r2 < 0.15 * (1 - t)] = 1
+        self.pal = pick * LEVELS
+        self.step = np.minimum(t * DSTEPS, DSTEPS - 1).astype(np.intp) * TSTEPS
+        self.omega = TSTEPS * (0.25 + 0.9 * r3)  # twinkles a quarter to about once a second, like the app's
+        self.phase = TSTEPS * r4
+        self.reveal = 0.6 * t + 0.25 * r5  # when it lights up as the glow fades in: from the rim outward
 
-    def colors(self, t: float, shown: float = 1.0):
-        """Each block fades in and out on its own slow phase, and brightens as a rim light passes. While the glow fades
-        in (shown 0..1) the blocks sparkle in from the rim outward; fading out, the outermost go first."""
-        tw = 0.5 + 0.5 * np.sin(self.omega * t + self.phase)
-        a = self.amp * (0.3 + 0.7 * tw * tw * np.sqrt(tw)) * (1 + 0.6 * _glint(self.bs, t))
+    def colors(self, t: float, shown: float = 1.0) -> tuple:
+        """Each square's colour this frame, and the rim's pulse (0..1). Every WAVE seconds a soft band of light
+        leaves the rim and travels out through the grid, fading as it goes; each square twinkles gently on its own.
+        While the glow fades in (shown 0..1) the squares light up from the rim outward; fading out, the outermost go
+        first."""
+        at = (t % WAVE) / (0.6 * WAVE) * 1.3 - 0.15  # the band's centre, as a fraction of the way out
+        band = CREST * np.exp(-((DIST - at) / 0.13) ** 2) * (1 - min(max(at, 0.0), 1.0)) ** 0.7
+        shine = SHINE[:, None] * TWINKLE + band[:, None] * (0.6 + 0.4 * TWINKLE)
+        level = (np.minimum(shine, 1) * (LEVELS - 1) + 0.5).astype(np.intp).ravel()
+        lit = level[self.step + ((self.omega * t + self.phase).astype(np.intp) & (TSTEPS - 1))]
         if shown < 1:
-            a *= np.clip((shown - self.reveal) / 0.15, 0, 1)
-        return _pack4(self.col, a)
+            lit = (lit * np.clip((shown - self.reveal) / 0.15, 0, 1)).astype(np.intp)
+        return SQUARE_COL[self.pal + lit], math.exp(-(at / 0.12) ** 2)
+
+
+class Sparkle:
+    """The animated layer of one border strip: the thin bright rim hugging the window's (rounded) edge and the grid's
+    squares, as fixed pixel indices. Strips overlap at their seams so a square there is drawn whole by one strip;
+    the rim is drawn only over the strip's own part (own) so it isn't doubled."""
+
+    def __init__(self, rect, own, w: int, h: int, r: int, s: float, inner: bool, x, y, k: int) -> None:
+        x0, y0, x1, y1 = rect
+        sw = x1 - x0
+        ys, xs = np.mgrid[own[1]:own[3], own[0]:own[2]]
+        d = (-1 if inner else 1) * _sdf(xs + 0.5, ys + 0.5, w, h, r)  # distances count inward for a glow drawn inside
+        level = np.rint(np.clip(1 - np.abs(d - 0.5) / (1.0 + 0.8 * s), 0, 1) ** 1.6 * (RIM_LEVELS - 1)).astype(np.int32)
+        on = (d > -1.0) & (level > 0)
+        xs, ys = xs[on], ys[on]
+        self.rim = (ys - y0) * sw + (xs - x0)
+        self.rim_key = (np.minimum(_around(xs + 0.5, ys + 0.5, w, h) * RIM_BINS, RIM_BINS - 1).astype(np.int32) * RIM_LEVELS
+                        + level[on])
+        # this strip's squares: those whose centre is over its own part and that fit inside it
+        mx, my = x + k / 2, y + k / 2
+        mine = np.flatnonzero((mx >= own[0]) & (mx < own[2]) & (my >= own[1]) & (my < own[3])
+                              & (x >= x0) & (y >= y0) & (x + k <= x1) & (y + k <= y1))
+        oy, ox = np.divmod(np.arange(k * k), k)
+        self.pix = (((y[mine] - y0) * sw + (x[mine] - x0))[:, None] + (oy * sw + ox)).ravel()
+        self.blk = np.repeat(mine, k * k)
+
+    def draw(self, flat, rim, colors) -> None:
+        """rim: _rim_table; colors: Field.colors for every square."""
+        flat[self.pix] = colors[self.blk]
+        flat[self.rim] = rim[self.rim_key]
 
 
 class Glow:
@@ -469,11 +506,27 @@ class Glow:
         return [rc if rc[2] - rc[0] > 0 and rc[3] - rc[1] > 0 else None for rc in rects]
 
     @staticmethod
+    def _sparks(w: int, h: int, r: int, width: int, clip, inner: bool, m: int) -> list:
+        """The sparkle strips: _strips, each also reaching m px across its seams so a square on a seam fits whole in
+        the strip its centre is over: [(rect, its own part) or None]."""
+        out = []
+        for i, own in enumerate(Glow._strips(w, h, r, width, None, inner)):
+            if not own:
+                out.append(None)
+                continue
+            a, b, c, d = own
+            rc = (a, b, c, d + m) if i == 0 else (a, b - m, c, d) if i == 1 else (a, b - m, c, d + m)
+            if clip:
+                own, rc = ((max(q[0], clip[0]), max(q[1], clip[1]), min(q[2], clip[2]), min(q[3], clip[3])) for q in (own, rc))
+            out.append((rc, own) if own[2] > own[0] and own[3] > own[1] else None)
+        return out
+
+    @staticmethod
     def _lut(glow: int, s: float):
         """Bloom colour and opacity by distance from the edge (quarter-pixel steps), premultiplied."""
         dist = np.arange(glow * 4 + 1, dtype=np.float32) / 4
-        # three falloffs layered into a soft bloom, eased out to nothing at the outer edge
-        a = 0.55 * np.exp(-dist / (3.5 * s)) + 0.4 * np.exp(-dist / (12 * s)) + 0.3 * np.exp(-dist / (26 * s))
+        # three falloffs layered into a soft, calm bloom, eased out to nothing at the outer edge
+        a = 0.3 * np.exp(-dist / (3.5 * s)) + 0.2 * np.exp(-dist / (12 * s)) + 0.14 * np.exp(-dist / (26 * s))
         q = np.clip((dist - 0.45 * glow) / (0.55 * glow), 0, 1)
         a *= 1 - q * q * (3 - 2 * q)
         f = np.clip(dist / (0.6 * glow), 0, 1)[:, None]
@@ -482,25 +535,30 @@ class Glow:
         return _pack(rgb.astype(np.float32), a)
 
     def _layout(self, bloom, spark, w: int, h: int, r: int, s: float, reach: tuple, strips, inner: bool) -> tuple[list, Field]:
-        """Draws the bloom strips and builds the sparkle strips: [(rect, Sparkle or None) or None] per window, and
-        the sparkle strips' block field."""
+        """Draws the bloom strips and builds the pixel grid and the sparkle strips: [(rect, Sparkle or None) or None]
+        per window, and the grid's Field."""
         lut = self._lut(reach[0], s)
+        x, y, k, out, rnd = _grid(w, h, r, s, reach[1], inner)
+        field = Field(out, rnd)
+        x, y = x[field.keep], y[field.keep]
         made = []
         for i, (sf, rc) in enumerate(zip(bloom + spark, strips)):
             if not rc:
                 sf.hide()
                 made.append(None)
                 continue
-            px = sf.canvas(rc[2] - rc[0], rc[3] - rc[1])
             if i < 4:
+                px = sf.canvas(rc[2] - rc[0], rc[3] - rc[1])
                 xs = np.arange(rc[0], rc[2], dtype=np.float32)[None, :] + 0.5
                 ys = np.arange(rc[1], rc[3], dtype=np.float32)[:, None] + 0.5
                 d = -_sdf(xs, ys, w, h, r) if inner else _sdf(xs, ys, w, h, r)
                 px[:] = np.where(d >= 0, lut[np.clip((d * 4).astype(np.int32), 0, len(lut) - 1)], 0)
                 made.append((rc, None))
             else:
-                made.append((rc, Sparkle(i - 4, rc, w, h, r, s, reach[1], inner)))
-        return made, Field([m[1] for m in made if m and m[1]])
+                rc, own = rc
+                sf.canvas(rc[2] - rc[0], rc[3] - rc[1])
+                made.append((rc, Sparkle(rc, own, w, h, r, s, inner, x, y, k)))
+        return made, field
 
     def _loop(self, bloom, spark) -> None:
         msg = wt.MSG()
@@ -508,7 +566,7 @@ class Glow:
         rect = None  # the eased rect (floats) the glow is drawn around
         r, s, mon, inner = 0, 1.0, None, False
         fade = 0.0
-        key = None
+        key = geo = None
         made: list = []
         field = None
         switched = next_poll = 0.0
@@ -548,22 +606,28 @@ class Glow:
             l, t, w, h = (int(round(v)) for v in rect)
             # unclipped while gliding, so the glow can travel between monitors
             clip = (mon[0] - l, mon[1] - t, mon[2] - l, mon[3] - t) if mon and not gliding else None
-            reach = (round(GLOW * s * (INNER if inner else 1)), round(EXT * s * (INNER if inner else 1)))
-            strips = self._strips(w, h, r, reach[0], clip, inner) + self._strips(w, h, r, reach[1] + 2, clip, inner)
-            fresh = (w, h, r, s, strips) != key
+            fresh = False
+            if (w, h, r, s, clip, inner) != geo:
+                geo = (w, h, r, s, clip, inner)
+                reach = (round(GLOW * s * (INNER if inner else 1)), round(EXT * s * (INNER if inner else 1)))
+                square = max(1, int(SQUARE * s + 0.5))
+                strips = (self._strips(w, h, r, reach[0], clip, inner)
+                          + self._sparks(w, h, r, reach[1] + 2 * square, clip, inner, square // 2 + 1))
+                fresh = (w, h, r, s, strips) != key
             if fresh:
                 key = (w, h, r, s, strips)
                 made, field = self._layout(bloom, spark, w, h, r, s, reach, strips, inner)
             e = fade * fade * (3 - 2 * fade)  # smoothstep
-            breath = 0.8 + 0.2 * math.sin((now - t0) * 2 * math.pi / 4.8)
-            rim, blocks = _rim_table(now - t0), field.colors(now - t0, e)
+            breath = round(85 * (0.8 + 0.2 * math.sin((now - t0) * 2 * math.pi / 4.8))) / 85  # steps too fine to see
+            colors, pulse = field.colors(now - t0, e)
+            # the rim lights up early and goes out late, and brightens as each band of light leaves it
+            rim = _rim_table(now - t0, min(1.0, 2.5 * e) * (RIM_GLOW + (1 - RIM_GLOW) * pulse))
             for i, sf in enumerate(bloom + spark):
                 if made[i]:
                     rc, sp = made[i]
                     if sp:
-                        sp.draw(sf.px, blocks, rim)
-                    # the rim lights up early; the blocks then sparkle in on their own (Field.colors)
-                    sf.push(l + rc[0], t + rc[1], min(1.0, 2.5 * e) if sp else e * breath, pixels=bool(sp) or fresh)
+                        sp.draw(sf.flat, rim, colors)
+                    sf.push(l + rc[0], t + rc[1], 1.0 if sp else e * breath, pixels=bool(sp) or fresh)
             time.sleep(max(0.0, 1 / FPS - (time.perf_counter() - now)))
 
 
