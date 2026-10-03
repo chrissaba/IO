@@ -1061,7 +1061,7 @@ DUCK_FORGET_JS = """async () => {
 def duck_answer(text: str) -> str:
     """The reply out of the page text after 'Duck.ai said': without the model name above it or the app promo below."""
     text = re.split(r"\n(Duck\.ai works best|Jump to latest response|Download\n|Tools\n)", text)[0]
-    lines = [l for l in text.strip().splitlines() if l.strip()]
+    lines = [l for l in text.strip().splitlines() if l.strip() and l.strip().lower() not in ("2nd opinion", "copy", "retry")]  # its buttons
     if lines and len(lines[0]) < 40 and not lines[0].rstrip().endswith((".", "!", "?")):
         lines = lines[1:]  # the model's name, e.g. "GPT-5.6 Luna"
     return "\n".join(lines).strip()
