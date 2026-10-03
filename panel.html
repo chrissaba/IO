@@ -837,19 +837,32 @@
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
-        <div class="setting"><div class="txt"><div>Use a stronger AI in loops</div>
-            <div>Off keeps IO fully local. On, loops work with a stronger web AI (chosen below), as their director or an advisor.
-              Automated use may go against the chat site's terms.</div></div>
+        <div class="setting"><div class="txt"><div>Use a stronger AI</div>
+            <div>Off keeps IO fully local. On, tasks in apps and loops work with a stronger AI (chosen below), as their director or an advisor.
+              Automated use of a chat site may go against its terms.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
         <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Its role</div>
             <div x-show="s.settings.advisor_role !== 'advisor'">Director: it sees the window, the tools and what just happened, and decides every next action. Qwen carries them out.</div>
             <div x-show="s.settings.advisor_role === 'advisor'">Advisor: it plans the start and helps when the loop is stuck. Qwen decides each action.</div></div>
           <select x-model="s.settings.advisor_role" @change="saveSettings()"><option value="director">Director</option><option value="advisor">Advisor</option></select></div>
         <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Which AI to ask</div>
+            <div x-show="s.settings.gemini_mode === 'nim'">GLM-5.3 Flash on NVIDIA's API: sees a screenshot of the window, no browser window, no daily cap. Duck.ai steps in when it can't answer, and Qwen when neither can.</div>
             <div x-show="s.settings.gemini_mode === 'duck'">Duck.ai: DuckDuckGo's private chat, no account, in your Chrome's IO tab group, with a screenshot of the window. Its chat history is wiped after each question.</div>
-            <div x-show="!['account', 'duck'].includes(s.settings.gemini_mode)">Private Gemini: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
+            <div x-show="!['account', 'duck', 'nim'].includes(s.settings.gemini_mode)">Private Gemini: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
             <div x-show="s.settings.gemini_mode === 'account'">Your account: Gemini Pro in your Chrome's IO tab group, with a screenshot of the window. Chats are saved to your Gemini history.</div></div>
-          <select x-model="s.settings.gemini_mode" @change="saveSettings()"><option value="duck">Duck.ai (private, with screenshot)</option><option value="private">Gemini, signed out (text only)</option><option value="account">Gemini on your account (Pro)</option></select></div>
+          <select x-model="s.settings.gemini_mode" @change="saveSettings()"><option value="nim">GLM-5.3 Flash (NVIDIA)</option><option value="duck">Duck.ai (private, with screenshot)</option><option value="private">Gemini, signed out (text only)</option><option value="account">Gemini on your account (Pro)</option></select></div>
+        <div class="setting" x-show="s.settings.ask_gemini && s.settings.gemini_mode === 'nim'"><div class="txt"><div>Director order</div>
+            <div x-show="s.settings.director_order !== 'duck_first'">GLM first (about 30 seconds a round on NVIDIA's free tier), Duck.ai when GLM can't answer.</div>
+            <div x-show="s.settings.director_order === 'duck_first'">Duck.ai first (about 15 seconds a round, but a daily limit), GLM when Duck.ai can't answer.</div></div>
+          <select x-model="s.settings.director_order" @change="saveSettings()"><option value="glm_first">GLM first</option><option value="duck_first">Duck.ai first</option></select></div>
+        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
+            <div>For GLM-5.3 Flash. Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
+          <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
+          <button class="btn sm" @click="saveNimKey()">Save</button>
+          <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
+          <div class="note" style="flex-basis:100%" x-show="nimNote" x-text="nimNote"></div>
+        </div>
       </div>
       <h2>App</h2>
       <div class="card">
@@ -929,7 +942,7 @@ function agent() {
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
-    chromeToken: "", browserTest: "",
+    chromeToken: "", browserTest: "", nimKey: "", nimNote: "",
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
     ic,
@@ -1412,6 +1425,14 @@ function agent() {
       await post("/api/browser", { token: this.chromeToken });
       this.chromeToken = ""; this.browserTest = "Token saved."; this.refresh();
     },
+    async saveNimKey() {
+      // blank clears the key; the page never gets it back, only whether one is set
+      if (!this.nimKey.trim() && !this.s.nim_key_set) return;
+      const r = await post("/api/keys/nim", { key: this.nimKey });
+      this.nimKey = "";
+      this.nimNote = r.nim_key_set ? "Key saved." + (r.gemini_mode === "nim" ? " GLM-5.3 Flash is the director." : "") : "Key removed.";
+      this.refresh();
+    },
     async testBrowser() {
       this.browserTest = "Testing…";
       const r = await post("/api/browser/test");
@@ -1660,7 +1681,13 @@ function checklist(t) {
   const hidden = new Set(["Snapshot", "Wait", "WaitFor", "browser_snapshot", "browser_wait_for"]);  // bookkeeping, not progress
   const isError = (r) => /^(error|\d+ validation error)|Error calling tool|did not allow/i.test(r || "");
   events.forEach((e, i) => {
-    if (e.event === "director" && e.thoughts) { items.push({ key: i, state: "done", text: "Director: " + short(e.thoughts, 90), detail: `<div>${esc(e.thoughts)}</div><div>${esc((e.actions || []).join(" → "))}</div>` }); return; }
+    if (e.event === "director" && e.thoughts) {
+      // which AI decided (the director falls back GLM -> Duck.ai) and how long its round took
+      const who = e.model || { NimDirector: "GLM", DuckAI: "Duck.ai", Gemini: "Gemini" }[e.via] || "";
+      items.push({ key: i, state: "done", text: (who ? `Director (${who}): ` : "Director: ") + short(e.thoughts, 90),
+        detail: `<div>${esc(e.thoughts)}</div><div>${esc((e.actions || []).join(" → "))}</div>` + (who ? `<div>${esc(who)}, ${esc(e.secs)}s</div>` : "") });
+      return;
+    }
     if (e.event === "progress" && e.summary) { items.push({ key: i, state: "done", text: "Progress: " + short(e.summary, 90), detail: `<div>${esc(e.summary)}</div>` }); return; }
     if (e.event !== "tool" || (hidden.has(e.name) && !isError(e.result))) return;
     const failed = isError(e.result);

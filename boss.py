@@ -33,6 +33,7 @@ from openai import BadRequestError, OpenAI
 from PIL import ImageGrab
 
 import actions
+import nim
 import planner
 import plugins
 
@@ -1089,6 +1090,25 @@ def usable_expect(expect: str) -> str:
     return "" if not e or DESCRIBED.search(e) or len(e.split()) > 6 else e
 DIRECTOR_BUDGETS = {"history": 1600, "guide": 1400, "screen": 700, "expansions": 1800, "goal": 2400}  # cut in this order...
 DIRECTOR_FLOORS = {"history": 1100, "guide": 200, "screen": 300, "expansions": 900, "goal": 700}  # ...down to these first
+# A director with no web chat's length limit (GLM over NVIDIA's API) gets a roomier brief: every group expanded (a tools()
+# round costs it ~30 s) and longer results. Still capped: a smaller request queues and answers faster.
+DIRECTOR_ROOMY_CHARS = 16000
+DIRECTOR_BUDGETS_ROOMY = {"history": 6000, "guide": 3000, "screen": 1500, "expansions": 9000, "goal": 6000}
+# ...and, with no 500-character standing limit, the full rules once per task as its system message. Its rounds are slow
+# (12-44 s on the free endpoint, an action takes 1-3 s), so it is told to batch: each round saved is ~30 s.
+DIRECTOR_BATCHING = """Speed: each of your replies takes about 30 seconds, an action 1-3 seconds. So give every action you can already
+predict in one reply, up to 8, in order (e.g. open_app, type_into, hotkeys, then read_window to check). End the batch early
+only where you must see a result before you can choose (search results, a list to pick from, a dialog you can't predict).
+Each action checks itself; when one fails or is unsure the rest are skipped and you get the results.
+When the batch's own checks will prove the task done and you already know the answer (e.g. calculator("37*24") then done
+with "37 × 24 = 888"), end the batch with done(summary). When the answer is something an action reads, wait for its result.
+Describe click targets by what they look like and where they are. Never repeat an action that just failed the same way."""
+# After a director batch that ended on one of these groups' actions and worked, the local model may call done itself
+# (a ~30 s GLM round that only said done cost A4 more than half its time)
+FINISH_GROUPS = {"DO", "READ", "PC"}
+FINISH_CHECK = """The actions above all worked. The user's request: {task}
+If their results already complete the request, call done now with the answer for the user (the real values from the
+results). If anything is still left to do, reply with just: not yet."""
 TEXT_SLOT = "«TEXT»"  # stands in for a long text the user gave (to type or write), which IO puts back into the director's args
 TEXT_SLOT_AT = 900  # requests longer than this send their text as the slot
 
@@ -1287,6 +1307,8 @@ class Gemini:
     """Opt-in: asks Gemini for advice, a fresh chat each time, at most once every GEMINI_EVERY seconds.
     private: a throwaway signed-out browser (hidden, in-memory profile, Gemini's default model) that is closed after
     each question, so nothing is saved anywhere. Otherwise: the user's own Chrome (IO's tab group) and account."""
+
+    conversational, in_browser = False, True  # a fresh chat per question
 
     def __init__(self, stack: AsyncExitStack, token: str, private: bool = True) -> None:
         self.stack, self.token, self.session, self.last, self.private = stack, token, None, 0.0, private
@@ -1500,6 +1522,9 @@ class DuckAI:
     If Duck.ai asks to prove you're human, IO stops: that's for you to do, not IO."""
 
     private, takes_images, max_chars = True, True, ADVISOR_MAX_CHARS["DuckAI"]
+    conversational, in_browser = True, True
+    standing_max = 500  # it reads only about this much of its standing instructions: the rest goes in the messages
+    max_images = DUCK_MAX_IMAGES  # per conversation: the director starts a new one before the next picture
 
     def __init__(self, stack: AsyncExitStack, token: str) -> None:
         self.stack, self.token, self.session, self.last = stack, token, None, 0.0
@@ -1623,6 +1648,107 @@ class DuckAI:
                     pass
         # (whole: 8 actions with their expect= run past 2,000 characters, and a cut reply lost its last actions)
         return text[:8000] if text else "error: no answer from Duck.ai"
+
+
+# How long a failed link sits out before the chain asks it again. GLM's 429 is its 40-a-minute cap (a minute clears it);
+# anything else (unreachable, a timeout, an empty answer) costs a whole round of up to 4 minutes, so it waits longer.
+CHAIN_RETRY = {"limit": 60, "other": 300}
+CHAIN_FOR_RUN = ("no NVIDIA API key", "prove a human")  # nothing a retry fixes this task: skipped until the next one
+
+
+class DirectorChain:
+    """The director as a fallback chain behind the interface IO asks of one (ask, takes_images, max_chars, images, in_chat,
+    ready_in, close, conversational): GLM-5.3 Flash on NVIDIA first and Duck.ai behind it (or the other way round), and
+    when every link fails the caller's local model decides. The link that answered stays the active one for the run;
+    `via` names it, so the logs say who decided. Duck.ai's daily-limit pause (data/duck_limit.json) holds for its link."""
+
+    private = True
+
+    def __init__(self, links: list) -> None:
+        self.links, self.active, self.via, self.last_code, self.model = links, 0, type(links[0]).__name__, "", ""
+        self.down: dict[int, float] = {}  # link -> when it may be asked again
+        self.in_browser = False  # the last round went through a browser tab (IO puts that window back behind)
+
+    @property
+    def link(self):
+        return self.links[self.active]
+
+    takes_images = property(lambda self: self.link.takes_images)
+    max_chars = property(lambda self: self.link.max_chars)
+    images = property(lambda self: getattr(self.link, "images", 0))
+    in_chat = property(lambda self: self.link.in_chat)
+    conversational = property(lambda self: getattr(self.link, "conversational", False))
+
+    def _free_at(self, i: int) -> float:
+        paused = duck_paused_until() if isinstance(self.links[i], DuckAI) else 0.0
+        return max(self.down.get(i, 0.0), paused)
+
+    def paused_until(self) -> float:
+        """0 while some link can be asked; else when the first one can be again (inf: none this run)."""
+        soonest = min(self._free_at(i) for i in range(len(self.links)))
+        return 0.0 if soonest <= time.time() else soonest
+
+    def ready_in(self) -> int:
+        until = self.paused_until()
+        return 0 if not until else 86400 if until == math.inf else max(0, round(until - time.time()))
+
+    async def ask(self, prompt, image: bytes = b"", keep: bool = False, instructions: str = "") -> str:
+        """prompt: the message, or a function link -> (message, standing rules), since the links differ in length limit,
+        standing rules and whether their conversation is open (a link taking over mid-task needs the full brief)."""
+        errors, limited, self.in_browser, self.model = [], True, False, ""
+        for i in [self.active] + [i for i in range(len(self.links)) if i != self.active]:
+            if self._free_at(i) > time.time():
+                errors.append(f"{type(self.links[i]).__name__}: paused")
+                continue
+            link, name = self.links[i], type(self.links[i]).__name__
+            text, rules = prompt(link) if callable(prompt) else (prompt[-link.max_chars:], instructions)
+            self.in_browser = self.in_browser or getattr(link, "in_browser", False)
+            try:
+                reply = await (link.ask(text, image, keep=True, instructions=rules) if keep and getattr(link, "conversational", False)
+                               else link.ask(text, image))
+            except Exception as e:  # a link that raises is a failed link, not a failed task
+                reply = f"error: {type(e).__name__}: {e}"
+            self.via = name
+            if not reply.startswith("error"):
+                if i != self.active:
+                    log("warning", text=f"the director is now {name} ({'; '.join(errors)[:300]})")
+                self.active, self.last_code = i, getattr(link, "last_code", "")
+                self.model = link.name() if callable(getattr(link, "name", None)) else ""  # NVIDIA: which catalog model
+                return reply
+            reply = nim.scrub(reply)  # an API error never carries the key into a log
+            errors.append(f"{name}: {reply[7:200]}")
+            link.in_chat = False  # its conversation missed this round: a fresh brief if it is asked again
+            limited = limited and reply.startswith("error: limit")
+            if reply.startswith("error: limit"):
+                if isinstance(link, DuckAI):
+                    duck_pause(time.time() + DUCK_LIMIT_PAUSE)  # every task skips it for a while, as without the chain
+                else:
+                    self.down[i] = time.time() + CHAIN_RETRY["limit"]
+            else:
+                self.down[i] = math.inf if any(w in reply for w in CHAIN_FOR_RUN) else time.time() + CHAIN_RETRY["other"]
+        if all(e.endswith(": paused") for e in errors):
+            return "error: limit: every director is paused (" + ", ".join(type(l).__name__ for l in self.links) + ")"
+        return ("error: limit: " if limited else "error: ") + "; ".join(errors)
+
+    async def close(self) -> None:
+        for link in self.links:
+            await link.close()
+
+
+def make_director(stack: AsyncExitStack, options: dict):
+    """The stronger AI the settings ask for, or None (the local model decides alone). gemini_mode "nim": GLM-5.3 Flash
+    (NVIDIA) and Duck.ai as a chain in director_order; Duck.ai joins only with IO's Chrome token."""
+    how, token = options.get("gemini_mode", "private"), options.get("chrome_token", "")
+    if not options.get("ask_gemini"):
+        return None
+    if how == "nim":
+        links = [nim.NimDirector(), DuckAI(stack, token) if token else None]
+        if options.get("director_order") == "duck_first":
+            links.reverse()
+        return DirectorChain([l for l in links if l])
+    if how in ("account", "duck") and not token:
+        return None
+    return DuckAI(stack, token) if how == "duck" else Gemini(stack, token, how != "account")
 
 
 async def meanings_hint(session, page: str, task: str) -> str:
@@ -2382,14 +2508,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if not layer:
                 tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")))
-            how = options.get("gemini_mode", "private")
-            token = options.get("chrome_token", "")
-            if not options.get("ask_gemini") or (how in ("account", "duck") and not token):
-                gemini = None
-            elif how == "duck":
-                gemini = DuckAI(stack, token)
-            else:
-                gemini = Gemini(stack, token, how != "account")
+            gemini = make_director(stack, options)
             director = bool(gemini) and options.get("advisor_role", "director") == "director"
             if layer:
                 # the lean loop set (GAME helpers, vision, a few keys) for a locked window; without one, the general menu
@@ -2430,7 +2549,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     answer = f"error: couldn't reach Gemini: {e}"
                 if focus:
                     await asyncio.to_thread(focus_window, focus)  # Chrome may have come to the front: back to the app
-                log("gemini", question=question, via=type(gemini).__name__, secs=round(time.time() - t0, 1), answer=answer[:800])
+                log("gemini", question=question, via=getattr(gemini, "via", "") or type(gemini).__name__, secs=round(time.time() - t0, 1), answer=answer[:800])
                 if not answer.startswith("error"):
                     guide.append(f"(Advisor on: {question}) {answer[:900]}")
                     pin_guide()
@@ -2468,14 +2587,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         last_research = researches = 0
         if not loop:
             # single tasks get the director too (not small talk): it sees the screen and decides the steps until it calls done
-            how, token = options.get("gemini_mode", "private"), options.get("chrome_token", "")
             gemini = None
             # with the action layer, routes that never need it (chat, images, knowledge) never start Duck.ai at all
             wanted = route.director_after is not None if layer else not images and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip()))
-            if (options.get("ask_gemini") and options.get("advisor_role", "director") == "director" and wanted
-                    and (how not in ("account", "duck") or token)):
-                # (its browser session only opens on the first question, so a route that never escalates costs nothing)
-                gemini = DuckAI(stack, token) if how == "duck" else Gemini(stack, token, how != "account")
+            if options.get("advisor_role", "director") == "director" and wanted:
+                # (a browser session only opens on the first question, so a route that never escalates costs nothing)
+                gemini = make_director(stack, options)
             # the director decides from the start on its routes (app, general); elsewhere the local model does, and the
             # director takes over after route.director_after failed or unconfirmed steps
             director = bool(gemini) and (not layer or route.decider == "director")
@@ -2494,8 +2611,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 shot.save(buf, format="JPEG", quality=80)
                 return buf.getvalue()
         director_queue: list[tuple[str, dict]] = []
-        director_paused_until = duck_paused_until()  # a limit hit in an earlier task still counts
+        # a limit hit in an earlier task still counts (a chain only waits when every link is paused)
+        director_paused_until = gemini.paused_until() if isinstance(gemini, DirectorChain) else duck_paused_until()
         director_seen = director_rounds = director_guides = 0
+        director_tail = False  # the last director batch ended on a whole job or reading that worked (see finish_check)
         director_full, director_plan = False, ""
 
         def director_names() -> list[str]:
@@ -2519,10 +2638,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             return ("Rules: open, close or change only what the request names; if it doesn't say which file or window, "
                     "ask_user first. IO's own Duck.ai/Chrome window is never the target.\n")
 
-        def director_catalog(names: list) -> tuple[str, str]:
+        def director_rules(names: list) -> str:
+            """The full standing rules for a director that takes them whole (GLM): the reply contract, the task rules, how
+            to batch and the pick-the-right-tool ladder for what it may call."""
+            contract = DIRECTOR_STANDING_LAYER if layer else DIRECTOR_STANDING
+            ladder = "\n".join(l for l in actions.system_tools_text(names).splitlines() if "use(name" not in l) if layer else ""
+            return "\n\n".join(p for p in (contract, director_hint().strip(), DIRECTOR_BATCHING, ladder) if p)
+
+        def director_catalog(names: list, wide: bool = False) -> tuple[str, str]:
             """(top level, expanded groups): in a locked loop the GAME and SEE groups plus the rest of its set on one line;
             otherwise the starred actions per group and the route's groups in full (ACT first: clicking and typing need the
-            details most)."""
+            details most). wide: a roomy director gets every other group expanded after them, since a tools() round costs
+            it ~30 s (RAW stays behind tools(): the checked actions come first)."""
             if loop and focus:
                 top = actions.catalog_top(names, loop=True)
                 rest = [n for n in names if actions.REGISTRY[n].group not in ("GAME", "SEE", "END")]
@@ -2530,77 +2657,99 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     top += "\nALSO " + " ".join(actions.REGISTRY[n].signature(skip=("window", "expect")) for n in rest)
                 return top, ""
             groups = sorted(actions.ROUTES["general"].expand if loop else route.expand, key=lambda g: g != "ACT")
+            if wide:
+                have = {actions.REGISTRY[n].group for n in names}
+                groups += [g for g in actions.GROUPS if g not in groups and g in have and g not in ("RAW", "GAME")]
             return actions.catalog_top(names), "\n\n".join(actions.catalog_group(g, names) for g in groups)
 
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
-            nonlocal director_seen, director_rounds, director_full, director_plan, director_guides, director_saw
+            nonlocal director_seen, director_rounds, director_full, director_plan, director_guides, director_saw, director_paused_until
             front_before = await asyncio.to_thread(actions.fg)
             await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
-            keep = isinstance(gemini, DuckAI)
             if layer:
                 allowed = set(director_names())
             else:
                 # a loop locked on a window already has a small toolset; anything else gets the compact director list
                 usable = [t for t in tools if (loop and focus) or t["function"]["name"] in DIRECTOR_TOOLS | LOOP_TOOLS]
                 allowed = {t["function"]["name"] for t in usable}
-            # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
-            # A fresh conversation (with the full brief) when the old one fails or has grown long.
-            # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
-            if keep and gemini.in_chat and (not image or gemini.images < DUCK_MAX_IMAGES) and director_rounds % 20:
-                new = steps_log[director_seen:] or ["(no actions ran)"]
-                fresh = (guide[director_guides:] if loop else [])  # research done since its last round
-                # a tools() answer goes whole: it is the catalog page the director asked for
-                head = "".join(f"New from guides: {g[:700]}\n" for g in fresh[-2:])
-                tail = (("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
-                        "\nIf the same thing keeps not working, change approach. Next JSON.")
-                results = "\n".join(re.sub(r"\s+", " ", a)[:950 if a.startswith("tools(") else 320] for a in new)
-                room = gemini.max_chars - len(head) - len(tail) - 40  # the newest results are the ones that matter
-                prompt = head + "Results of your last actions:\n" + results[-max(800, min(3000, room)):] + tail
-                if len(prompt) > gemini.max_chars:
-                    prompt = prompt[-gemini.max_chars:]
-            elif layer:
-                top, expansions = director_catalog(sorted(allowed, key=list(actions.REGISTRY).index))
-                prompt = fit_director_prompt(
-                    gemini.max_chars, DIRECTOR_BRIEF_LAYER if keep and not director_full else DIRECTOR_PROMPT_LAYER, budgets=DIRECTOR_BUDGETS,
-                    goal=f"Goal (it never ends; the user stops it): {task}" if loop else f"Task (do it, then call done with the answer for the user): {director_goal}",
-                    hint=director_hint(),
-                    constraints=f"Constraints (the user's own words, never break them): {actions.constraints_text(ctx.constraints)}\n" if ctx.constraints else "",
-                    shot="A screenshot of the window IO works in is attached.\n" if image else "",
-                    plan=f"Your plan so far: {director_plan}\n\n" if director_plan else "",
-                    guide=("What guides say about it (for long-term planning):\n" + "\n---\n".join(guide[-2:]) + "\n\n") if loop and guide else "",
-                    screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
-                    history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
-                    catalog=top, expansions=expansions)
-            else:
-                # with Duck.ai the rules live in its standing instructions; if it stopped answering in JSON, send them inline again
-                prompt = fit_director_prompt(
-                    gemini.max_chars, DIRECTOR_BRIEF if keep and not director_full else DIRECTOR_PROMPT, goal=f"Goal (it never ends; the user stops it): {task}" if loop else
+
+            def brief(link) -> tuple[str, str]:
+                """(message, standing rules) for one director backend. A conversational one keeps one ongoing conversation,
+                so it remembers what it tried: after the first round only the new results go in; a fresh conversation (with
+                the full brief) when the old one failed or has grown long, or (Duck.ai: max_images a conversation) before a
+                picture it can't take. A link without a standing-rules limit (GLM) gets the full rules as its system
+                message and a roomy brief; Duck.ai gets 500 characters of rules and a 4,400-character brief."""
+                keep = getattr(link, "conversational", False)
+                full_rules = keep and not getattr(link, "standing_max", 0)
+                roomy = link.max_chars >= DIRECTOR_ROOMY_CHARS
+                limit = min(link.max_chars, DIRECTOR_ROOMY_CHARS)
+                each = 700 if roomy else 320  # characters per earlier result
+                rules = (director_rules(sorted(allowed, key=list(actions.REGISTRY).index)) if full_rules
+                         else DIRECTOR_STANDING_LAYER if layer else DIRECTOR_STANDING)
+                cap = getattr(link, "max_images", 0)
+                # NimDirector keeps nim.KEEP_TURNS turns: a fresh conversation before its first message (the brief) is trimmed
+                every = min(20, nim.KEEP_TURNS // 2) if isinstance(link, nim.NimDirector) else 20
+                if keep and link.in_chat and (not image or not cap or link.images < cap) and director_rounds % every:
+                    new = steps_log[director_seen:] or ["(no actions ran)"]
+                    fresh = (guide[director_guides:] if loop else [])  # research done since its last round
+                    # a tools() answer goes whole: it is the catalog page the director asked for
+                    head = "".join(f"New from guides: {g[:700]}\n" for g in fresh[-2:])
+                    tail = (("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
+                            "\nIf the same thing keeps not working, change approach. Next JSON.")
+                    results = "\n".join(re.sub(r"\s+", " ", a)[:950 if a.startswith("tools(") else each] for a in new)
+                    room = limit - len(head) - len(tail) - 40  # the newest results are the ones that matter
+                    prompt = head + "Results of your last actions:\n" + results[-max(800, min(8000 if roomy else 3000, room)):] + tail
+                    return prompt[-limit:], rules
+                history = "\n".join(re.sub(r"\s+", " ", a)[:each] for a in steps_log[-24 if roomy else -14:]) or "(none yet: this is the start)"
+                if layer:
+                    top, expansions = director_catalog(sorted(allowed, key=list(actions.REGISTRY).index), wide=roomy)
+                    # with Duck.ai the rules live in its standing instructions; if it stopped answering in JSON, send them inline again
+                    inline = not keep or (director_full and not full_rules)
+                    return fit_director_prompt(
+                        limit, DIRECTOR_PROMPT_LAYER if inline else DIRECTOR_BRIEF_LAYER, budgets=DIRECTOR_BUDGETS_ROOMY if roomy else DIRECTOR_BUDGETS,
+                        goal=f"Goal (it never ends; the user stops it): {task}" if loop else f"Task (do it, then call done with the answer for the user): {director_goal}",
+                        hint="" if full_rules else director_hint(),  # (in its rules)
+                        constraints=f"Constraints (the user's own words, never break them): {actions.constraints_text(ctx.constraints)}\n" if ctx.constraints else "",
+                        shot="A screenshot of the window IO works in is attached.\n" if image else "",
+                        plan=f"Your plan so far: {director_plan}\n\n" if director_plan else "",
+                        guide=("What guides say about it (for long-term planning):\n" + "\n---\n".join(guide[-2:]) + "\n\n") if loop and guide else "",
+                        screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
+                        history=history, catalog=top, expansions=expansions), rules
+                return fit_director_prompt(
+                    limit, DIRECTOR_BRIEF if keep and (full_rules or not director_full) else DIRECTOR_PROMPT,
+                    goal=f"Goal (it never ends; the user stops it): {task}" if loop else
                     f"Task (do it, then call done with the answer for the user): {task}", shot="A screenshot of the window IO works in is attached.\n" if image else "",
-                    # its own plan and the research carry over: every 5 screenshots it starts a fresh conversation with no memory
+                    # its own plan and the research carry over into a fresh conversation, which has no memory
                     plan=f"Your plan so far: {director_plan}\n\n" if director_plan else "",
                     guide=("\n---\n".join(guide[-2:]) if loop else "") or "(none)",
                     screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
-                    history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
-                    catalog=tool_catalog(usable))
+                    history=history, catalog=tool_catalog(usable)), rules
+
             director_seen, director_rounds = len(steps_log), director_rounds + 1
             director_guides = len(guide) if loop else 0
             t0 = time.time()
             try:
-                standing = DIRECTOR_STANDING_LAYER if layer else DIRECTOR_STANDING
-                reply = await (gemini.ask(prompt, image, keep=True, instructions=standing) if keep else gemini.ask(prompt, image))
-                if keep and reply.startswith("error") and not reply.startswith("error: limit"):
+                if isinstance(gemini, DirectorChain):  # each link it tries gets the brief built for it
+                    reply = await gemini.ask(brief, image, keep=True)
+                else:
+                    prompt, standing = brief(gemini)
+                    reply = await (gemini.ask(prompt, image, keep=True, instructions=standing) if gemini.conversational
+                                   else gemini.ask(prompt, image))
+                if reply.startswith("error") and not reply.startswith("error: limit"):
                     director_rounds = 0  # start over in a new conversation next time
             except Exception as e:
                 reply = f"error: {e}"
-            # asking Duck.ai brings its Chrome tab forward: send it behind everything, then the app back to the front
-            await asyncio.to_thread(send_to_back, "Duck.ai")
-            front_now = await asyncio.to_thread(actions.fg)
-            if front_now and front_now.exe in actions.BROWSERS and (front_before is None or front_now.hwnd != front_before.hwnd):
-                # Duck.ai titles its chats after the task ("Notepad task execution"), so its window is the browser window
-                # that came to the front during the round, not one titled Duck.ai: behind everything, and the front back
-                await asyncio.to_thread(window_behind, front_now.hwnd, front_before.hwnd if front_before else 0)
+            via = getattr(gemini, "via", "") or type(gemini).__name__
+            if getattr(gemini, "in_browser", False):
+                # asking Duck.ai brings its Chrome tab forward: send it behind everything, then the app back to the front
+                await asyncio.to_thread(send_to_back, "Duck.ai")
+                front_now = await asyncio.to_thread(actions.fg)
+                if front_now and front_now.exe in actions.BROWSERS and (front_before is None or front_now.hwnd != front_before.hwnd):
+                    # Duck.ai titles its chats after the task ("Notepad task execution"), so its window is the browser window
+                    # that came to the front during the round, not one titled Duck.ai: behind everything, and the front back
+                    await asyncio.to_thread(window_behind, front_now.hwnd, front_before.hwnd if front_before else 0)
             if focus or focus_hint:
                 await asyncio.to_thread(refocus, focus or focus_hint)
             code = getattr(gemini, "last_code", "")
@@ -2612,15 +2761,39 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     director_rounds = 0
             director_saw = thoughts or director_saw
             # an unusable reply is logged whole: a cut-off one hid why it didn't parse
-            log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
+            log("director", step=step, via=via, model=getattr(gemini, "model", ""), secs=round(time.time() - t0, 1), thoughts=thoughts,
                 actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:4000] if not batch else "")
-            if reply.startswith("error: limit"):
-                nonlocal director_paused_until
+            if isinstance(gemini, DirectorChain):
+                if reply.startswith("error") and (until := gemini.paused_until()):
+                    director_paused_until = until
+                    log("progress", step=step, n=0, summary="No director can be asked right now: the local model decides on its own"
+                        + (" for the rest of this task." if until == math.inf else f" for {max(1, round((until - time.time()) / 60))} min, then IO asks again."))
+            elif reply.startswith("error: limit"):
                 director_paused_until = time.time() + DUCK_LIMIT_PAUSE
                 duck_pause(director_paused_until)
                 log("progress", step=step, n=0, summary="Duck.ai's usage limit was reached: Qwen decides on its own for an hour, then IO asks Duck.ai again.")
             director_queue.extend(batch)
             return (thoughts or "(director)") if batch else ""
+
+        async def finish_check():
+            """The director's batch ended on a whole job or a reading that worked (calculator, write_in_app, read_window):
+            the local model (1-3 s) may end the task with done, instead of a director round (~30 s with GLM) that only
+            says done. Anything but a done call is dropped and the director is asked as usual."""
+            done_tool = [t for t in tools if t["function"]["name"] == "done"]
+            if not done_tool:
+                return None
+            t0 = time.time()
+            try:
+                r = await asyncio.to_thread(
+                    boss.chat.completions.create, model=BOSS_MODEL, tools=done_tool, temperature=0, max_tokens=400, extra_body=NO_THINKING,
+                    messages=compact(messages, snaps_kept=snaps_kept) + [{"role": "user", "content": FINISH_CHECK.format(task=ctx.request or task)}])
+                calls = r.choices[0].message.tool_calls or []
+            except Exception as e:
+                log("warning", text=f"finish check failed: {e}"[:300])
+                return None
+            ok = bool(calls) and calls[0].function.name == "done"
+            log("finish_check", done=ok, secs=round(time.time() - t0, 1))
+            return r if ok else None
 
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
@@ -2703,8 +2876,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             pending = None  # director mode: the next queued action stands in for the local model's choice
             if director:
-                if not director_queue and time.time() < director_paused_until:
-                    thoughts = ""  # Duck.ai hit its usage limit: Qwen decides until the pause is over
+                finished = await finish_check() if director_tail and not director_queue and not loop else None
+                director_tail = False
+                if finished is not None:
+                    pending = finished  # the local model's done call stands in for a director round
+                    thoughts = ""
+                elif not director_queue and time.time() < director_paused_until:
+                    thoughts = ""  # no director can be asked (usage limits): the local model decides until the pause is over
                 else:
                     thoughts = "" if director_queue else await direct(step)
                 if director_queue:
@@ -3161,6 +3339,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 unconfirmed = layer and result.startswith("unsure:")
                 if director and (last_error or unconfirmed):
                     director_queue.clear()  # the rest of its plan assumed this worked: ask the director again with the result
+                # the director's batch ended on a whole job or a reading that worked: the local model may close the task
+                director_tail = (pending is not None and not director_queue and result.startswith("ok:") and native
+                                 and actions.REGISTRY[name].group in FINISH_GROUPS)
                 if layer and (last_error or unconfirmed):
                     route_failures += 1
                 if layer and re.match(r"error:(NOT_FOUND|UNSUPPORTED)", result) and not director and not loop:

@@ -34,6 +34,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import boss
+import nim
 import overlay
 import plugins
 import triggers
@@ -59,7 +60,8 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "private", "advisor_role": "director", "focus_glow": True, "theme": "system",
+    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "nim", "advisor_role": "director", "focus_glow": True, "theme": "system",
+    "director_order": "glm_first",  # gemini_mode nim: GLM-5.3 Flash then Duck.ai, or Duck.ai first when speed matters
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -88,6 +90,17 @@ def load_state() -> None:
     state["settings"] = {**DEFAULT_SETTINGS, **state["settings"]}
     for old in ("planner_mode", "share_context"):  # from when IO had a cloud planner
         state["settings"].pop(old, None)
+    use_glm_once()
+
+
+def use_glm_once() -> bool:
+    """GLM-5.3 Flash (NVIDIA) becomes the director once its key is there: a one-time switch from the earlier choice
+    (Duck.ai stays behind it in the chain). Never again after that, so choosing another AI in Settings sticks."""
+    s = state["settings"]
+    if s.get("glm_switched") or not nim.nim_key():
+        return False
+    s["gemini_mode"], s["glm_switched"] = "nim", True
+    return True
     for task in state["tasks"]:  # anything mid-flight when the app closed didn't finish
         if task["status"] in ("queued", "running", "waiting"):
             task.update(status="cancelled", summary="app was closed")
@@ -394,6 +407,7 @@ async def worker() -> None:
         options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
         options["gemini_mode"] = state["settings"].get("gemini_mode", "private")
         options["advisor_role"] = state["settings"].get("advisor_role", "director")
+        options["director_order"] = state["settings"].get("director_order", "glm_first")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
@@ -562,6 +576,7 @@ async def get_state(_request: Request) -> JSONResponse:
             "settings": state["settings"],
             "today": today_stats(),
             "chrome_token_set": bool(chrome_token()),
+            "nim_key_set": bool(nim.nim_key()),  # never the key itself
             "user": os.environ.get("USERNAME", "").capitalize(),
         }
     )
@@ -753,8 +768,10 @@ async def save_settings(request: Request) -> JSONResponse:
         s["theme"] = body["theme"]
     if body.get("advisor_role") in ("director", "advisor"):
         s["advisor_role"] = body["advisor_role"]
-    if body.get("gemini_mode") in ("private", "account", "duck"):
+    if body.get("gemini_mode") in ("private", "account", "duck", "nim"):
         s["gemini_mode"] = body["gemini_mode"]
+    if body.get("director_order") in ("glm_first", "duck_first"):
+        s["director_order"] = body["director_order"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
@@ -788,6 +805,36 @@ async def save_browser(request: Request) -> JSONResponse:
     BROWSER_FILE.parent.mkdir(exist_ok=True)
     BROWSER_FILE.write_text(json.dumps({"chrome_token": token}), encoding="utf-8")
     return JSONResponse({"ok": True, "chrome_token_set": bool(token)})
+
+
+async def save_nim_key(request: Request) -> JSONResponse:
+    """Stores the NVIDIA API key for GLM-5.3 Flash in data/nim_key.txt (git-ignored); an empty one clears it. The key
+    is never sent back or logged: the page only learns whether one is set."""
+    key = str((await request.json()).get("key", "")).strip()
+    nim.save_nim_key(key)
+    if use_glm_once():
+        save_state()
+    return JSONResponse({"ok": True, "nim_key_set": bool(key), "gemini_mode": state["settings"]["gemini_mode"]})
+
+
+async def test_nim_key(_request: Request) -> JSONResponse:
+    """Checks the saved NVIDIA key with a free call (the model list): works, expired/invalid, or unreachable."""
+    key = nim.nim_key()
+    if not key:
+        return JSONResponse({"ok": False, "result": "No key saved."})
+
+    def check() -> str:
+        try:
+            req = urllib.request.Request(nim.NIM_URL + "/models", headers={"Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return "Works." if r.status == 200 else f"NVIDIA answered {r.status}."
+        except urllib.error.HTTPError as e:
+            return "Expired or invalid: paste a new key." if e.code in (401, 403) else f"NVIDIA answered {e.code}."
+        except Exception as e:
+            return f"Couldn't reach NVIDIA: {type(e).__name__}"
+
+    result = await asyncio.to_thread(check)
+    return JSONResponse({"ok": result == "Works.", "result": result})
 
 
 EXTENSION_DIR = HERE / "chrome-extension"
@@ -959,6 +1006,8 @@ app = Starlette(
         Route("/api/templates/delete", delete_template, methods=["POST"]),
         Route("/api/settings", save_settings, methods=["POST"]),
         Route("/api/browser", save_browser, methods=["POST"]),
+        Route("/api/keys/nim", save_nim_key, methods=["POST"]),
+        Route("/api/keys/nim/test", test_nim_key, methods=["POST"]),
         Route("/api/browser/test", test_browser, methods=["POST"]),
         Route("/api/browser/folder", open_extension_folder, methods=["POST"]),
         Route("/api/toolcheck", run_toolcheck, methods=["POST"]),

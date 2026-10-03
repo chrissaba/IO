@@ -1009,7 +1009,9 @@ def base_options(cell: dict, task: dict, boss) -> dict:
     options["max_steps"] = settings.get("max_steps", 30)  # what app.worker gives a task (run_direct takes it out again)
     options["model_mode"] = cell["mode"]
     if cell["director"]:
-        options.update(ask_gemini=True, gemini_mode="duck", advisor_role="director")
+        # nim: GLM-5.3 Flash with Duck.ai behind it (director_order from your settings); duck: Duck.ai alone
+        options.update(ask_gemini=True, gemini_mode=cell.get("ai", "nim"), advisor_role="director",
+                       director_order=settings.get("director_order", "glm_first"))
     else:
         options.update(ask_gemini=False, gemini_mode=settings.get("gemini_mode", "private"), advisor_role=settings.get("advisor_role", "director"))
     options["focus_glow"] = False
@@ -1167,6 +1169,12 @@ def set_mode(mode: str, wait: bool = True) -> bool:
     return False
 
 
+def director_note(r: dict) -> str:
+    """' (NimDirector/GLM-5.3 Flash, 58s)': who answered the director rounds and their total time ('' without rounds)."""
+    via = sorted(set(v for v in r.get("director_via") or [] if v))
+    return f" ({', '.join(via)}, {sum(s or 0 for s in r.get('director_secs') or []):.0f}s)" if via else ""
+
+
 def summarize(results: list[dict], cells: list[str]) -> dict:
     """Per cell: per-task passes/runs/stable/median secs/rounds, and per-category pass rate and medians."""
     out = {}
@@ -1256,7 +1264,7 @@ def write_reports(path: Path, meta: dict, results: list[dict], summary: dict, fa
                 notes += r["teardown_problems"]
             cell_text = "; ".join(notes).replace("|", "/").replace("\n", " ")[:400]
             md.append(f"| {r['task']}#{r['repeat']} | {r['cat']} | {'PASS' if r['pass'] else 'FAIL'} | {'ok' if inv_ok else 'FAIL'} | {r['secs']} | "
-                      f"{r['tools']} | {r['director_rounds']} | {cell_text} |")
+                      f"{r['tools']} | {r['director_rounds']}{director_note(r)} | {cell_text} |")
         cats = summary.get(ck, {}).get("cats", {})
         if cats:
             md += ["", "| category | passed | median secs | median director rounds |", "|---|---|---|---|"]
@@ -1331,7 +1339,8 @@ async def main_async(args) -> int:
     if any(m != current for m in modes) and state is None:
         raise SystemExit("switching modes needs IO running")
     directors = [d.strip() == "on" for d in args.director.split(",")]
-    cells = [{"mode": m, "director": d, "key": f"{m}/director-{'on' if d else 'off'}"} for m in modes for d in directors]
+    on = "on" if args.director_ai == "duck" else "on-glm"  # (earlier reports' director-on cells were Duck.ai)
+    cells = [{"mode": m, "director": d, "ai": args.director_ai, "key": f"{m}/director-{on if d else 'off'}"} for m in modes for d in directors]
     repeat = args.repeat or (2 if args.suite == "full" and not args.only else 1)
 
     # your clipboard: saved now, put back however the bench ends
@@ -1377,9 +1386,11 @@ async def main_async(args) -> int:
                     warnings.append(f"{cell['key']}: the models weren't ready 15 minutes after switching; cell skipped")
                     continue
             if args.driver == "http":
-                api("/api/settings", {"ask_gemini": True, "gemini_mode": "duck", "advisor_role": "director"} if cell["director"] else {"ask_gemini": False})
-            if cell["director"] and args.driver == "direct" and not chrome_token():
+                api("/api/settings", {"ask_gemini": True, "gemini_mode": cell["ai"], "advisor_role": "director"} if cell["director"] else {"ask_gemini": False})
+            if cell["director"] and args.driver == "direct" and cell["ai"] == "duck" and not chrome_token():
                 warnings.append(f"{cell['key']}: no Chrome token in data/browser.json, so the director (Duck.ai in Chrome) can't connect")
+            if cell["director"] and cell["ai"] == "nim" and not (REPO / "data" / "nim_key.txt").is_file():
+                warnings.append(f"{cell['key']}: no NVIDIA key in data/nim_key.txt, so GLM can't answer (Duck.ai and the local model stand in)")
             for rep in range(1, repeat + 1):
                 chat_runs: dict[str, list[dict]] = {}
                 for task in tasks:
@@ -1437,6 +1448,9 @@ async def main_async(args) -> int:
                         "steps": sum(1 for e in events if e.get("event") == "think"), "tools": sum(1 for e in events if e.get("event") == "tool"),
                         "tool_names": [e.get("name") for e in events if e.get("event") == "tool"],
                         "director_rounds": len(director), "director_parse_failures": sum(1 for e in director if not e.get("actions") and e.get("error")),
+                        # who answered each round (the chain falls back GLM -> Duck.ai) and how long it took
+                        "director_via": [f"{e.get('via', '')}{'/' + e['model'] if e.get('model') else ''}" for e in director],
+                        "director_secs": [e.get("secs") for e in director],
                         "questions": run.get("questions", []), "had_conversation": run.get("had_conversation", False),
                         "plan": next((str(e.get("plan", ""))[:600] for e in events if e.get("event") == "plan"), ""),
                         "redo_checks": [str(e.get("text", ""))[:300] for e in events if e.get("event") == "check"],
@@ -1448,7 +1462,9 @@ async def main_async(args) -> int:
                     if task.get("chat"):
                         chat_runs.setdefault(task["chat"], []).append(rec)
                     bad = [c["type"] for c in checks if not c["pass"]] + [f"inv:{i['name']}" for i in inv if not i["pass"]]
+                    via = sorted(set(rec["director_via"]))
                     say(f"    {'PASS' if rec['pass'] else 'FAIL'} {run['status']} {run['secs']}s, {rec['tools']} tools, {rec['director_rounds']} director"
+                        + (f" ({', '.join(via)}; {sum(s or 0 for s in rec['director_secs']):.0f}s)" if via else "")
                         + (f"  failed: {', '.join(bad)}" if bad else "") + (f"  error: {rec['error'][:120]}" if rec["error"] else ""))
                     if args.driver == "direct" and state is not None:
                         with contextlib.suppress(Exception):  # keep IO paused even if you pressed Resume meanwhile
@@ -1503,6 +1519,8 @@ def main() -> None:
     p.add_argument("--modes", default="current", help="comma list of modes; more than one needs --allow-mode-switch")
     p.add_argument("--allow-mode-switch", action="store_true")
     p.add_argument("--director", default="off,on", help="off, on, or off,on")
+    p.add_argument("--director-ai", choices=["nim", "duck"], default="nim",
+                   help="director-on cells: nim = GLM-5.3 Flash with Duck.ai behind it (default), duck = Duck.ai alone")
     p.add_argument("--repeat", type=int, default=0, help="runs per task (default 1, or 2 for the full suite)")
     p.add_argument("--timeout", type=float, default=0, help="seconds per task, overriding tasks.json")
     p.add_argument("--report", default="", help="report folder, or a .json path (the .md goes next to it)")
