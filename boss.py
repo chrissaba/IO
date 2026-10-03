@@ -2410,10 +2410,14 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     remote_brain = bool(options.get("ask_gemini") and options.get("advisor_role", "director") == "director"
                         and options.get("gemini_mode") == "nim" and nim.nim_key())
     brain_chain = [(boss, BOSS_MODEL)]
+    brain_models: list[str] = []  # the NVIDIA models the brain goes round, in order (Settings > Brain)
     if remote_brain:
         nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=300)  # DeepSeek queues ~3 min
-        brain_chain = [(nim_client, m) for m in nim.BRAIN_MODELS] + brain_chain
-        eyes.remote = [(nim_client, m) for m in nim.BRAIN_MODELS if m not in nim.TEXT_ONLY]  # look_at_screen: GLM, then Kimi
+        brain_models[:] = [m for m in (options.get("brain_models") or []) if isinstance(m, str) and m.strip()] or list(nim.BRAIN_MODELS)
+        brain_chain = [(nim_client, m) for m in brain_models] + brain_chain
+        # look_at_screen: the model Settings picked for it, then the brain's own vision models in order
+        looker = options.get("vision_model") or ""
+        eyes.remote = [(nim_client, m) for m in dict.fromkeys(([looker] if looker else []) + brain_models) if nim.is_vision(m)]
     brain_at = [0]  # the NVIDIA model that answered last; each step starts there
 
     def text_only(messages):
@@ -2456,8 +2460,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             main agent's very last resort. Without it, the local model as before."""
             if not remote_brain:
                 return boss.chat.completions.create(model=BOSS_MODEL, **kw)
-            n, last = len(nim.BRAIN_MODELS), None
-            order = nim.brain_order(at[0])  # the last one that answered first, unless it has turned slow or just failed
+            n, last = len(brain_models), None
+            order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
             for attempt in range(2 * n):
                 if stop is not None and stop.is_set():
                     raise RuntimeError("stopped")
@@ -2468,7 +2472,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 t_req = time.time()
                 try:
                     kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
-                    if model in nim.TEXT_ONLY:
+                    if not nim.is_vision(model):
                         kw2["messages"] = text_only(kw2["messages"])
                     elif model in nim.ONE_IMAGE:
                         kw2["messages"] = one_image(kw2["messages"])
@@ -2478,7 +2482,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         kw2.pop("tool_choice")
                     # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the
                     # slow text-only one, gets longer)
-                    kw2["timeout"] = min(timeout or 999, 240 if model in nim.TEXT_ONLY else 90)
+                    kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
                     r = nim.create(client, model=model, **kw2)
                     m = r.choices[0].message
                     words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
@@ -2487,13 +2491,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         raise RuntimeError("empty answer")
                     nim.note(model, time.time() - t_req, True)
                     if at[0] != i:
-                        log("warning", text=f"the brain is now {nim.BRAIN_LABELS.get(model, model)}")
+                        log("warning", text=f"the brain is now {nim.label(model)}")
                     at[0] = i
                     return r
                 except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
                     last = e
                     nim.note(model, time.time() - t_req, False)
-                    log("warning", text=f"{nim.BRAIN_LABELS.get(model, model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
+                    log("warning", text=f"{nim.label(model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
                     if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):
                         raise RuntimeError("stopped")  # too many requests: a moment before the next model
             if not local_fallback:
@@ -3192,7 +3196,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     AGENT.set({"id": sub["id"], "label": sub["goal"][:90], "stop": stop})  # this task's own context: tags its records
                     # every helper starts on GLM (measured 2026-10-03: it took 4 helpers at once without slowing; Kimi K3
                     # sometimes stops with an empty answer even when a tool call is required, DeepSeek takes minutes)
-                    first = [0]
+                    helper = options.get("helper_model") or ""
+                    first = [brain_models.index(helper) if helper in brain_models else 0]
                     brain = make_brain(first, local_fallback=False, stop=stop, timeout=180)
                     t1, status, answer, last, nudged = time.time(), "done", "", "", False
                     try:
@@ -3209,7 +3214,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                                 # a tool call every turn (done included): a helper can't end on "Let me search for...".
                                 # Each turn tries GLM first again: a helper that once fell back to DeepSeek
                                 # shouldn't spend a minute a turn there for the rest of its work
-                                first[0] = 0
+                                first[0] = brain_models.index(helper) if helper in brain_models else 0
                                 tools_now = stools if google["ok"] else [t for t in stools if t["function"]["name"] != "web_search"]
                                 r = await asyncio.to_thread(brain, messages=msgs, tools=tools_now, temperature=0.2, max_tokens=1200)
                                 m = r.choices[0].message

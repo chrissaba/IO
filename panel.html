@@ -244,6 +244,11 @@
   .ckdetail .found { margin-top: 4px; color: var(--text); } .ckdetail .found .secs { color: var(--faint); }
   .ultratag { font-size: 11.5px; color: var(--accent-text); display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
   .ultratag svg.lucide { width: 13px; height: 13px; }
+  .modelrow { display: flex; align-items: center; gap: 8px; flex-basis: 100%; padding: 4px 0; font-size: 13.5px; }
+  .modelrow .num { width: 18px; color: var(--muted); text-align: right; }
+  .modelrow .tag { font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; }
+  .modelrow .tag.off { color: var(--muted); background: transparent; border: 1px solid var(--line); }
+  .modelrow .mnote { font-size: 12px; color: var(--faint); }
   .question { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; padding: 11px 14px; margin: 0 0 12px; }
   .question .q { font-size: 14px; }
   .qrow { display: flex; gap: 8px; margin-top: 9px; } .qrow input { flex: 1; }
@@ -847,8 +852,41 @@
             <div x-show="s.settings.ask_gemini">NVIDIA: a frontier model on NVIDIA's API runs each task with IO's tools, the way Claude does. Your local models stay as its eyes and the last fallback. No web chat AIs are used, and research goes through Google.</div>
             <div x-show="!s.settings.ask_gemini">Local only: everything stays on this PC, and the local models below decide and act.</div></div>
           <select :value="s.settings.ask_gemini ? 'nim' : 'local'" @change="s.settings.ask_gemini = $event.target.value === 'nim'; saveSettings()"><option value="nim">NVIDIA (recommended)</option><option value="local">Local only</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Models, in order</div>
-            <div><span x-text="(s.brain_models || []).map((m, i) => (i + 1) + '. ' + m).join('   ')"></span><br>Each step starts with the model that answered last; if one fails, the next takes over. DeepSeek reads text only and asks to hear the screen.</div></div></div>
+        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>Models, in order</div>
+            <div>Each step starts with the model that answered last; if one fails or turns slow, the next takes over. Models that can't see pictures get the screen described instead. Test a model to see if it takes screenshots and calls tools, and how fast its queue is.</div></div>
+          <template x-for="(m, i) in (s.settings.brain_models || [])" :key="m">
+            <div class="modelrow">
+              <span class="num" x-text="i + 1"></span>
+              <span class="mname" x-text="info(m).label"></span>
+              <span class="tag" x-show="info(m).vision">sees</span><span class="tag off" x-show="!info(m).vision">text only</span>
+              <span class="mnote" x-text="info(m).secs ? info(m).secs + 's' + (info(m).tools === false ? ', no tools' : '') : ''"></span>
+              <span style="margin-left:auto"></span>
+              <button class="btn sm ghost" @click="testModel(m)" x-text="testing === m ? 'Testing…' : 'Test'" :disabled="!!testing"></button>
+              <button class="btn sm ghost" @click="moveModel(i, -1)" :disabled="i === 0" title="Earlier">↑</button>
+              <button class="btn sm ghost" @click="moveModel(i, 1)" :disabled="i === s.settings.brain_models.length - 1" title="Later">↓</button>
+              <button class="btn sm ghost" @click="removeModel(i)" :disabled="s.settings.brain_models.length === 1" title="Remove">×</button>
+            </div>
+          </template>
+          <div class="modelrow" style="flex-basis:100%">
+            <select x-model="addModel" @focus="loadCatalog()" style="flex:1">
+              <option value="" x-text="catalogNote || 'Add a model from NVIDIA\'s catalog…'"></option>
+              <template x-for="c in catalog.filter((c) => !(s.settings.brain_models || []).includes(c.id))" :key="c.id">
+                <option :value="c.id" x-text="c.label + (c.vision ? '  (sees)' : '') + '   ' + c.id"></option>
+              </template>
+            </select>
+            <button class="btn sm" @click="addToBrain()" :disabled="!addModel">Add and test</button>
+          </div>
+          <div class="note" style="flex-basis:100%" x-show="modelNote" x-text="modelNote"></div>
+        </div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Looks at the screen</div>
+            <div>The model look_at_screen asks first, for close looks the brain asks for. A quick one (like Nemotron Omni) keeps those short.</div></div>
+          <select x-model="s.settings.vision_model" @change="saveSettings()"><option value="">The brain's first model that sees</option>
+            <template x-for="m in (s.settings.brain_models || []).filter((m) => info(m).vision)" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.vision_model === m"></option></template></select></div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Ultracode helpers start on</div>
+            <div>Helpers do simple searches and reads, so a fast model suits them; they fall back to the others in order.</div></div>
+          <select x-model="s.settings.helper_model" @change="saveSettings()"><option value="">The brain's first model</option>
+            <template x-for="m in (s.settings.brain_models || [])" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.helper_model === m"></option></template></select></div>
         <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
           <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
             <div>Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
@@ -1181,6 +1219,29 @@ function agent() {
     get chatRunning() { return !!this.chat && this.chatTasks(this.chat).some((t) => t.status === "running"); },
     loopNext: false,
     openSkill: "",
+    catalog: [], catalogNote: "", addModel: "", modelNote: "", testing: "",
+    info(m) { return (this.s.model_info || {})[m] || (this.catalog.find((c) => c.id === m) || { label: m, vision: false }); },
+    async loadCatalog() {
+      if (this.catalog.length) return;
+      this.catalogNote = "Loading NVIDIA's catalog…";
+      const r = await fetch("/api/nim/models").then((x) => x.json());
+      this.catalog = r.models || []; this.catalogNote = r.error || "";
+    },
+    moveModel(i, d) { const a = this.s.settings.brain_models; [a[i], a[i + d]] = [a[i + d], a[i]]; this.saveSettings(); },
+    removeModel(i) { this.s.settings.brain_models.splice(i, 1); this.saveSettings(); },
+    async testModel(m) {
+      this.testing = m; this.modelNote = `Testing ${this.info(m).label}…`;
+      const r = await post("/api/nim/test", { model: m });
+      this.testing = "";
+      this.modelNote = `${this.info(m).label}: ` + (r.tools ? (r.vision ? "sees screenshots and calls tools" : "calls tools, but didn't read the picture (it gets the screen described)") : "no tool calls, so it can't act as the brain")
+        + (r.secs ? `, ${r.secs}s` : "") + (r.note ? ` (${r.note})` : "");
+      this.refresh();
+    },
+    async addToBrain() {
+      const m = this.addModel; this.addModel = "";
+      this.s.settings.brain_models = [...(this.s.settings.brain_models || []), m];
+      await this.saveSettings(); await this.testModel(m);
+    },
     ultraNext: null,  // the composer's Ultracode switch: null follows the Settings default, then it sticks for the session
     ultraOn() { return this.ultraNext === null ? !!this.s.settings.ultracode : this.ultraNext; },
     get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },
@@ -1428,7 +1489,7 @@ function agent() {
       if (await this.askUser({ title: "Clear history?", text: "Finished items are removed. Chats that used them will lose those messages.", ok: "Clear", danger: true }))
         post("/api/history/clear").then(() => this.refresh());
     },
-    saveSettings() { post("/api/settings", this.s.settings); },
+    saveSettings() { return post("/api/settings", this.s.settings); },
     isDark() { const t = this.s.settings.theme; return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); },
     MODELS: [
       { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },

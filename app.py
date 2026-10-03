@@ -66,6 +66,9 @@ DEFAULT_SETTINGS = {
     # saved; off = the local models alone. (The name is from when the remote AI was Gemini; boss.py and the bench read it.)
     "ask_gemini": True, "gemini_mode": "nim",
     "ultracode": False,  # by default: a plan first, then up to 5 helpers work on its parts at once (per message too)
+    "brain_models": list(nim.BRAIN_MODELS),  # the NVIDIA models the brain goes round, in order
+    "vision_model": "",  # the one look_at_screen asks first ("" = the brain's first vision model)
+    "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -422,6 +425,9 @@ async def worker() -> None:
         options["gemini_mode"], options["advisor_role"] = "nim", "director"
         # Ultracode: the message's own switch, else the Settings default (boss caps it at 5 helpers at once)
         options["ultracode"] = bool(task["ultracode"] if "ultracode" in task else state["settings"].get("ultracode"))
+        options["brain_models"] = list(state["settings"].get("brain_models") or nim.BRAIN_MODELS)
+        options["vision_model"] = state["settings"].get("vision_model", "")
+        options["helper_model"] = state["settings"].get("helper_model", "")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
@@ -591,7 +597,9 @@ async def get_state(_request: Request) -> JSONResponse:
             "today": today_stats(),
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
-            "brain_models": [nim.BRAIN_LABELS.get(m, m) for m in nim.BRAIN_MODELS],
+            "brain_models": [nim.label(m) for m in state["settings"].get("brain_models") or nim.BRAIN_MODELS],
+            "model_info": {m: {"label": nim.label(m), "vision": nim.is_vision(m), **{k: v for k, v in nim.tests().get(m, {}).items() if k in ("tools", "secs", "note", "when")}}
+                           for m in dict.fromkeys(list(state["settings"].get("brain_models") or nim.BRAIN_MODELS) + list(nim.tests()))},
             "learned": [{"name": k["name"], "runs": k.get("runs", 1), "uses": k.get("uses", 0), "playbook": k.get("playbook", ""),
                          "updated": k.get("updated", 0)} for k in sorted(learned.load(), key=lambda k: -k.get("updated", 0))],
             "user": os.environ.get("USERNAME", "").capitalize(),
@@ -790,6 +798,12 @@ async def save_settings(request: Request) -> JSONResponse:
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
         s["model_mode"] = body["model_mode"]
         asyncio.create_task(switch_models())
+    if isinstance(body.get("brain_models"), list):
+        picked = [str(m).strip() for m in body["brain_models"] if str(m).strip()][:12]
+        s["brain_models"] = list(dict.fromkeys(picked)) or list(nim.BRAIN_MODELS)
+    for key in ("vision_model", "helper_model"):
+        if key in body:
+            s[key] = str(body[key] or "").strip()[:120]
     if "ask_gemini" in body:
         s["brain_v2"] = True  # the user chose: no migration ever flips it again
     for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode"):
@@ -832,6 +846,26 @@ async def save_nim_key(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "nim_key_set": bool(key), "brain_on": bool(key) and bool(state["settings"].get("ask_gemini"))})
 
 
+async def nim_catalog(_request: Request) -> JSONResponse:
+    """The chat models NVIDIA offers the saved key, for Settings' model picker."""
+    if not nim.nim_key():
+        return JSONResponse({"models": [], "error": "No key saved."})
+    try:
+        ids = await asyncio.to_thread(nim.catalog)
+    except Exception as e:
+        return JSONResponse({"models": [], "error": f"Couldn't reach NVIDIA: {type(e).__name__}"})
+    return JSONResponse({"models": [{"id": m, "label": nim.label(m), "vision": nim.is_vision(m)} for m in ids]})
+
+
+async def nim_test_model(request: Request) -> JSONResponse:
+    """Settings' Test on one model: sees a screenshot? calls tools? how fast?"""
+    model = str((await request.json()).get("model", "")).strip()
+    if not model or not nim.nim_key():
+        return JSONResponse({"ok": False, "note": "No model or no key."})
+    r = await asyncio.to_thread(nim.test_model, model)
+    return JSONResponse({"ok": r["tools"], **r})
+
+
 async def delete_learned(request: Request) -> JSONResponse:
     """Forgets one skill IO taught itself."""
     name = str((await request.json()).get("name", ""))
@@ -852,7 +886,7 @@ async def test_nim_key(_request: Request) -> JSONResponse:
                 if r.status != 200:
                     return f"NVIDIA answered {r.status}."
                 listed = {m.get("id") for m in json.load(r).get("data", []) if isinstance(m, dict)}
-            missing = [nim.BRAIN_LABELS.get(m, m) for m in nim.BRAIN_MODELS if m not in listed]
+            missing = [nim.label(m) for m in (state["settings"].get("brain_models") or nim.BRAIN_MODELS) if m not in listed]
             return "Works." if not missing else f"Works, but {', '.join(missing)} isn't offered to this key."
         except urllib.error.HTTPError as e:
             return "Expired or invalid: paste a new key." if e.code in (401, 403) else f"NVIDIA answered {e.code}."
@@ -1035,6 +1069,8 @@ app = Starlette(
         Route("/api/keys/nim", save_nim_key, methods=["POST"]),
         Route("/api/keys/nim/test", test_nim_key, methods=["POST"]),
         Route("/api/learned/delete", delete_learned, methods=["POST"]),
+        Route("/api/nim/models", nim_catalog),
+        Route("/api/nim/test", nim_test_model, methods=["POST"]),
         Route("/api/browser/test", test_browser, methods=["POST"]),
         Route("/api/browser/folder", open_extension_folder, methods=["POST"]),
         Route("/api/toolcheck", run_toolcheck, methods=["POST"]),

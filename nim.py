@@ -72,11 +72,12 @@ def note(model: str, secs: float, ok: bool) -> None:
         h["failed"] = time.time()
 
 
-def brain_order(start: int) -> list[int]:
-    """Indices into BRAIN_MODELS in the order to try: from `start` round the list, with models that failed in the last
-    2 minutes or have turned slow moved to the back. Every 8th call keeps the plain order, so a slow model whose queue
-    has cleared gets measured again."""
-    n = len(BRAIN_MODELS)
+def brain_order(start: int, models: list[str] | None = None) -> list[int]:
+    """Indices into `models` (BRAIN_MODELS by default) in the order to try: from `start` round the list, with models that
+    failed in the last 2 minutes or have turned slow moved to the back. Every 8th call keeps the plain order, so a slow
+    model whose queue has cleared gets measured again."""
+    models = models or BRAIN_MODELS
+    n = len(models)
     base = [(start + k) % n for k in range(n)]
     _orders[0] += 1
     if _orders[0] % 8 == 0:
@@ -84,7 +85,7 @@ def brain_order(start: int) -> list[int]:
     now = time.time()
 
     def fit(i: int) -> bool:
-        h = _health.get(BRAIN_MODELS[i], {})
+        h = _health.get(models[i], {})
         return now - h.get("failed", 0) > 120 and (h.get("avg") or 0) <= SLOW_BRAIN
 
     good = [i for i in base if fit(i)]
@@ -103,6 +104,104 @@ def create(client, **kw):
         _slots.release()
 
 TEXT_ONLY = {"deepseek-ai/deepseek-v4.1-flash"}  # gets the conversation without screenshots (it calls look_at_screen)
+SLOW_QUEUE = {"deepseek-ai/deepseek-v4.1-flash"}  # queues for minutes: allowed a longer wait per request
+VISION = {"z-ai/glm-5.3-flash", "moonshotai/kimi-k3", "meta/llama-3.2-90b-vision-instruct",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"}  # measured: answer a screenshot with the right tool call
+
+# ---------- the catalog and model tests (Settings > Brain) ----------
+TESTS_FILE = HERE / "data" / "nim_models.json"  # {model: {"vision", "tools", "secs", "when", "note"}} from Settings' Test
+NOT_CHAT = re.compile(r"embed|rerank|retriev|guard|safety|reward|parse|ocr|clip|tts|asr|whisper|canary|riva|translat|"
+                      r"cosmos|flux|stable-diffusion|sdxl|bge|e5-|nv-embed|nemoretriever|grounding|detector|segment", re.I)
+_catalog: dict = {"at": 0.0, "ids": []}
+
+
+def tests() -> dict:
+    try:
+        import json
+        return json.loads(TESTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def label(model: str) -> str:
+    if model in BRAIN_LABELS:
+        return BRAIN_LABELS[model]
+    name = model.split("/")[-1].replace("-instruct", "").replace("-it", "")
+    return name.replace("-", " ").replace("_", " ").title()
+
+
+def is_vision(model: str) -> bool:
+    """Whether the brain may send this model screenshots: measured here, or passed Settings' Test with a picture."""
+    t = tests().get(model)
+    return bool(t["vision"]) if t and "vision" in t else model in VISION
+
+
+def catalog(key: str = "") -> list[str]:
+    """The chat models NVIDIA's catalog offers this key (cached 10 minutes)."""
+    if time.time() - _catalog["at"] < 600 and _catalog["ids"]:
+        return _catalog["ids"]
+    import json
+    import urllib.request
+    req = urllib.request.Request(NIM_URL + "/models", headers={"Authorization": f"Bearer {key or nim_key()}"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        ids = sorted({m.get("id") for m in json.load(r).get("data", []) if isinstance(m, dict) and m.get("id")})
+    _catalog.update(at=time.time(), ids=[i for i in ids if not NOT_CHAT.search(i)])
+    return _catalog["ids"]
+
+
+def test_model(model: str) -> dict:
+    """Shows the model a small game screenshot with a click tool, then the same without the picture: whether it sees,
+    whether it calls tools, and how long it took. Saved for is_vision() and Settings."""
+    import base64
+    import io
+    import json
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (640, 360), (30, 30, 60))
+    d = ImageDraw.Draw(im)
+    d.rectangle([240, 150, 400, 210], fill=(40, 160, 70))
+    d.text((290, 172), "COLLECT", fill="white")
+    d.text((220, 90), "Offline gains: 1,250 gold", fill="white")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG")
+    url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    tools = [{"type": "function", "function": {"name": "click_on", "description": "Click a described element on screen",
+              "parameters": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}}}]
+    client = OpenAI(base_url=NIM_URL, api_key=nim_key(), max_retries=0, timeout=90)
+    result = {"vision": False, "tools": False, "secs": None, "when": time.time(), "note": ""}
+
+    def ask(content, use_tools=True):
+        kw = {"tools": tools, "tool_choice": "required" if model in NEEDS_REQUIRED_TOOLS else "auto"} if use_tools else {}
+        t0 = time.time()
+        r = create(client, model=model, temperature=0.2, max_tokens=600,
+                   messages=[{"role": "system", "content": "You play a game through tools. Act with tool calls."},
+                             {"role": "user", "content": content}], **kw)
+        return r.choices[0].message, time.time() - t0
+
+    try:
+        m, secs = ask([{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": "Current screenshot. Do the next useful action."}])
+        result["secs"] = round(secs, 1)
+        calls = m.tool_calls or []
+        if calls:
+            result["tools"] = True
+            result["vision"] = "collect" in (calls[0].function.arguments or "").lower()
+            result["note"] = f"{calls[0].function.name}({calls[0].function.arguments})"[:120]
+        else:
+            result["vision"] = "collect" in (m.content or "").lower()
+            result["note"] = "no tool call: " + (m.content or "")[:100]
+    except Exception as e:  # a model that refuses pictures: try it as a text-only brain
+        result["note"] = f"with a picture: {type(e).__name__}: {scrub(str(e))[:120]}"
+        try:
+            m, secs = ask("A button labelled COLLECT is on the screen. Do the next useful action.")
+            result["secs"] = round(secs, 1)
+            result["tools"] = bool(m.tool_calls)
+            result["note"] += "; text only: " + ("tool call works" if m.tool_calls else "no tool call")
+        except Exception as e2:
+            result["note"] += f"; text only: {type(e2).__name__}: {scrub(str(e2))[:120]}"
+    saved = tests()
+    saved[model] = result
+    TESTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TESTS_FILE.write_text(json.dumps(saved, indent=1), encoding="utf-8")
+    return result
 SLOW_AFTER = 20.0  # seconds: a model averaging more than this is passed over while a quicker one is available
 RETRY_SLOW_EVERY = 6  # rounds: then the best model gets another chance (queues clear)
 KEEP_TURNS = 24  # conversation turns kept (about 12 rounds); older ones are dropped, the brief and plan carry the gist
