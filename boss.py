@@ -1198,14 +1198,14 @@ class DuckAI:
             return page_text(text_of(await s.call_tool("browser_evaluate", {"function": code})))
 
         if not (keep and self.in_chat):
-            # via a blank page: navigating duck.ai -> duck.ai doesn't reload it, and the old conversation would stay on screen
-            await s.call_tool("browser_navigate", {"url": "about:blank"})
-            await s.call_tool("browser_navigate", {"url": DUCK_URL})
+            # a fresh URL each time forces a real reload (duck.ai -> duck.ai kept the old conversation on screen; going via
+            # about:blank instead made the extension let go of the tab)
+            await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000)}"})
             await asyncio.sleep(1)
             if instructions:  # standing instructions for the new conversation (read when the page loads)
                 await js(DUCK_INSTRUCT_JS % json.dumps(instructions))
             await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
-            await s.call_tool("browser_navigate", {"url": DUCK_URL})
+            await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000) + 1}"})
             await asyncio.sleep(3)
         self.in_chat = False
         try:  # how many messages the conversation already has: the answer must come after a new one
