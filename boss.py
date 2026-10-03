@@ -1112,6 +1112,14 @@ DUCK_FORGET_JS = """async () => {
 }"""
 
 
+def complete_json(text: str) -> bool:
+    m = re.search(r"\{.*\}", text, re.S)
+    try:
+        return bool(m) and isinstance(json.loads(m.group(0)), dict)
+    except ValueError:
+        return False
+
+
 def duck_answer(text: str) -> str:
     """The reply out of the page text after 'Duck.ai said': without the model name above it or the app promo below."""
     text = re.split(r"\n(Duck\.ai works best|Jump to latest response|Download\n|Tools\n)", text)[0]
@@ -1174,8 +1182,8 @@ class DuckAI:
             await s.call_tool("browser_press_key", {"key": "Enter"})
         text, same = "", 0
         try:
-            for _ in range(60):
-                await asyncio.sleep(2)
+            for _ in range(120):
+                await asyncio.sleep(1)
                 try:
                     state = json.loads(await js(DUCK_READ_JS))
                 except ValueError:
@@ -1187,7 +1195,7 @@ class DuckAI:
                 new = duck_answer(state.get("text", ""))
                 same = same + 1 if new and new == text and not state.get("generating") else 0
                 text = new
-                if same >= 2:
+                if same >= 2 or (same >= 1 and complete_json(text)):  # a finished JSON reply needn't wait for a second check
                     break
         finally:
             if keep and text:
