@@ -5634,8 +5634,9 @@ ROUTES = {
                          "calculator", "list_controls", "window_state", "open_path", "done"], ["WIN", "ACT", "DO"], "director", 0, "if_director_off"),
     # a request that doesn't say which file, window or thing ("open the document I was working on"): the local model asks
     # first (the director, guessing from Recent items, opened the user's files on its own)
-    "vague": Route("vague", ["ask_user", "list_windows", "list_files", "find_file", "open_path", "open_app", "read_window", "done"],
-                   ["WIN", "FILE"], "local", None, "no"),
+    "vague": Route("vague", ["ask_user", "list_windows", "list_files", "find_file", "read_file", "open_path", "open_app", "read_window",
+                             "write_in_app", "type_into", "done"],
+                   ["WIN", "FILE"], "local", 99, "no"),  # 99: not on failures; the director takes over once the user has answered
     "knowledge": Route("knowledge", ["calc", "web_answer", "web_search", "read_page", "done"], ["WEB"], "local", None, "no"),
     "general": Route("general", ["open_app", "click", "type_into", "read_window", "list_windows", "window_state", "pc_info", "app_info", "find_file",
                                  "web_answer", "look_at_screen", "PowerShell", "done"], ["WIN", "ACT"], "director", 0, "if_director_off"),

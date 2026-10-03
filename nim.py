@@ -21,6 +21,9 @@ NIM_MODELS = [
     ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "Nemotron 3 Nano Omni"),  # ~4 s, smaller
     ("meta/llama-3.2-90b-vision-instruct", "Llama 3.2 90B Vision"),             # ~9 s, older
 ]
+# the single brain (native tool calls, images): measured 2026-10-03, Kimi K3 doesn't return tool calls on this endpoint,
+# GLM-5.3 Flash and Nemotron 3 Nano Omni do; Llama 3.2 90B takes only one image per request
+BRAIN_MODELS = ["z-ai/glm-5.3-flash", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]
 SLOW_AFTER = 20.0  # seconds: a model averaging more than this is passed over while a quicker one is available
 RETRY_SLOW_EVERY = 6  # rounds: then the best model gets another chance (queues clear)
 KEEP_TURNS = 24  # conversation turns kept (about 12 rounds); older ones are dropped, the brief and plan carry the gist

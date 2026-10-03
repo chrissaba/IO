@@ -724,11 +724,13 @@ class Eyes:
         url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
         if self.brief:
             question = (question or "What is on the screen?") + " Answer in at most 3 short sentences: what screen or menu is open, and what can be done next."
-        reply = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120).chat.completions.create(
-            model=BOSS_MODEL,
+        client, model = getattr(self, "remote", None) or (OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL)
+        local = model == BOSS_MODEL
+        reply = client.chat.completions.create(
+            model=model,
             temperature=0.2,
-            max_tokens=160 if self.brief else 700,
-            extra_body=NO_THINKING if self.brief else None,
+            max_tokens=(160 if self.brief else 700) if local else 1500,  # a remote model may spend tokens reasoning first
+            extra_body=(NO_THINKING if self.brief else None) if local else None,
             messages=[
                 {
                     "role": "user",
@@ -2083,8 +2085,8 @@ LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortc
 # (those two sets are the rollback lists; with the action layer the loop set is actions.LOOP_MENU plus these window actions:
 # a covered or minimised game window is brought back with focus_window, not with guessed clicks)
 LOOP_WINDOW_ACTIONS = ["focus_window"]
-VAGUE_NOTE = ("The request doesn't say which file or window. Ask the user which one with ask_user first, before searching "
-              "or opening anything; if they don't say, open nothing")
+VAGUE_NOTE = ("The request doesn't say which file or window. Look first (list_files/find_file, without opening anything), "
+              "then ask_user which one, naming the candidates you found as the choices; if they don't say, open nothing")
 # what else a locked loop may reach through use() or the director: looking, clicking found points, notes; never apps,
 # files, the web or closing windows
 LOOP_LOCK_EXTRA = {"find_on_screen", "find_all", "read_region", "Click", "hold", "remember", "ask_gemini", "tools", "use", "done", "wait"}
@@ -2221,6 +2223,37 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     (HERE / "logs").mkdir(exist_ok=True)
     boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
     eyes = Eyes(options.get("model_mode", "fast"))
+    # one brain: with a director AI set up and an NVIDIA key, a frontier model on NVIDIA's API runs the whole task with
+    # IO's tools itself (native tool calls), like Claude does; no JSON director handing steps to a small local model.
+    # The local models stay as eyes (UI-TARS/Qwen find where to click) and as the last fallback.
+    remote_brain = bool(options.get("ask_gemini") and options.get("advisor_role", "director") == "director"
+                        and options.get("gemini_mode") == "nim" and nim.nim_key())
+    brain_chain = [(boss, BOSS_MODEL)]
+    if remote_brain:
+        nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=120)
+        brain_chain = [(nim_client, m) for m in nim.BRAIN_MODELS] + brain_chain
+        eyes.remote = (nim_client, nim.BRAIN_MODELS[0])  # look_at_screen: the frontier model looks, not the small one
+    brain_at = [0]  # the model answering this task; it moves down the chain on errors and stays there
+
+    def brain_create(**kw):
+        """One step of the agent loop on the current brain, falling back down the chain (NVIDIA models, then local)."""
+        last = None
+        for i in range(brain_at[0], len(brain_chain)):
+            client, model = brain_chain[i]
+            if i == len(brain_chain) - 1:  # the local model: its errors (e.g. context size) go to the caller as before
+                brain_at[0] = i
+                return client.chat.completions.create(model=model, **kw)
+            try:
+                kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
+                r = client.chat.completions.create(model=model, **kw2)
+                if brain_at[0] != i:
+                    log("warning", text=f"the brain is now {model}")
+                brain_at[0] = i
+                return r
+            except Exception as e:  # rate limit, outage, a model that can't take this request: next one
+                last = e
+                log("warning", text=f"{model} failed ({type(e).__name__}): {str(e)[:160]}; trying the next model")
+        raise last
 
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:
@@ -2383,6 +2416,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             first = actions.menu(route, actions.available(ctx, decider="local"), ask=bool(ask) and not loop)
             if loop:
                 first = actions.LOOP_MENU + LOOP_WINDOW_ACTIONS + ["done", "tools", "use"]
+            elif remote_brain and route.kind not in ("chat", "images", "knowledge"):
+                # a frontier brain sees the director's whole action set at once instead of the small model's short menu
+                # (the raw clipboard/process/file tools only when the request is about them, as for the director)
+                raw = {"Clipboard": r"clipboard", "Process": r"process|task manager|kill|running", "FileSystem": r"\bfile|folder"}
+                first = [n for n in actions.available(ctx, decider="director")
+                         if n not in raw or re.search(raw[n], standalone, re.I)] + ["ask_user", "done", "tools"]
             if REMEMBER_REQUEST.search(standalone):
                 first.append("remember")
             apply_menu(first)
@@ -2416,7 +2455,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """Before reporting back after doing things, check the work; if it falls short, say so and keep going.
             At most MAX_REDOS times per task, and never for plain chat (no tools used)."""
             nonlocal redos
-            if not steps_log or redos >= MAX_REDOS:
+            if not steps_log or redos >= MAX_REDOS or (remote_brain and brain_at[0] < len(brain_chain) - 1):  # a frontier brain checks itself
                 return ""
             try:
                 if layer:  # the resolved request, the user's constraints and what the director saw on screen
@@ -2508,7 +2547,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if not layer:
                 tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")))
-            gemini = make_director(stack, options)
+            gemini = None if remote_brain else make_director(stack, options)  # one brain: it is the director
             director = bool(gemini) and options.get("advisor_role", "director") == "director"
             if layer:
                 # the lean loop set (GAME helpers, vision, a few keys) for a locked window; without one, the general menu
@@ -2588,14 +2627,16 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         if not loop:
             # single tasks get the director too (not small talk): it sees the screen and decides the steps until it calls done
             gemini = None
-            # with the action layer, routes that never need it (chat, images, knowledge) never start Duck.ai at all
-            wanted = route.director_after is not None if layer else not images and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip()))
+            # every task that acts on the PC goes to the director (one smart model beats a local model's failure loops);
+            # only plain chat, questions about attached pictures and general knowledge stay local, where it's instant
+            wanted = route.kind not in ("chat", "images", "knowledge") if layer else \
+                not images and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip()))
             if options.get("advisor_role", "director") == "director" and wanted:
                 # (a browser session only opens on the first question, so a route that never escalates costs nothing)
-                gemini = make_director(stack, options)
-            # the director decides from the start on its routes (app, general); elsewhere the local model does, and the
-            # director takes over after route.director_after failed or unconfirmed steps
-            director = bool(gemini) and (not layer or route.decider == "director")
+                gemini = None if remote_brain else make_director(stack, options)  # one brain: it is the director
+            # the user's choice: the director decides every step (it asks the user itself on vague requests); the local
+            # models are its eyes and hands (finding and clicking things) and take over only if no director answers
+            director = bool(gemini)
             if director and not layer:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
                 researcher = Researcher(stack, use_gemini=True)
                 tools.append(RESEARCH_TOOL)
@@ -2636,7 +2677,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if loop:
                 return ""
             return ("Rules: open, close or change only what the request names; if it doesn't say which file or window, "
-                    "ask_user first. IO's own Duck.ai/Chrome window is never the target.\n")
+                    "look for the candidates without opening them, then ask_user which one, listing them. IO's own "
+                    "Duck.ai/Chrome window is never the target.\n")
 
         def director_rules(names: list) -> str:
             """The full standing rules for a director that takes them whole (GLM): the reply contract, the task rules, how
@@ -2692,8 +2734,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 # NimDirector keeps nim.KEEP_TURNS turns: a fresh conversation before its first message (the brief) is trimmed
                 every = min(20, nim.KEEP_TURNS // 2) if isinstance(link, nim.NimDirector) else 20
                 if keep and link.in_chat and (not image or not cap or link.images < cap) and director_rounds % every:
-                    new = steps_log[director_seen:] or ["(no actions ran)"]
-                    fresh = (guide[director_guides:] if loop else [])  # research done since its last round
+                    new = new_results or ["(no actions ran)"]
+                    fresh = new_guides  # research done since its last round
                     # a tools() answer goes whole: it is the catalog page the director asked for
                     head = "".join(f"New from guides: {g[:700]}\n" for g in fresh[-2:])
                     tail = (("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
@@ -2727,6 +2769,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
                     history=history, catalog=tool_catalog(usable)), rules
 
+            # taken before the counter moves on: brief() runs later, inside the chain call (reading steps_log[director_seen:]
+            # there gave every follow-up "(no actions ran)", and the director concluded IO was stuck)
+            new_results, new_guides = steps_log[director_seen:], (guide[director_guides:] if loop else [])
             director_seen, director_rounds = len(steps_log), director_rounds + 1
             director_guides = len(guide) if loop else 0
             t0 = time.time()
@@ -2785,7 +2830,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             try:
                 r = await asyncio.to_thread(
-                    boss.chat.completions.create, model=BOSS_MODEL, tools=done_tool, temperature=0, max_tokens=400, extra_body=NO_THINKING,
+                    brain_create, tools=done_tool, temperature=0, max_tokens=400, extra_body=NO_THINKING,
                     messages=compact(messages, snaps_kept=snaps_kept) + [{"role": "user", "content": FINISH_CHECK.format(task=ctx.request or task)}])
                 calls = r.choices[0].message.tool_calls or []
             except Exception as e:
@@ -2813,13 +2858,14 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # pressed during the cleanup of a finished task leaves it finished, with its answer
                     pass
             stack.push_async_callback(put_away)
-        if plan_now:
+        if plan_now and not remote_brain:  # a frontier brain plans as it goes; the local planner would only slow it down
             await get_plan()
         compact_at, keep_recent = (LOOP_COMPACT_AT, LOOP_KEEP_RECENT) if loop else (COMPACT_AT, KEEP_RECENT)
         # what fits: the model's context (16K for Qwen 3.6, 32K for the others) less the fixed prompt, the tool list and the
         # reply, at ~2.5 characters a token (UI trees and JSON tokenize worse than prose)
         fixed = len(json.dumps(tools)) + sum(len(str(m.get("content") or "")) for m in messages[:head])
-        room = max(6000, int((await asyncio.to_thread(model_context) - 1400) * 2.5) - fixed)
+        ctx_tokens = 200000 if remote_brain else await asyncio.to_thread(model_context)  # NVIDIA's models take 1M; keep rounds quick
+        room = max(6000, int((ctx_tokens - 1400) * 2.5) - fixed)
         compact_at = min(compact_at, int(room * 0.6))
         snaps_kept = KEEP_FULL_SNAPSHOTS if room > 40000 else 1
         tool_cap = min(MAX_TOOL_TEXT, room // 3)
@@ -2896,8 +2942,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 elif loop:
                     try:
                         response = await asyncio.to_thread(
-                            boss.chat.completions.create,
-                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap), tools=tools,
+                            brain_create,
+                            messages=compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap), tools=tools,
                             temperature=0.3, max_tokens=1024,
                         )
                     except Exception as e:
@@ -2910,8 +2956,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         continue
                 else:
                     response = await asyncio.to_thread(
-                    boss.chat.completions.create,
-                    model=BOSS_MODEL, messages=compact(messages, snaps_kept=snaps_kept), tools=tools, temperature=0.2, max_tokens=1024,
+                    brain_create,
+                    messages=compact(messages, snaps_kept=snaps_kept), tools=tools, temperature=0.2, max_tokens=1024,
                 )
             except BadRequestError as e:
                 if "context" not in str(e).lower():
@@ -2934,8 +2980,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         log("compact", step=step, text=summary_text)
                     try:
                         response = await asyncio.to_thread(
-                            boss.chat.completions.create,
-                            model=BOSS_MODEL, messages=compact(messages, keep=1, trim=400, snaps_kept=1, cap=min(tool_cap, 4000)), tools=tools,
+                            brain_create,
+                            messages=compact(messages, keep=1, trim=400, snaps_kept=1, cap=min(tool_cap, 4000)), tools=tools,
                             temperature=0.2, max_tokens=1024,
                         )
                         break
@@ -3248,6 +3294,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     result = remember(args.get("note", ""))
                 elif name == "ask_user":
                     result = "The user answered: " + ((await ask(args.get("question", ""))) or "(no answer)")
+                    if gemini and not director and not loop:
+                        director = True  # the request is clear now: the stronger model does the rest (summaries, writing)
+                        log("warning", text="the user answered: handing the rest of the task to the director")
                 elif name == "type_text" or (name == "Type" and not args.get("loc")):
                     # Type without a location is the most common small-model slip: type into the focused control instead
                     args = {"text": args.get("text", ""), "press_enter": args.get("press_enter", False)}
