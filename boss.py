@@ -887,7 +887,7 @@ DIRECTOR_PROMPT = """You are the director of IO, an AI agent that operates a Win
 local model carries them out exactly. It finds things on screen from your descriptions, so describe each target by what it
 looks like and where it is (e.g. "the red Fire button at the bottom right").
 
-Goal (it never ends; the user stops it): {goal}
+{goal}
 {shot}
 {screen}Recent actions and their results, oldest first:
 {history}
@@ -906,8 +906,16 @@ def tool_catalog(tools: list[dict]) -> str:
     lines = []
     for t in tools:
         f = t["function"]
-        params = ", ".join(k for k in f.get("parameters", {}).get("properties", {}) if k not in ("window", "display"))  # IO fills those in
-        desc = "record a short progress note (IO keeps going)" if f["name"] == "done" else (f.get("description") or "").split(". ")[0][:120]
+        schema = f.get("parameters", {})
+        required, parts = set(schema.get("required", [])), []
+        for k, v in schema.get("properties", {}).items():
+            if k in ("window", "display") or (k not in required and len(parts) >= 3):  # IO fills those in; rarely needed extras left out
+                continue
+            enum = v.get("enum") or (v.get("anyOf") or [{}])[0].get("enum")
+            parts.append(k + ("" if k in required else "?") + (f"={'|'.join(map(str, enum[:4]))}" if enum else ""))
+        params = ", ".join(parts)
+        desc = ("finish: summary = the answer for the user (in a loop: a progress note, and IO keeps going)" if f["name"] == "done"
+                else (f.get("description") or "").split(". ")[0][:90])
         lines.append(f"- {f['name']}({params}): {desc}")
     return "\n".join(lines)
 
@@ -944,10 +952,15 @@ def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]
         data = json.loads(m.group(0))
     except ValueError:
         return "", []
+    acts = data.get("actions") or data.get("action") or []  # it sometimes answers with a single "action"
     out = []
-    for a in data.get("actions") or []:
-        if isinstance(a, dict) and a.get("tool") in allowed:
-            out.append((a["tool"], a.get("args") if isinstance(a.get("args"), dict) else {}))
+    for a in acts if isinstance(acts, list) else [acts]:
+        if isinstance(a, str):
+            a = {"tool": a, "args": {k: v for k, v in data.items() if k not in ("thoughts", "action", "actions")}}
+        name = a.get("tool") or a.get("name") if isinstance(a, dict) else None
+        if name in allowed:
+            args = a.get("args") or a.get("arguments") or {}
+            out.append((name, args if isinstance(args, dict) else {}))
     return str(data.get("thoughts") or "")[:400], out[:8]
 
 
@@ -1436,6 +1449,9 @@ LOOP_REQUEST = re.compile(r"^\s*/loop\b|\buntil i (tell (you|it|io) to |say (to 
 LOOP_COMPACT_AT = 8000
 # a loop on one window gets just the tools for acting in it: a smaller prompt (the 16K-context models need the room)
 # and no two-step find-then-click habit
+# what a director sees and may use on single tasks: the full list would overflow Duck.ai's 4,500-character messages
+DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortcut", "Scroll", "PowerShell", "wait", "look_at_screen",
+                  "close_windows", "browser_open", "browser_read", "remember", "done"}
 LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25
@@ -1811,7 +1827,33 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     messages.append({"role": "user", "content": f"Plan from a stronger model (it saw the window):\n{plan[:1500]}\nFollow it, adapting to what you see."})
         last_research = researches = 0
         if not loop:
-            gemini, director = None, False
+            # single tasks get the director too (not small talk): it sees the screen and decides the steps until it calls done
+            how, token = options.get("gemini_mode", "private"), options.get("chrome_token", "")
+            gemini = None
+            if (options.get("ask_gemini") and options.get("advisor_role", "director") == "director" and not images
+                    and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip())) and (how not in ("account", "duck") or token)):
+                gemini = DuckAI(stack, token) if how == "duck" else Gemini(stack, token, how != "account")
+            director = bool(gemini)
+
+            def window_shot() -> bytes:
+                """The window the task works in (else the front window, else the main screen), as a small JPEG."""
+                user32 = ctypes.windll.user32
+                hit = find_window(focus_hint) if focus_hint else None
+                if hit:
+                    area = hit[1]
+                else:
+                    r = wt.RECT()
+                    fg = user32.GetForegroundWindow()
+                    area = (r.left, r.top, r.right, r.bottom) if fg and user32.GetWindowRect(fg, ctypes.byref(r)) else displays()[0]
+                    title = ctypes.create_unicode_buffer(256)
+                    user32.GetWindowTextW(fg, title, 256)
+                    if area[2] - area[0] < 200 or area[3] - area[1] < 200 or title.value in ("IO", ""):
+                        area = displays()[0]
+                shot = ImageGrab.grab(bbox=area, all_screens=True).convert("RGB")
+                shot.thumbnail((1280, 1280))
+                buf = io.BytesIO()
+                shot.save(buf, format="JPEG", quality=80)
+                return buf.getvalue()
         director_queue: list[tuple[str, dict]] = []
         director_paused_until = 0.0
         director_seen = director_rounds = 0
@@ -1819,8 +1861,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
             nonlocal director_seen, director_rounds
+            await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
             keep = isinstance(gemini, DuckAI)
+            usable = [t for t in tools if loop or t["function"]["name"] in DIRECTOR_TOOLS]
             # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
             # A fresh conversation (with the full brief) when the old one fails or has grown long.
             if keep and gemini.in_chat and director_rounds % 20:
@@ -1830,10 +1874,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                           "\nIf the same thing keeps not working, change approach. Reply with the next JSON only.")
             else:
                 prompt = fit_director_prompt(
-                    gemini.max_chars, goal=task, shot="A screenshot of the window IO works in is attached.\n" if image else "", guide="",
+                    gemini.max_chars, goal=f"Goal (it never ends; the user stops it): {task}" if loop else
+                    f"Task (do it, then call done with the answer for the user): {task}", shot="A screenshot of the window IO works in is attached.\n" if image else "", guide="",
                     screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
                     history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
-                    catalog=tool_catalog(tools))
+                    catalog=tool_catalog(usable))
             director_seen, director_rounds = len(steps_log), director_rounds + 1
             t0 = time.time()
             try:
@@ -1842,11 +1887,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     director_rounds = 0  # start over in a new conversation next time
             except Exception as e:
                 reply = f"error: {e}"
-            if focus:
-                # asking Duck.ai brings its Chrome tab forward over the app: send it behind everything, then the app to the front
-                await asyncio.to_thread(send_to_back, "Duck.ai")
-                await asyncio.to_thread(focus_window, focus)
-            thoughts, batch =("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in tools})
+            # asking Duck.ai brings its Chrome tab forward: send it behind everything, then the app back to the front
+            await asyncio.to_thread(send_to_back, "Duck.ai")
+            if focus or focus_hint:
+                await asyncio.to_thread(focus_window, focus or focus_hint)
+            thoughts, batch =("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in usable})
             log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
                 actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
             if reply.startswith("error: limit"):
