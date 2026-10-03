@@ -919,6 +919,22 @@ Give 1 to 8 actions to do next, in order. Use wait when the game needs time. Aft
 screenshot. If an action fails, the rest are skipped and you're asked again."""
 
 
+# Duck.ai's "Customize responses" holds these as its standing instructions, so each conversation starts with just the
+# current state. It reads only about the first 500 characters, so it carries the role and the reply contract; the tool
+# list comes with the first message (it differs per task).
+DIRECTOR_STANDING = ("You direct IO, an agent operating a Windows PC; a small local model executes your actions exactly. Reply ONLY "
+                     'with JSON: {"thoughts":"one sentence","actions":[{"tool":"<name>","args":{...}}]}, 1-8 actions from the tools '
+                     "IO lists. Describe click targets by look and position. Use wait when things need time. When a task is done, "
+                     "call done with the answer. If something keeps failing, change approach.")
+DIRECTOR_BRIEF = """IO: {goal}
+{shot}{screen}Recent actions and results, oldest first:
+{history}
+
+Tools:
+{catalog}
+Next JSON."""
+
+
 def tool_catalog(tools: list[dict]) -> str:
     """One line per tool for the director: name, arguments and what it does."""
     lines = []
@@ -938,7 +954,7 @@ def tool_catalog(tools: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def fit_director_prompt(limit: int, **parts: str) -> str:
+def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, **parts: str) -> str:
     """DIRECTOR_PROMPT under the site's length limit: older guide notes, history and the screen description go first."""
     budgets = {"guide": 1400, "history": 1600, "screen": 700}
 
@@ -953,7 +969,7 @@ def fit_director_prompt(limit: int, **parts: str) -> str:
 
     for _ in range(12):
         filled = {k: cut(k, v) if k in budgets else v for k, v in parts.items()}
-        prompt = DIRECTOR_PROMPT.format(**filled)
+        prompt = template.format(**{k: v for k, v in filled.items() if "{" + k + "}" in template})
         if len(prompt) <= limit:
             return prompt
         for k in budgets:
@@ -1100,6 +1116,10 @@ DUCK_READ_JS = """() => {
   return JSON.stringify({limited, challenge, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
 }"""
 # Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
+# "Customize responses" > Additional instructions, kept beside whatever else you set there (Duck.ai stores it in the browser)
+DUCK_INSTRUCT_JS = """() => { let c = {}; try { c = JSON.parse(localStorage.getItem('duckaiCustomization')) || {}; } catch (e) {}
+  c.version = c.version || '1'; c.data = Object.assign({}, c.data, {additionalInstructions: %s});
+  localStorage.setItem('duckaiCustomization', JSON.stringify(c)); localStorage.setItem('duckaiCustomizationActive', 'true'); return 'ok'; }"""
 DUCK_NO_HISTORY_JS = """() => { localStorage.setItem('isRecentChatsOn', JSON.stringify('0')); return 'ok'; }"""  # Duck.ai's own "keep recent chats" switch
 DUCK_FORGET_JS = """async () => {
   const del = [...document.querySelectorAll('button')].find(b => /^delete chat$/i.test(b.getAttribute('aria-label') || ''));
@@ -1123,7 +1143,8 @@ def complete_json(text: str) -> bool:
 def duck_answer(text: str) -> str:
     """The reply out of the page text after 'Duck.ai said': without the model name above it or the app promo below."""
     text = re.split(r"\n(Duck\.ai works best|Jump to latest response|Download\n|Tools\n)", text)[0]
-    lines = [l for l in text.strip().splitlines() if l.strip() and l.strip().lower() not in ("2nd opinion", "copy", "retry")]  # its buttons
+    lines = [l for l in text.strip().splitlines() if l.strip() and l.strip().lower() not in ("2nd opinion", "copy", "retry", "show reasoning")
+             and not re.fullmatch(r"\d+s", l.strip())]  # its buttons and the "thought for 1s" label
     if lines and len(lines[0]) < 40 and not lines[0].rstrip().endswith((".", "!", "?")):
         lines = lines[1:]  # the model's name, e.g. "GPT-5.6 Luna"
     return "\n".join(lines).strip()
@@ -1151,7 +1172,7 @@ class DuckAI:
 
     in_chat = False  # a director conversation is open in the tab
 
-    async def ask(self, prompt: str, image: bytes = b"", keep: bool = False) -> str:
+    async def ask(self, prompt: str, image: bytes = b"", keep: bool = False, instructions: str = "") -> str:
         """keep: continue the open conversation (and leave it open after) instead of a fresh, forgotten chat."""
         if wait := self.ready_in():
             return f"error: the advisor was asked recently; it can be asked again in {wait}s. Keep going with what you have."
@@ -1164,6 +1185,8 @@ class DuckAI:
         if not (keep and self.in_chat):
             await s.call_tool("browser_navigate", {"url": DUCK_URL})
             await asyncio.sleep(1)
+            if instructions:  # standing instructions for the new conversation (read when the page loads)
+                await js(DUCK_INSTRUCT_JS % json.dumps(instructions))
             await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
             await s.call_tool("browser_navigate", {"url": DUCK_URL})
             await asyncio.sleep(3)
@@ -1865,19 +1888,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             director = bool(gemini)
 
             def window_shot() -> bytes:
-                """The window the task works in (else the front window, else the main screen), as a small JPEG."""
-                user32 = ctypes.windll.user32
+                """The window the task works in once one is known, else the whole main screen, as a small JPEG.
+                (Not just the front window: "what's on my main monitor" must show the monitor, not one app on it.)"""
                 hit = find_window(focus_hint) if focus_hint else None
-                if hit:
-                    area = hit[1]
-                else:
-                    r = wt.RECT()
-                    fg = user32.GetForegroundWindow()
-                    area = (r.left, r.top, r.right, r.bottom) if fg and user32.GetWindowRect(fg, ctypes.byref(r)) else displays()[0]
-                    title = ctypes.create_unicode_buffer(256)
-                    user32.GetWindowTextW(fg, title, 256)
-                    if area[2] - area[0] < 200 or area[3] - area[1] < 200 or title.value in ("IO", ""):
-                        area = displays()[0]
+                area = hit[1] if hit else displays()[0]
                 shot = ImageGrab.grab(bbox=area, all_screens=True).convert("RGB")
                 shot.thumbnail((1280, 1280))
                 buf = io.BytesIO()
@@ -1886,10 +1900,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         director_queue: list[tuple[str, dict]] = []
         director_paused_until = 0.0
         director_seen = director_rounds = 0
+        director_full = False
 
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
-            nonlocal director_seen, director_rounds
+            nonlocal director_seen, director_rounds, director_full
             await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
             keep = isinstance(gemini, DuckAI)
@@ -1902,10 +1917,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 new = steps_log[director_seen:] or ["(no actions ran)"]
                 prompt = ("Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3500:] +
                           ("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
-                          "\nIf the same thing keeps not working, change approach. Reply with the next JSON only.")
+                          "\nIf the same thing keeps not working, change approach. Next JSON.")
             else:
+                # with Duck.ai the rules live in its standing instructions; if it stopped answering in JSON, send them inline again
                 prompt = fit_director_prompt(
-                    gemini.max_chars, goal=f"Goal (it never ends; the user stops it): {task}" if loop else
+                    gemini.max_chars, DIRECTOR_BRIEF if keep and not director_full else DIRECTOR_PROMPT, goal=f"Goal (it never ends; the user stops it): {task}" if loop else
                     f"Task (do it, then call done with the answer for the user): {task}", shot="A screenshot of the window IO works in is attached.\n" if image else "", guide="",
                     screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
                     history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
@@ -1913,7 +1929,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             director_seen, director_rounds = len(steps_log), director_rounds + 1
             t0 = time.time()
             try:
-                reply = await (gemini.ask(prompt, image, keep=True) if keep else gemini.ask(prompt, image))
+                reply = await (gemini.ask(prompt, image, keep=True, instructions=DIRECTOR_STANDING) if keep else gemini.ask(prompt, image))
                 if keep and reply.startswith("error") and not reply.startswith("error: limit"):
                     director_rounds = 0  # start over in a new conversation next time
             except Exception as e:
@@ -1922,7 +1938,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             await asyncio.to_thread(send_to_back, "Duck.ai")
             if focus or focus_hint:
                 await asyncio.to_thread(focus_window, focus or focus_hint)
-            thoughts, batch =("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in usable})
+            thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in usable})
+            if not reply.startswith("error"):
+                director_full = not batch  # an answer that isn't usable JSON: the next conversation gets the full rules inline
+                if not batch:
+                    director_rounds = 0
             log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
                 actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
             if reply.startswith("error: limit"):
