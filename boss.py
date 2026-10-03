@@ -464,6 +464,8 @@ def hold_mouse(x: int, y: int, seconds: float) -> str:
     user32 = ctypes.windll.user32
     user32.SetProcessDPIAware()
     seconds = max(0.2, min(15.0, float(seconds or 2)))
+    home = wt.POINT()
+    user32.GetCursorPos(ctypes.byref(home))
     user32.SetCursorPos(int(x), int(y))
     time.sleep(0.05)
     user32.mouse_event(0x0002, 0, 0, 0, 0)  # left down
@@ -471,7 +473,23 @@ def hold_mouse(x: int, y: int, seconds: float) -> str:
         time.sleep(seconds)
     finally:
         user32.mouse_event(0x0004, 0, 0, 0, 0)  # left up, even if the task is stopped mid-hold
+        user32.SetCursorPos(home.x, home.y)  # your pointer goes back where you left it
     return f"held the mouse at ({int(x)}, {int(y)}) for {seconds:g}s"
+
+
+def quick_click(x: int, y: int) -> str:
+    """A click that borrows the pointer for ~40 ms and puts it back where you had it, so working alongside IO is bearable."""
+    user32 = ctypes.windll.user32
+    home = wt.POINT()
+    user32.GetCursorPos(ctypes.byref(home))
+    user32.SetCursorPos(int(x), int(y))
+    time.sleep(0.02)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)
+    time.sleep(0.02)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)
+    time.sleep(0.01)
+    user32.SetCursorPos(home.x, home.y)
+    return f"Single left clicked at ({int(x)},{int(y)})."
 
 
 def window_on_top_at(title: str, pt: tuple[int, int]) -> bool:
@@ -2200,7 +2218,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         if name == "find_on_screen" or covered:
                             pass
                         elif name == "click_on":
-                            result = text_of(await win.call_tool("Click", {"loc": list(pt)})) + f" (found at {pt[0]}, {pt[1]})"
+                            result = await asyncio.to_thread(quick_click, *pt) + f" (found at {pt[0]}, {pt[1]})"
                         else:
                             result = await asyncio.to_thread(hold_mouse, pt[0], pt[1], args.get("seconds", 2))
                         if same_spot >= 2:
