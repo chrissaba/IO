@@ -1113,7 +1113,8 @@ DUCK_READ_JS = """() => {
   const challenge = [...document.querySelectorAll('[role=dialog], dialog')].some(d => d.offsetParent !== null && /challenge|human|bots use/i.test(d.innerText));
   const at = main.lastIndexOf('You said');
   const parts = at < 0 ? [] : main.slice(at).split('Duck.ai said');
-  return JSON.stringify({limited, challenge, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
+  const asked = main.split('You said').length - 1;
+  return JSON.stringify({limited, challenge, asked, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
 }"""
 # Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
 # "Customize responses" > Additional instructions, kept beside whatever else you set there (Duck.ai stores it in the browser)
@@ -1183,6 +1184,8 @@ class DuckAI:
             return page_text(text_of(await s.call_tool("browser_evaluate", {"function": code})))
 
         if not (keep and self.in_chat):
+            # via a blank page: navigating duck.ai -> duck.ai doesn't reload it, and the old conversation would stay on screen
+            await s.call_tool("browser_navigate", {"url": "about:blank"})
             await s.call_tool("browser_navigate", {"url": DUCK_URL})
             await asyncio.sleep(1)
             if instructions:  # standing instructions for the new conversation (read when the page loads)
@@ -1191,6 +1194,10 @@ class DuckAI:
             await s.call_tool("browser_navigate", {"url": DUCK_URL})
             await asyncio.sleep(3)
         self.in_chat = False
+        try:  # how many messages the conversation already has: the answer must come after a new one
+            before = json.loads(await js(DUCK_READ_JS)).get("asked", 0)
+        except ValueError:
+            before = 0
         if image and "no-input" in await js(DUCK_ATTACH_JS % json.dumps(base64.b64encode(image).decode())):
             prompt = prompt.replace("A screenshot of the window I'm working in is attached.\n\n", "")
         await asyncio.sleep(2 if image else 0.3)
@@ -1215,6 +1222,11 @@ class DuckAI:
                     return "error: limit: Duck.ai says its usage limit is reached"
                 if state.get("challenge"):
                     return "error: Duck.ai asked to prove a human is there; that's for the user, not IO"
+                if state.get("asked", 0) <= before:
+                    if _ > 15:  # the message never went out (e.g. the conversation's picture limit): don't reuse the old answer
+                        text = ""
+                        break
+                    continue
                 new = duck_answer(state.get("text", ""))
                 same = same + 1 if new and new == text and not state.get("generating") else 0
                 text = new
