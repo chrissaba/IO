@@ -1131,6 +1131,13 @@ DUCK_READ_JS = """() => {
   return JSON.stringify({limited, challenge, asked, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
 }"""
 # Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
+DUCK_MAX_IMAGES = 5
+# Duck.ai refuses a 6th picture in a conversation and then won't send anything until the pending ones are removed
+DUCK_IMAGE_LIMIT_JS = """() => {
+  if (!/only attach \\d+ images? per conversation/i.test(document.body.innerText)) return 'ok';
+  [...document.querySelectorAll('button')].filter(b => /^remove image/i.test(b.getAttribute('aria-label') || '')).forEach(b => b.click());
+  return 'full';
+}"""
 # "Customize responses" > Additional instructions, kept beside whatever else you set there (Duck.ai stores it in the browser)
 DUCK_INSTRUCT_JS = """() => { let c = {}; try { c = JSON.parse(localStorage.getItem('duckaiCustomization')) || {}; } catch (e) {}
   c.version = c.version || '1'; c.data = Object.assign({}, c.data, {additionalInstructions: %s});
@@ -1186,6 +1193,7 @@ class DuckAI:
         return self.session
 
     in_chat = False  # a director conversation is open in the tab
+    images = 0  # pictures sent in it (Duck.ai allows DUCK_MAX_IMAGES per conversation)
 
     async def ask(self, prompt: str, image: bytes = b"", keep: bool = False, instructions: str = "") -> str:
         """keep: continue the open conversation (and leave it open after) instead of a fresh, forgotten chat."""
@@ -1207,14 +1215,21 @@ class DuckAI:
             await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
             await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000) + 1}"})
             await asyncio.sleep(3)
+            self.images = 0
         self.in_chat = False
         try:  # how many messages the conversation already has: the answer must come after a new one
             before = json.loads(await js(DUCK_READ_JS)).get("asked", 0)
         except ValueError:
             before = 0
+        if image and self.images >= DUCK_MAX_IMAGES:
+            image = b""  # this conversation is full: text only (the director starts a fresh one next round)
         if image and "no-input" in await js(DUCK_ATTACH_JS % json.dumps(base64.b64encode(image).decode())):
             prompt = prompt.replace("A screenshot of the window I'm working in is attached.\n\n", "")
+            image = b""
         await asyncio.sleep(2 if image else 0.3)
+        if image and "full" in await js(DUCK_IMAGE_LIMIT_JS):
+            # "You can only attach 5 images per conversation": take the picture back off, or nothing can be sent
+            image, self.images = b"", DUCK_MAX_IMAGES
         if "no-textarea" in await js(DUCK_TYPE_JS % json.dumps(prompt)):
             return "error: Duck.ai's page didn't load"
         await asyncio.sleep(0.5)
@@ -1249,6 +1264,7 @@ class DuckAI:
         finally:
             if keep and text:
                 self.in_chat = True
+                self.images += bool(image)
             else:
                 try:
                     await js(DUCK_FORGET_JS)
@@ -1939,7 +1955,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
             # A fresh conversation (with the full brief) when the old one fails or has grown long.
             # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
-            if keep and gemini.in_chat and director_rounds % (5 if image else 20):
+            if keep and gemini.in_chat and (not image or gemini.images < DUCK_MAX_IMAGES) and director_rounds % 20:
                 new = steps_log[director_seen:] or ["(no actions ran)"]
                 fresh = (guide[director_guides:] if loop else [])  # research done since its last round
                 prompt = ("".join(f"New from guides: {g[:700]}\n" for g in fresh) +
