@@ -25,9 +25,15 @@ NIM_MODELS = [
 # the single brain, tried in this order (the user's pick; speed doesn't matter, the next one takes over on an error):
 # GLM-5.3 Flash (tools + images), DeepSeek V4.1 Flash (tools, text only, very slow queue: ~170 s a turn), Kimi K3 (tools
 # only with tool_choice="required": on "auto" it returns nothing)
-BRAIN_MODELS = ["z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "moonshotai/kimi-k3"]
+BRAIN_MODELS = ["z-ai/glm-5.3-flash", "moonshotai/kimi-k3", "meta/llama-3.2-90b-vision-instruct",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "deepseek-ai/deepseek-v4.1-flash"]
+# measured 2026-10-03 with a screenshot and a click tool: GLM-5.3 Flash 4-6 s, Kimi K3 11 s, Llama 3.2 90B Vision 4-5 s,
+# Nemotron 3 Nano Omni 4 s (sometimes "worker limit reached"); all four answered with the right tool call. DeepSeek reads
+# text only and queues for minutes, so it is last. (GLM-5.3 full refused images; Gemma 4 31B timed out; Kimi K2.6 is gone.)
+ONE_IMAGE = {"meta/llama-3.2-90b-vision-instruct"}  # takes one picture per request: older ones become a note
 BRAIN_LABELS = {"z-ai/glm-5.3-flash": "GLM-5.3 Flash", "deepseek-ai/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
-                "moonshotai/kimi-k3": "Kimi K3"}
+                "moonshotai/kimi-k3": "Kimi K3", "meta/llama-3.2-90b-vision-instruct": "Llama 3.2 90B Vision",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "Nemotron 3 Nano Omni"}
 NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
 NO_REQUIRED_TOOLS = {"deepseek-ai/deepseek-v4.1-flash"}  # its queue never answered a tool_choice="required" request
 # Ultracode: never more than this many requests to NVIDIA in flight at once, from all of IO (sub-agents, the main brain,
@@ -51,6 +57,38 @@ def _pace() -> None:
                 return
             wait = 60 - (now - _sent[0]) + 0.05
         time.sleep(wait)
+
+
+SLOW_BRAIN = 45.0  # seconds: a brain model averaging more than this goes to the back of the line while others are quicker
+_health: dict = {}  # model -> {"avg": running reply time, "failed": when it last failed}
+_orders = [0]
+
+
+def note(model: str, secs: float, ok: bool) -> None:
+    h = _health.setdefault(model, {"avg": None, "failed": 0.0})
+    if ok:
+        h["avg"] = secs if h["avg"] is None else 0.6 * h["avg"] + 0.4 * secs
+    else:
+        h["failed"] = time.time()
+
+
+def brain_order(start: int) -> list[int]:
+    """Indices into BRAIN_MODELS in the order to try: from `start` round the list, with models that failed in the last
+    2 minutes or have turned slow moved to the back. Every 8th call keeps the plain order, so a slow model whose queue
+    has cleared gets measured again."""
+    n = len(BRAIN_MODELS)
+    base = [(start + k) % n for k in range(n)]
+    _orders[0] += 1
+    if _orders[0] % 8 == 0:
+        return base
+    now = time.time()
+
+    def fit(i: int) -> bool:
+        h = _health.get(BRAIN_MODELS[i], {})
+        return now - h.get("failed", 0) > 120 and (h.get("avg") or 0) <= SLOW_BRAIN
+
+    good = [i for i in base if fit(i)]
+    return good + [i for i in base if i not in good]
 
 
 def create(client, **kw):

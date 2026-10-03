@@ -37,6 +37,7 @@ from openai import BadRequestError, OpenAI
 from PIL import ImageGrab
 
 import actions
+import learned
 import nim
 import planner
 import plugins
@@ -654,6 +655,32 @@ def capture_area(display: int, window: str, content: bool = False) -> tuple[tupl
     return rects[display], ""
 
 
+def brain_view(window: str, content: bool = False) -> str:
+    """A screenshot of the window the task works in, as a data URL for the brain's own turn ('' when it can't be had).
+    Never focuses anything: it shows what is on screen there now."""
+    try:
+        rect = (content_rect(window) if content else None) or (find_window(window) or (0, None))[1]
+        if not rect or rect[2] - rect[0] < 50 or rect[3] - rect[1] < 50:
+            return ""
+        shot = ImageGrab.grab(bbox=rect, all_screens=True)
+        shot.thumbnail((1280, 1280))
+        buf = io.BytesIO()
+        shot.convert("RGB").save(buf, format="JPEG", quality=80)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+
+
+VIEW_NOTE = ("Screenshot of the '{w}' window, taken just now, after your last actions. Decide from what you see; you don't "
+             "need look_at_screen for this window unless you want a closer look. When you're sure what the next few actions "
+             "are (for example click_on, wait, click_on), put them all in this reply: they run in order, and you get a new "
+             "screenshot after them.")
+BRAIN_SUMMARY_SYSTEM = """You compress the working notes of an AI agent on a Windows PC so it can keep going. Summarize the
+earlier steps below in at most 500 words: what has been done and what it achieved, what was found (exact values, names,
+positions of buttons, menus and items, coordinates, paths, URLs), what worked, and what failed or wasted time. Output
+only the summary."""
+LEARN_EVERY = 25  # loops: the brain updates its playbook for the task after this many more actions
+
 NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}  # llama-server: skip the reasoning for this request
 QWEN_POINT_PROMPT = ("Find this on the screenshot: {target}\nAnswer only with JSON like {{\"point_2d\": [x, y]}}, the centre "
                      "of it, with x and y on a 0-1000 scale across the image's width and height.")
@@ -730,9 +757,13 @@ class Eyes:
             question = (question or "What is on the screen?") + " Answer in at most 3 short sentences: what screen or menu is open, and what can be done next."
         text = f"This is a screenshot of {('the ' + window + ' window') if window else f'display {display}'}. {question or 'Describe what is on the screen.'}"
         messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": text}]}]
+        # a frontier model wrote a whole "screen inventory" for a one-button menu (and took minutes in the queue doing it)
+        quick = [{"role": "user", "content": [messages[0]["content"][0], {"type": "text", "text": text + (
+            " Answer the question directly in at most 120 words: what is open, the exact text of the buttons that matter "
+            "and where they are. No full inventory unless asked.")}]}]
         for client, model in getattr(self, "remote", None) or []:  # the NVIDIA brain's vision models, in turn
             try:
-                reply = nim.create(client, model=model, temperature=0.2, max_tokens=1500, messages=messages)
+                reply = nim.create(client, model=model, temperature=0.2, max_tokens=700, messages=quick, timeout=90)
                 answer = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
                 if answer:
                     return answer
@@ -2301,7 +2332,7 @@ def check_work(task: str, steps: list[str], answer: str, constraints: str = "", 
     return ""
 
 
-def summarize_steps(task: str, old: list[dict]) -> str:
+def summarize_steps(task: str, old: list[dict], chat=None) -> str:
     lines = []
     for m in old:
         if m["role"] == "assistant":
@@ -2311,6 +2342,8 @@ def summarize_steps(task: str, old: list[dict]) -> str:
             lines.append(f"result: {str(m['content'])[:600]}")
         else:
             lines.append(f"note: {str(m['content'])[:400]}")
+    if chat is not None:  # the brain: a fuller summary of more of the run
+        return chat(BRAIN_SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines)[-60000:], 1200)
     return local_chat(SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines), max_tokens=320)
 
 
@@ -2395,6 +2428,23 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             out.append(m)
         return out
 
+    def one_image(messages):
+        """The conversation with only its newest picture, for a model that takes one per request."""
+        out, kept = [], False
+        for m in reversed(messages):
+            c = m.get("content") if isinstance(m, dict) else None
+            if isinstance(c, list):
+                parts = []
+                for p in reversed(c):
+                    if p.get("type") == "image_url":
+                        if kept:
+                            p = {"type": "text", "text": "[earlier screenshot]"}
+                        kept = True
+                    parts.append(p)
+                m = {**m, "content": list(reversed(parts))}
+            out.append(m)
+        return list(reversed(out))
+
     def make_brain(at: list, local_fallback: bool = True, stop: threading.Event | None = None, timeout: float | None = None):
         """A brain_create for one agent: `at` holds the index of the NVIDIA model that answered it last (each Ultracode
         helper has its own). `stop` ends a helper's retries once Stop is pressed (its thread outlives the task);
@@ -2407,35 +2457,42 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if not remote_brain:
                 return boss.chat.completions.create(model=BOSS_MODEL, **kw)
             n, last = len(nim.BRAIN_MODELS), None
+            order = nim.brain_order(at[0])  # the last one that answered first, unless it has turned slow or just failed
             for attempt in range(2 * n):
                 if stop is not None and stop.is_set():
                     raise RuntimeError("stopped")
                 if attempt == n and (stop.wait(5) if stop is not None else time.sleep(5)):
                     raise RuntimeError("stopped")  # every model failed once: a short breather before the second round
-                i = (at[0] + attempt) % n
+                i = order[attempt % n]
                 client, model = brain_chain[i]
+                t_req = time.time()
                 try:
                     kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
                     if model in nim.TEXT_ONLY:
                         kw2["messages"] = text_only(kw2["messages"])
+                    elif model in nim.ONE_IMAGE:
+                        kw2["messages"] = one_image(kw2["messages"])
                     if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
                         kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
                     if model in nim.NO_REQUIRED_TOOLS and kw2.get("tool_choice") == "required":
                         kw2.pop("tool_choice")
-                    if timeout:
-                        kw2["timeout"] = timeout
+                    # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the
+                    # slow text-only one, gets longer)
+                    kw2["timeout"] = min(timeout or 999, 240 if model in nim.TEXT_ONLY else 90)
                     r = nim.create(client, model=model, **kw2)
                     m = r.choices[0].message
                     words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
                     if not (m.tool_calls or re.search(r"[^\W\d_]{3}", words)):
                         # nothing in it, or token junk ("<|close|>!!!!", seen from Kimi K3): a failure, next model
                         raise RuntimeError("empty answer")
+                    nim.note(model, time.time() - t_req, True)
                     if at[0] != i:
                         log("warning", text=f"the brain is now {nim.BRAIN_LABELS.get(model, model)}")
                     at[0] = i
                     return r
                 except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
                     last = e
+                    nim.note(model, time.time() - t_req, False)
                     log("warning", text=f"{nim.BRAIN_LABELS.get(model, model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
                     if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):
                         raise RuntimeError("stopped")  # too many requests: a moment before the next model
@@ -2447,6 +2504,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         return create
 
     brain_create = make_brain(brain_at)
+
+    def brain_chat(system: str, user: str, max_tokens: int = 1200) -> str:
+        """One plain question to the brain (no tools): summaries and skill playbooks."""
+        r = brain_create(messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                         temperature=0.2, max_tokens=max_tokens)
+        return re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
 
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:
@@ -2511,6 +2574,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         tools = [mcp_to_openai(t) for t in mcp_tools] + [plugin_defs[alias] for alias, _, _ in plugin_tools] + extra
         notes = memory_load()
         skills = plugins.skills_prompt(task)
+        taught = learned.recall(task)  # playbooks IO wrote for itself on earlier runs of this kind of task
+        if taught:
+            skills = (skills + "\n\n" if skills else "") + taught
+            log("skills", text=taught[:600])
         prompt = task
         if notes or skills:
             # next to the task, where a small model actually reads it (it overlooks notes in the system prompt)
@@ -3060,11 +3127,31 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         ctx_tokens = 200000 if remote_brain else await asyncio.to_thread(model_context)  # NVIDIA's models take 1M; keep rounds quick
         room = max(6000, int((ctx_tokens - 1400) * 2.5) - fixed)
         compact_at = min(compact_at, int(room * 0.6))
+        if remote_brain:  # a 1M-token model: keep ~60K tokens of the run word for word (loops too), the newest 30 messages always
+            compact_at, keep_recent = 150000, 30
         snaps_kept = KEEP_FULL_SNAPSHOTS if room > 40000 else 1
         tool_cap = min(MAX_TOOL_TEXT, room // 3)
         progress_notes = 0
         if not loop:
             focus = ""
+        learned_at = [0]  # len(steps_log) when the playbook was last updated
+
+        def learn_now(outcome: str) -> None:
+            """The brain rewrites this task's playbook from the run so far, in the background (never slows the task)."""
+            if not remote_brain or len(steps_log) - learned_at[0] < learned.MIN_STEPS:
+                return
+            learned_at[0] = len(steps_log)
+            steps, window = list(steps_log), (focus if loop else focus_hint) or ""
+
+            def work() -> None:
+                try:
+                    name = learned.learn(lambda sy, us: brain_chat(sy, us, 2000), standalone, steps, outcome, window)
+                    if name:
+                        print(json.dumps({"event": "learned", "skill": name, "steps": len(steps)}), flush=True)
+                except Exception as e:
+                    print(f"couldn't learn from the run: {e}", flush=True)
+
+            threading.Thread(target=work, daemon=True).start()
 
         async def ultracode() -> None:
             """Ultracode: the brain writes a plan, sub-agents do its parallel parts (ULTRA_MAX_AGENTS at once, each with its
@@ -3243,6 +3330,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     advice = await consult(f"I've been at this for {step} steps and keep circling. What should I do next to make progress?")
                     if not advice.startswith("error"):
                         messages.append({"role": "user", "content": f"Advice from a stronger model:\n{advice[:900]}\nFollow it."})
+            if loop and len(steps_log) - learned_at[0] >= LEARN_EVERY:
+                learn_now(f"still going after {len(steps_log)} actions (a loop); last results: " + " | ".join(steps_log[-3:])[:600])
             if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
                 stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
             else:
@@ -3256,7 +3345,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     cut -= 1
                 if cut - head >= 4:
                     try:
-                        summary_text = await asyncio.to_thread(summarize_steps, task, messages[head:cut])
+                        summary_text = await asyncio.to_thread(summarize_steps, task, messages[head:cut], brain_chat if remote_brain else None)
                         messages[head:cut] = [{"role": "user", "content": f"Progress so far (older steps summarized to save space):\n{summary_text}"}]
                         log("compact", step=step, text=summary_text)
                     except Exception as e:
@@ -3282,6 +3371,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     tool_name, tool_args = director_queue.pop(0)
                     call = SimpleNamespace(id=f"director-{step}", function=SimpleNamespace(name=tool_name, arguments=json.dumps(tool_args)))
                     pending = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=thoughts, tool_calls=[call]))])
+            # the brain sees the window itself on its own turn (one request instead of a look_at_screen round trip to a
+            # second model); a text-only model gets a note to call look_at_screen instead (text_only)
+            view_window = (focus if loop else "") or focus_hint  # a loop's locked window, else where the task works now
+            view = await asyncio.to_thread(brain_view, view_window, loop and eyes.content) if remote_brain and view_window else ""
+
+            def seen(msgs: list[dict]) -> list[dict]:
+                return msgs + [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": view}},
+                                                             {"type": "text", "text": VIEW_NOTE.format(w=view_window)}]}] if view else msgs
+
             # model calls run in a thread so the web app's event loop stays responsive
             try:
                 if pending is not None:
@@ -3290,8 +3388,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     try:
                         response = await asyncio.to_thread(
                             brain_create,
-                            messages=compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap), tools=tools,
-                            temperature=0.3, max_tokens=1024,
+                            messages=seen(compact(messages, keep=8, trim=4000, snaps_kept=2, cap=tool_cap) if remote_brain else
+                                          compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap)), tools=tools,
+                            temperature=0.3, max_tokens=2048 if remote_brain else 1024,
                         )
                     except Exception as e:
                         log("warning", text=f"loop step {step} failed, retrying: {e}"[:300])
@@ -3304,7 +3403,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 else:
                     response = await asyncio.to_thread(
                     brain_create,
-                    messages=compact(messages, snaps_kept=snaps_kept), tools=tools, temperature=0.2, max_tokens=1024,
+                    messages=seen(compact(messages, snaps_kept=snaps_kept)), tools=tools, temperature=0.2,
+                    max_tokens=2048 if remote_brain else 1024,
                 )
             except BadRequestError as e:
                 if "context" not in str(e).lower():
@@ -3373,6 +3473,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         messages.append({"role": "user", "content": problem})
                         continue
                     log("done", step=step, summary=summary)
+                    learn_now(summary)
                     return summary
                 plain_replies += 1
                 messages.append({"role": "user", "content": "Use a tool, or call the done tool with your answer if the task is complete."})
@@ -3474,6 +3575,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": problem})
                         continue
                     log("done", step=step, summary=summary)
+                    learn_now(summary)
                     return summary
 
                 # what the user said not to do ("dont open it") is refused before anything else, in one place; so is
@@ -3760,6 +3862,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         hint_focus("")  # its window is gone: the glow follows the foreground window again
 
         log("gave_up", steps=max_steps)
+        learn_now(f"ran out of steps ({max_steps}) without finishing")
         return f"stopped after {max_steps} steps without finishing"
 
 

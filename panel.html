@@ -861,6 +861,20 @@
             <div>For bigger jobs the brain writes a plan first, then up to 5 helpers work on its parts at the same time, each with a hidden browser of its own. Helpers search, read pages and read files; anything that needs your mouse and keyboard still happens one step at a time. Switch it per message with the fork button next to Loop.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.ultracode" :disabled="!s.nim_key_set" @change="saveSettings(); ultraNext = s.settings.ultracode"><span></span></label></div>
       </div>
+      <h2>Skills IO taught itself</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Learned skills</div>
+            <div>After a task, and every 25 actions in a loop, the NVIDIA brain writes down what worked (where things are, what to do first, what to avoid). The next similar task starts with that playbook.</div></div></div>
+        <div class="setting" x-show="!(s.learned || []).length"><div class="txt"><div style="color:var(--muted)">Nothing learned yet.</div></div></div>
+        <template x-for="k in (s.learned || [])" :key="k.name">
+          <div class="setting" style="flex-wrap:wrap">
+            <div class="txt" style="flex:1; cursor:pointer" @click="openSkill = openSkill === k.name ? '' : k.name"><div x-text="k.name"></div>
+              <div x-text="'From ' + k.runs + ' run' + (k.runs === 1 ? '' : 's') + ', used ' + k.uses + ' time' + (k.uses === 1 ? '' : 's') + ' · click to read'"></div></div>
+            <button class="btn sm ghost" @click="post('/api/learned/delete', { name: k.name }).then(() => refresh())">Forget</button>
+            <div class="note" style="flex-basis:100%; white-space:pre-wrap" x-show="openSkill === k.name" x-text="k.playbook"></div>
+          </div>
+        </template>
+      </div>
       <h2>Local models</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Local models</div>
@@ -1166,6 +1180,7 @@ function agent() {
     get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
     get chatRunning() { return !!this.chat && this.chatTasks(this.chat).some((t) => t.status === "running"); },
     loopNext: false,
+    openSkill: "",
     ultraNext: null,  // the composer's Ultracode switch: null follows the Settings default, then it sticks for the session
     ultraOn() { return this.ultraNext === null ? !!this.s.settings.ultracode : this.ultraNext; },
     get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },

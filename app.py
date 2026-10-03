@@ -34,6 +34,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import boss
+import learned
 import nim
 import overlay
 import plugins
@@ -591,6 +592,8 @@ async def get_state(_request: Request) -> JSONResponse:
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
             "brain_models": [nim.BRAIN_LABELS.get(m, m) for m in nim.BRAIN_MODELS],
+            "learned": [{"name": k["name"], "runs": k.get("runs", 1), "uses": k.get("uses", 0), "playbook": k.get("playbook", ""),
+                         "updated": k.get("updated", 0)} for k in sorted(learned.load(), key=lambda k: -k.get("updated", 0))],
             "user": os.environ.get("USERNAME", "").capitalize(),
         }
     )
@@ -829,6 +832,12 @@ async def save_nim_key(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "nim_key_set": bool(key), "brain_on": bool(key) and bool(state["settings"].get("ask_gemini"))})
 
 
+async def delete_learned(request: Request) -> JSONResponse:
+    """Forgets one skill IO taught itself."""
+    name = str((await request.json()).get("name", ""))
+    return JSONResponse({"ok": learned.delete(name)})
+
+
 async def test_nim_key(_request: Request) -> JSONResponse:
     """Checks the saved NVIDIA key with a free call (the model list): works (and whether all three brain models are
     offered to it), expired/invalid, or unreachable."""
@@ -1025,6 +1034,7 @@ app = Starlette(
         Route("/api/browser", save_browser, methods=["POST"]),
         Route("/api/keys/nim", save_nim_key, methods=["POST"]),
         Route("/api/keys/nim/test", test_nim_key, methods=["POST"]),
+        Route("/api/learned/delete", delete_learned, methods=["POST"]),
         Route("/api/browser/test", test_browser, methods=["POST"]),
         Route("/api/browser/folder", open_extension_folder, methods=["POST"]),
         Route("/api/toolcheck", run_toolcheck, methods=["POST"]),
