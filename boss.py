@@ -474,17 +474,37 @@ def hold_mouse(x: int, y: int, seconds: float) -> str:
     return f"held the mouse at ({int(x)}, {int(y)}) for {seconds:g}s"
 
 
+def window_on_top_at(title: str, pt: tuple[int, int]) -> bool:
+    """Whether a click at pt would land in the window whose title contains `title` (not in one covering it)."""
+    hit = find_window(title)
+    if not hit:
+        return True
+    user32 = ctypes.windll.user32
+    under = user32.WindowFromPoint(wt.POINT(*pt))
+    return user32.GetAncestor(under, 2) == hit[0]  # GA_ROOT
+
+
+def send_to_back(title: str) -> None:
+    """Puts the window whose title contains `title` at the bottom of the stack, without minimizing or moving it."""
+    if hit := find_window(title):
+        ctypes.windll.user32.SetWindowPos(hit[0], 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_BOTTOM, no move/size/activate
+
+
 def focus_window(title: str) -> str:
     """Brings the window whose title contains `title` to the front (fallback when App switch fails)."""
     hit = find_window(title)
     if not hit:
         return ""
     user32 = ctypes.windll.user32
-    user32.ShowWindow(hit[0], 9)  # SW_RESTORE
+    if user32.IsIconic(hit[0]):
+        user32.ShowWindow(hit[0], 9)  # SW_RESTORE (only when minimized: it would un-maximize a maximized window)
     # Windows only lets the foreground app hand over focus; a no-op Alt press satisfies that rule
     user32.keybd_event(0x12, 0, 0, 0)
     user32.SetForegroundWindow(hit[0])
     user32.keybd_event(0x12, 0, 2, 0)
+    user32.BringWindowToTop(hit[0])
+    user32.SetWindowPos(hit[0], 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)  # HWND_TOP, no move/size, show
+    time.sleep(0.15)
     n = user32.GetWindowTextLengthW(hit[0])
     buf = ctypes.create_unicode_buffer(n + 1)
     user32.GetWindowTextW(hit[0], buf, n + 1)
@@ -1823,8 +1843,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             except Exception as e:
                 reply = f"error: {e}"
             if focus:
-                await asyncio.to_thread(focus_window, focus)  # Chrome may have come to the front: back to the app
-            thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in tools})
+                # asking Duck.ai brings its Chrome tab forward over the app: send it behind everything, then the app to the front
+                await asyncio.to_thread(send_to_back, "Duck.ai")
+                await asyncio.to_thread(focus_window, focus)
+            thoughts, batch =("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in tools})
             log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
                 actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
             if reply.startswith("error: limit"):
@@ -2123,6 +2145,14 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         found_points[:] = (found_points + [pt])[-8:]
                         if name == "find_on_screen":
                             result = json.dumps(got)
+                        covered = False
+                        if name != "find_on_screen" and focus and not await asyncio.to_thread(window_on_top_at, focus, pt):
+                            await asyncio.to_thread(focus_window, focus)  # something covers the app there: bring it up first
+                            if not await asyncio.to_thread(window_on_top_at, focus, pt):
+                                result = f"error: another window covers the {focus} window at that spot; nothing was clicked"
+                                covered = True
+                        if name == "find_on_screen" or covered:
+                            pass
                         elif name == "click_on":
                             result = text_of(await win.call_tool("Click", {"loc": list(pt)})) + f" (found at {pt[0]}, {pt[1]})"
                         else:
