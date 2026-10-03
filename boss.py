@@ -923,11 +923,15 @@ screenshot. If an action fails, the rest are skipped and you're asked again."""
 # current state. It reads only about the first 500 characters, so it carries the role and the reply contract; the tool
 # list comes with the first message (it differs per task).
 DIRECTOR_STANDING = ("You direct IO, an agent operating a Windows PC; a small local model executes your actions exactly. Reply ONLY "
-                     'with JSON: {"thoughts":"one sentence","actions":[{"tool":"<name>","args":{...}}]}, 1-8 actions from the tools '
+                     'with JSON: {"thoughts":"one sentence","plan":"your current long-term plan, short","actions":[{"tool":"<name>",'
+                     '"args":{...}}]}, 1-8 actions from the tools '
                      "IO lists. Describe click targets by look and position. Use wait when things need time. When a task is done, "
                      "call done with the answer. If something keeps failing, change approach.")
 DIRECTOR_BRIEF = """IO: {goal}
-{shot}{screen}Recent actions and results, oldest first:
+{shot}{plan}What guides say about it (for long-term planning):
+{guide}
+
+{screen}Recent actions and results, oldest first:
 {history}
 
 Tools:
@@ -975,6 +979,16 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, **parts: st
         for k in budgets:
             budgets[k] = int(budgets[k] * 0.75)
     return prompt[:limit]
+
+
+def director_plan_of(text: str) -> str:
+    """The long-term plan the director keeps in its replies ('' if none)."""
+    m = re.search(r"\{.*\}", text, re.S)
+    try:
+        plan = json.loads(m.group(0)).get("plan") if m else ""
+    except (ValueError, AttributeError):
+        return ""
+    return (plan if isinstance(plan, str) else json.dumps(plan, ensure_ascii=False))[:600]
 
 
 def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]]:
@@ -1868,10 +1882,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     base["content"] = base["content"].split("\n\nWhat you learned from research:")[0] + \
                         "\n\nWhat you learned from research:\n" + "\n---\n".join(guide[-3:])
 
-            # research mode first: learn how the thing works before acting on it
-            # (a director already knows how things work: it only needs the screen and the tools)
+            # research mode first: learn how the thing works before acting on it (a director gets the notes as long-term
+            # guidance: the screen alone doesn't say what the game's progression is)
             try:
-                if not director:
+                if loop:
                     t0 = time.time()
                     q = await asyncio.to_thread(local_chat, ("Write one Google search query (under 10 words) that finds a beginner guide for this goal. Name the game or app "
                                                  "itself, not the program or emulator it runs in. Output only the query."),
@@ -1911,12 +1925,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 return buf.getvalue()
         director_queue: list[tuple[str, dict]] = []
         director_paused_until = 0.0
-        director_seen = director_rounds = 0
-        director_full = False
+        director_seen = director_rounds = director_guides = 0
+        director_full, director_plan = False, ""
 
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
-            nonlocal director_seen, director_rounds, director_full
+            nonlocal director_seen, director_rounds, director_full, director_plan, director_guides
             await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
             keep = isinstance(gemini, DuckAI)
@@ -1927,18 +1941,24 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
             if keep and gemini.in_chat and director_rounds % (5 if image else 20):
                 new = steps_log[director_seen:] or ["(no actions ran)"]
-                prompt = ("Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3500:] +
+                fresh = (guide[director_guides:] if loop else [])  # research done since its last round
+                prompt = ("".join(f"New from guides: {g[:700]}\n" for g in fresh) +
+                          "Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3000:] +
                           ("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
                           "\nIf the same thing keeps not working, change approach. Next JSON.")
             else:
                 # with Duck.ai the rules live in its standing instructions; if it stopped answering in JSON, send them inline again
                 prompt = fit_director_prompt(
                     gemini.max_chars, DIRECTOR_BRIEF if keep and not director_full else DIRECTOR_PROMPT, goal=f"Goal (it never ends; the user stops it): {task}" if loop else
-                    f"Task (do it, then call done with the answer for the user): {task}", shot="A screenshot of the window IO works in is attached.\n" if image else "", guide="",
+                    f"Task (do it, then call done with the answer for the user): {task}", shot="A screenshot of the window IO works in is attached.\n" if image else "",
+                    # its own plan and the research carry over: every 5 screenshots it starts a fresh conversation with no memory
+                    plan=f"Your plan so far: {director_plan}\n\n" if director_plan else "",
+                    guide=("\n---\n".join(guide[-2:]) if loop else "") or "(none)",
                     screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
                     history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
                     catalog=tool_catalog(usable))
             director_seen, director_rounds = len(steps_log), director_rounds + 1
+            director_guides = len(guide) if loop else 0
             t0 = time.time()
             try:
                 reply = await (gemini.ask(prompt, image, keep=True, instructions=DIRECTOR_STANDING) if keep else gemini.ask(prompt, image))
@@ -1952,6 +1972,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 await asyncio.to_thread(focus_window, focus or focus_hint)
             thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in usable})
             if not reply.startswith("error"):
+                director_plan = director_plan_of(reply) or director_plan
                 director_full = not batch  # an answer that isn't usable JSON: the next conversation gets the full rules inline
                 if not batch:
                     director_rounds = 0
@@ -1982,7 +2003,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         found_points: list[tuple[int, int]] = []  # recent find_on_screen answers: loop clicks must come from one
 
         for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
-            if loop and not director and step - last_research >= LOOP_RESEARCH_EVERY and last_info:
+            if loop and step - last_research >= LOOP_RESEARCH_EVERY and (last_info or director_plan):
                 # research mode again: look up whatever the latest look says it's facing, so it doesn't circle
                 last_research = step
                 try:
@@ -1990,7 +2011,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     q = await asyncio.to_thread(local_chat, "An assistant is working on the goal below and has seen the screen described below. Write "
                                                 "one Google search query (under 12 words) that would explain how to make progress on what the screen "
                                                 "shows now (name the game or app itself). Output only the query.",
-                                                f"Goal: {task}\nScreen: {last_info[:800]}", 40, False)
+                                                f"Goal: {task}\nScreen: {(last_info or director_plan)[:800]}", 40, False)
                     brief = await researcher.ask(q.strip().strip('"'), task)
                     if not brief.startswith("error"):
                         guide.append(f"({q.strip()}) {brief}")
