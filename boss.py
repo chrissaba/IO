@@ -977,8 +977,10 @@ def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]
             a = {"tool": a, "args": {k: v for k, v in data.items() if k not in ("thoughts", "action", "actions")}}
         name = a.get("tool") or a.get("name") if isinstance(a, dict) else None
         if name in allowed:
-            args = a.get("args") or a.get("arguments") or {}
-            out.append((name, args if isinstance(args, dict) else {}))
+            args = a.get("args") or a.get("arguments") or a.get("parameters") or a.get("input")
+            if not isinstance(args, dict):  # or the arguments sit next to the tool name
+                args = {k: v for k, v in a.items() if k not in ("tool", "name", "args", "arguments", "parameters", "input")}
+            out.append((name, args))
     return str(data.get("thoughts") or "")[:400], out[:8]
 
 
@@ -1882,7 +1884,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
             keep = isinstance(gemini, DuckAI)
-            usable = [t for t in tools if loop or t["function"]["name"] in DIRECTOR_TOOLS]
+            # a loop locked on a window already has a small toolset; anything else gets the compact director list
+            usable = [t for t in tools if (loop and focus) or t["function"]["name"] in DIRECTOR_TOOLS | LOOP_TOOLS]
             # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
             # A fresh conversation (with the full brief) when the old one fails or has grown long.
             # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
