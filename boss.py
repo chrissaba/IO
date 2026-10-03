@@ -9,7 +9,9 @@ Usage:  python boss.py "open notepad and type hello"
 import argparse
 import asyncio
 import base64
+import contextvars
 import ctypes
+import dataclasses
 import ctypes.wintypes as wt
 import hashlib
 import io
@@ -18,7 +20,9 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -728,7 +732,7 @@ class Eyes:
         messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": text}]}]
         for client, model in getattr(self, "remote", None) or []:  # the NVIDIA brain's vision models, in turn
             try:
-                reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=1500, messages=messages)
+                reply = nim.create(client, model=model, temperature=0.2, max_tokens=1500, messages=messages)
                 answer = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
                 if answer:
                     return answer
@@ -846,7 +850,9 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
     return "\n".join(out) + tip
 
 
-DISAMBIGUATION = re.compile(r"\b(may|can|most commonly|commonly|usually|often) (also )?refers? to\b|\(disambiguation\)|topics referred to by the same term", re.I)
+# a page listing meanings ("Mercury may refer to:"), not an article whose hatnote points at one ("For other uses, see NYC
+# (disambiguation)", which every big Wikipedia article has: it made Tokyo and New York read as lists of meanings)
+DISAMBIGUATION = re.compile(r"\b(may|can) (also )?refer to\b|topics referred to by the same term", re.I)
 LINKS_JS = ("() => [...(document.querySelector('#mw-content-text, article, main') || document.body).querySelectorAll('a')]"
             ".map(a => [a.innerText.trim(), a.href]).filter(([t, h]) => t && h.startsWith(location.origin) && !h.includes('#')).slice(0, 300)")
 
@@ -949,6 +955,139 @@ class Researcher:
                 log("warning", text=f"research couldn't read {url[:80]}: {e}")
         notes = await asyncio.to_thread(local_chat, RESEARCH_SYSTEM, f"Task: {task}\nQuestion: {question}\n\n" + "\n\n".join(sources)[:12000], 450, False)
         return notes or "error: couldn't make notes from the results"
+
+
+# ---------- Ultracode: a plan first, then sub-agents doing its parts in parallel (NVIDIA brain only) ----------
+
+ULTRA_MAX_SUBTASKS = 8
+ULTRA_MAX_AGENTS = nim.MAX_PARALLEL  # sub-agents working at once (the user's cap: 5); NVIDIA requests are capped the same
+ULTRA_HELPER_SECS = 240  # a helper's whole budget; the main agent takes over its part with what it found
+ULTRA_CALLS_PER_TURN = 3  # tool calls a helper may make per reply; the rest are dropped (GLM once sent 54 searches at once)
+ANNOUNCING = re.compile(r"^\s*(i'?ll|i will|let me|i'?m going to|i am going to|first,? i|next,? i|now,? i)\b", re.I)
+# what a sub-agent may run: its own hidden browser and read-only file and PC facts; never the mouse, keyboard or windows
+ULTRA_SUB_TOOLS = ["web_search", "read_page", "list_files", "find_file", "read_file", "pc_info", "app_info", "calc"]
+ULTRA_PLAN = """You plan for IO, an AI agent on a Windows PC, in Ultracode mode: helpers work on separate parts of a request
+at the same time, then the main agent finishes it.
+Split the user's request into subtasks. Each has a kind:
+- "parallel": needs no mouse, keyboard or windows: Google searches, reading web pages, finding or reading files, facts
+  about the PC, maths. Helpers do these at the same time, each with its own hidden browser.
+- "desktop": opens, clicks, types into or changes apps, windows, settings or files. The main agent does these afterwards,
+  one at a time, with the helpers' results.
+Make each parallel subtask specific and self-contained (one item to look up, one source to read, one folder to check),
+finishable in a few searches or reads. Use 2-6 parallel subtasks when the request has separate parts (several things to
+look up, compare or gather). "deps" lists the ids whose results a subtask needs first (keep it empty when it can).
+If nothing in the request is worth doing in parallel, return a single subtask.
+Reply ONLY with JSON: {"subtasks": [{"id": "s1", "goal": "...", "kind": "parallel", "deps": []}]}"""
+ULTRA_SUB_SYSTEM = """You are a helper sub-agent of IO, an AI agent on a Windows PC. You do ONE subtask of a bigger request
+while other helpers do theirs. You have a hidden browser of your own (web_search, read_page) and can read files; you
+can't use the mouse, keyboard or windows and can't ask the user. Work quickly: a few calls, then done(summary) with the
+facts you found (names, numbers, dates, file paths, page addresses), complete enough that the main agent can use them
+without redoing your work. If Google asks for a check, don't search again: read_page a source you know instead (the
+official site, or https://en.wikipedia.org/wiki/<Topic>). If part of it needs the desktop or the user's OK, say so in done."""
+ULTRA_DONE = {"type": "function", "function": {
+    "name": "done", "description": "Finish your subtask with what you found.",
+    "parameters": {"type": "object", "properties": {"summary": {"type": "string", "description": "The facts found, with sources"}},
+                   "required": ["summary"]}}}
+
+
+HELPER_PROFILES = HERE / "data" / "helper-profiles"  # one per helper slot (0-4): two browsers can't share a profile
+PROFILE_CACHES = ("Cache", "Code Cache", "GPUCache", "GrShaderCache", "ShaderCache", "GraphiteDawnCache", "DawnCache",
+                  "Crashpad", "Service Worker", "BrowserMetrics*", "*.pma", "Singleton*", "lockfile", "*.lock")
+
+
+def helper_profile(slot: int) -> Path:
+    """Helper slot's browser profile, first made as a copy of the researcher's (its Google cookies and consent): a brand
+    new profile gets Google's "unusual traffic" check on its first search."""
+    dest = HELPER_PROFILES / str(slot)
+    if not dest.exists():
+        src = HERE / "data" / "research-profile"
+        try:
+            if src.exists():
+                shutil.copytree(src, dest, ignore=shutil.ignore_patterns(*PROFILE_CACHES), ignore_dangling_symlinks=True,
+                                dirs_exist_ok=True, copy_function=lambda a, b: shutil.copy2(a, b) if os.path.exists(a) else None)
+        except (OSError, shutil.Error) as e:  # files the researcher has open: whatever copied is enough
+            log("warning", text=f"helper profile {slot}: copied partly ({type(e).__name__})")
+        dest.mkdir(parents=True, exist_ok=True)
+    return dest
+
+
+def strict_json(text: str) -> bool:
+    """Whether a tool call's arguments are a whole JSON object (NVIDIA refuses a conversation holding a broken one)."""
+    try:
+        return isinstance(json.loads(text), dict)
+    except ValueError:
+        return False
+
+
+class SubBrowser:
+    """A helper's own headless browser (Playwright MCP on its slot's profile), started on its first web call and closed
+    with the helper's own exit stack (entered and left in the helper's task)."""
+
+    def __init__(self, stack: AsyncExitStack, slot: int) -> None:
+        self.stack, self.slot, self.session, self.lock = stack, slot, None, asyncio.Lock()
+
+    async def call_tool(self, name: str, args: dict):
+        async with self.lock:
+            if self.session is None:
+                profile = await asyncio.to_thread(helper_profile, self.slot)
+                params = StdioServerParameters(command="node", args=[str(BROWSER_CLI), "--headless", "--browser", "msedge",
+                                                                     "--user-data-dir", str(profile),
+                                                                     "--output-dir", str(HERE / "data" / "research"),
+                                                                     "--codegen", "none", "--image-responses", "omit"])
+                r, w = await self.stack.enter_async_context(stdio_client(params, errlog=sys.stderr))
+                self.session = await self.stack.enter_async_context(ClientSession(r, w))
+                await self.session.initialize()
+        return await self.session.call_tool(name, args)
+
+
+def ultra_subtasks(plan: dict | None) -> list[dict]:
+    """The planner's subtasks, cleaned: safe unique ids, known deps only, at most ULTRA_MAX_SUBTASKS parallel ones, and a
+    parallel one that needs a desktop one, or sits in a dependency loop, becomes desktop (the main agent does it after)."""
+    def safe(x) -> str:  # ids reach the panel's HTML: letters, digits, - and _ only
+        return re.sub(r"[^A-Za-z0-9_-]", "", str(x))[:24]
+
+    subs, seen, renamed, n_par = [], set(), {}, 0
+    raw = (plan or {}).get("subtasks") if isinstance(plan, dict) else None
+    for i, s in enumerate(raw if isinstance(raw, list) else []):
+        if not isinstance(s, dict) or not str(s.get("goal") or "").strip():
+            continue
+        kind = "desktop" if str(s.get("kind", "")).lower().startswith("desk") else "parallel"
+        if kind == "parallel":
+            if n_par >= ULTRA_MAX_SUBTASKS:
+                continue
+            n_par += 1
+        base = safe(s.get("id") or "") or f"s{i + 1}"
+        sid, k = base, 2
+        while sid in seen:
+            sid, k = f"{base}_{k}", k + 1
+        seen.add(sid)
+        renamed.setdefault(safe(s.get("id") or ""), sid)
+        deps = s.get("deps") or []
+        deps = [deps] if isinstance(deps, (str, int)) else deps if isinstance(deps, list) else []
+        subs.append({"id": sid, "goal": str(s["goal"]).strip()[:600], "kind": kind, "deps": [safe(d) for d in deps if isinstance(d, (str, int))]})
+    for s in subs:
+        s["deps"] = [renamed[d] for d in s["deps"] if d in renamed and renamed[d] != s["id"]]
+    kinds = {s["id"]: s["kind"] for s in subs}
+    changed = True
+    while changed:  # desktop-ness flows down the deps
+        changed = False
+        for s in subs:
+            if s["kind"] == "parallel" and any(kinds[d] == "desktop" for d in s["deps"]):
+                s["kind"] = kinds[s["id"]] = "desktop"
+                changed = True
+    done_ids, order = set(), []
+    par = [s for s in subs if s["kind"] == "parallel"]
+    while True:  # topological: whatever can never run (a cycle) is left out
+        ready = [s for s in par if s["id"] not in done_ids and all(d in done_ids for d in s["deps"])]
+        if not ready:
+            break
+        for s in ready:
+            done_ids.add(s["id"])
+            order.append(s)
+    for s in par:  # caught in a dependency loop: the main agent does it, after the helpers
+        if s["id"] not in done_ids:
+            s["kind"], s["deps"] = "desktop", []
+    return order + [s for s in subs if s["kind"] == "desktop"]
 
 
 RESEARCH_GEMINI = """Research for an AI agent that is doing this on a PC: {task}
@@ -1751,7 +1890,7 @@ def make_director(stack: AsyncExitStack, options: dict):
 
 async def meanings_hint(session, page: str, task: str) -> str:
     """On a page that lists different meanings of a word, show the links that fit the task, so the agent opens the right one."""
-    if not DISAMBIGUATION.search(page[:6000]):
+    if not DISAMBIGUATION.search(page[:1500]):  # the top of the page: the hatnote and lead, not the article body
         return ""
     try:
         raw = text_of(await session.call_tool("browser_evaluate", {"function": LINKS_JS}))
@@ -1912,14 +2051,27 @@ def refocus(title: str) -> str:
     return focus_window(title)
 
 
+# the Ultracode sub-agent a record comes from ({"id", "label"}; None = the main agent). A context variable, so records
+# logged from worker threads (asyncio.to_thread copies the context) and from a sub-agent's tools carry the tag too
+AGENT: contextvars.ContextVar = contextvars.ContextVar("agent", default=None)
+_log_lock = threading.Lock()  # sub-agents log at the same time, some from worker threads
+
+
 def log(event: str, **data) -> None:
-    record = {"t": round(time.time(), 2), "event": event, **data}
-    line = json.dumps(record, ensure_ascii=False)
-    print(line[:600], flush=True)
-    for listener in listeners:
-        listener(record)
-    with open(HERE / "logs" / "boss.jsonl", "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    agent = AGENT.get()
+    if agent and agent["stop"].is_set():
+        return  # a helper's thread still finishing after Stop: its records would land in the next task
+    record = {"t": round(time.time(), 2), "event": event, **({"agent": agent["id"], "agent_label": agent["label"]} if agent else {}), **data}
+    line = json.dumps(record, ensure_ascii=False, default=str)
+    if nim.nim_key() and nim.nim_key() in line:  # never the NVIDIA key, in the log file or on screen
+        line = nim.scrub(line)
+        record = json.loads(line)
+    with _log_lock:
+        print(line[:600], flush=True)
+        for listener in listeners:
+            listener(record)
+        with open(HERE / "logs" / "boss.jsonl", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 # ---------- memory: short notes that carry across tasks (data/memory.json) ----------
@@ -2243,37 +2395,58 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             out.append(m)
         return out
 
-    def brain_create(**kw):
-        """One step of the agent loop. With the NVIDIA brain it goes round GLM-5.3 Flash, DeepSeek V4.1 Flash and Kimi K3
-        (starting from the one that answered last) until one answers, two full rounds; the local model is only the very last
-        resort. Without it, the local model as before."""
-        if not remote_brain:
+    def make_brain(at: list, local_fallback: bool = True, stop: threading.Event | None = None, timeout: float | None = None):
+        """A brain_create for one agent: `at` holds the index of the NVIDIA model that answered it last (each Ultracode
+        helper has its own). `stop` ends a helper's retries once Stop is pressed (its thread outlives the task);
+        `timeout` caps each request (helpers don't wait out DeepSeek's long queue)."""
+
+        def create(**kw):
+            """One step of the agent loop. With the NVIDIA brain it goes round GLM-5.3 Flash, DeepSeek V4.1 Flash and Kimi
+            K3 (starting from the one that answered last) until one answers, two full rounds; the local model is only the
+            main agent's very last resort. Without it, the local model as before."""
+            if not remote_brain:
+                return boss.chat.completions.create(model=BOSS_MODEL, **kw)
+            n, last = len(nim.BRAIN_MODELS), None
+            for attempt in range(2 * n):
+                if stop is not None and stop.is_set():
+                    raise RuntimeError("stopped")
+                if attempt == n and (stop.wait(5) if stop is not None else time.sleep(5)):
+                    raise RuntimeError("stopped")  # every model failed once: a short breather before the second round
+                i = (at[0] + attempt) % n
+                client, model = brain_chain[i]
+                try:
+                    kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
+                    if model in nim.TEXT_ONLY:
+                        kw2["messages"] = text_only(kw2["messages"])
+                    if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
+                        kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
+                    if model in nim.NO_REQUIRED_TOOLS and kw2.get("tool_choice") == "required":
+                        kw2.pop("tool_choice")
+                    if timeout:
+                        kw2["timeout"] = timeout
+                    r = nim.create(client, model=model, **kw2)
+                    m = r.choices[0].message
+                    words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
+                    if not (m.tool_calls or re.search(r"[^\W\d_]{3}", words)):
+                        # nothing in it, or token junk ("<|close|>!!!!", seen from Kimi K3): a failure, next model
+                        raise RuntimeError("empty answer")
+                    if at[0] != i:
+                        log("warning", text=f"the brain is now {nim.BRAIN_LABELS.get(model, model)}")
+                    at[0] = i
+                    return r
+                except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
+                    last = e
+                    log("warning", text=f"{nim.BRAIN_LABELS.get(model, model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
+                    if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):
+                        raise RuntimeError("stopped")  # too many requests: a moment before the next model
+            if not local_fallback:
+                raise last
+            log("warning", text=f"no NVIDIA model answered ({type(last).__name__}); the local model takes this step")
             return boss.chat.completions.create(model=BOSS_MODEL, **kw)
-        n, last = len(nim.BRAIN_MODELS), None
-        for attempt in range(2 * n):
-            if attempt == n:
-                time.sleep(5)  # every model failed once: a short breather before the second round
-            i = (brain_at[0] + attempt) % n
-            client, model = brain_chain[i]
-            try:
-                kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
-                if model in nim.TEXT_ONLY:
-                    kw2["messages"] = text_only(kw2["messages"])
-                if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
-                    kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
-                r = client.chat.completions.create(model=model, **kw2)
-                m = r.choices[0].message
-                if not (m.tool_calls or (m.content or "").strip()):
-                    raise RuntimeError("empty answer")  # an answer with nothing in it is a failure: next model
-                if brain_at[0] != i:
-                    log("warning", text=f"the brain is now {model}")
-                brain_at[0] = i
-                return r
-            except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
-                last = e
-                log("warning", text=f"{model} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
-        log("warning", text=f"no NVIDIA model answered ({type(last).__name__}); the local model takes this step")
-        return boss.chat.completions.create(model=BOSS_MODEL, **kw)
+
+        return create
+
+    brain_create = make_brain(brain_at)
 
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:
@@ -2892,6 +3065,160 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         progress_notes = 0
         if not loop:
             focus = ""
+
+        async def ultracode() -> None:
+            """Ultracode: the brain writes a plan, sub-agents do its parallel parts (ULTRA_MAX_AGENTS at once, each with its
+            own hidden browser and its own NVIDIA model to start on), and their findings go into the main agent's request.
+            The main agent then does the desktop parts, with every usual check, and answers."""
+            t0 = time.time()
+            try:
+                limits = actions.constraints_text(ctx.constraints)
+                r = await asyncio.to_thread(brain_create, temperature=0.2, max_tokens=1500, messages=[
+                    {"role": "system", "content": ULTRA_PLAN},
+                    {"role": "user", "content": f"Request: {standalone}" + (f"\nThe user's limits: {limits}" if limits else "")}])
+                subs = ultra_subtasks(loose_json(re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S)))
+            except Exception as e:
+                log("warning", text=f"Ultracode couldn't plan ({type(e).__name__}); working step by step")
+                return
+            par = [s for s in subs if s["kind"] == "parallel"]
+            desk = [s for s in subs if s["kind"] == "desktop"]
+            log("plan", source="ultracode", secs=round(time.time() - t0, 1), subtasks=subs,
+                plan="\n".join(f"{i}. {s['goal']}" + (" (main agent)" if s["kind"] == "desktop" else "") for i, s in enumerate(subs, 1)))
+            if len(par) < 2:
+                log("warning", text="Ultracode: nothing here is worth splitting up; working step by step")
+                return
+            names = [n for n in ULTRA_SUB_TOOLS if executable(n) and task_allows(n)]
+            stools = actions.openai_tools(names) + [ULTRA_DONE]
+            sub_steps = max(5, min(15, max_steps // 2))
+            google = {"ok": "web_search" in names}  # shared: once Google asks for a check, no helper searches it again
+            gate = asyncio.Semaphore(ULTRA_MAX_AGENTS)
+            stop = threading.Event()  # set when this phase ends (Stop included): helper threads still running give up
+            slots: asyncio.Queue = asyncio.Queue()  # browser profile slots: one per helper working at a time
+            for k in range(ULTRA_MAX_AGENTS):
+                slots.put_nowait(k)
+            results: dict[str, str] = {}
+            log("agents", agents=[{"id": s["id"], "label": s["goal"][:90]} for s in par])
+
+            async def sub_agent(n: int, sub: dict) -> None:
+                async with gate:
+                    slot = slots.get_nowait()  # the gate guarantees one is free
+                    AGENT.set({"id": sub["id"], "label": sub["goal"][:90], "stop": stop})  # this task's own context: tags its records
+                    # every helper starts on GLM (measured 2026-10-03: it took 4 helpers at once without slowing; Kimi K3
+                    # sometimes stops with an empty answer even when a tool call is required, DeepSeek takes minutes)
+                    first = [0]
+                    brain = make_brain(first, local_fallback=False, stop=stop, timeout=180)
+                    t1, status, answer, last, nudged = time.time(), "done", "", "", False
+                    try:
+                        async with asyncio.timeout(ULTRA_HELPER_SECS), AsyncExitStack() as sub_stack:  # entered and left in this task (the MCP client needs that)
+                            sctx = dataclasses.replace(
+                                ctx, win=None, ask=None, research=None, tab_open=False, opened=set(), dialogs=set(), found_points=[],
+                                hud=[], game_cache={}, fails={}, last_key="", allowed=lambda name: name in names,
+                                browser=SubBrowser(sub_stack, slot) if {"web_search", "read_page"} & set(names) else None)
+                            inputs = "".join(f"\n\nResult of {d} (another helper): {results.get(d, '')[:2500]}" for d in sub["deps"])
+                            msgs = [{"role": "system", "content": ULTRA_SUB_SYSTEM},
+                                    {"role": "user", "content": f"The whole request (for context; other helpers do the other parts): {standalone}"
+                                                                f"\n\nYour subtask: {sub['goal']}{inputs}"}]
+                            for step in range(1, sub_steps + 1):
+                                # a tool call every turn (done included): a helper can't end on "Let me search for...".
+                                # Each turn tries GLM first again: a helper that once fell back to DeepSeek
+                                # shouldn't spend a minute a turn there for the rest of its work
+                                first[0] = 0
+                                tools_now = stools if google["ok"] else [t for t in stools if t["function"]["name"] != "web_search"]
+                                r = await asyncio.to_thread(brain, messages=msgs, tools=tools_now, temperature=0.2, max_tokens=1200)
+                                m = r.choices[0].message
+                                # a few calls a turn, and only whole ones: a reply cut off mid-call has broken JSON that
+                                # NVIDIA then refuses in every later request of this conversation
+                                calls = [c for c in (m.tool_calls or []) if strict_json(c.function.arguments or "{}")][:ULTRA_CALLS_PER_TURN]
+                                msgs.append({"role": "assistant", "content": m.content or "",
+                                             **({"tool_calls": [{"id": c.id, "type": "function", "function": {
+                                                 "name": c.function.name, "arguments": c.function.arguments or "{}"}} for c in calls]} if calls else {})})
+                                if not calls:
+                                    text = re.sub(r"<think>.*?</think>", "", m.content or "", flags=re.S).strip()
+                                    if text and not (ANNOUNCING.match(text) and not nudged):
+                                        answer = text  # its answer in plain words (not "Let me search for...")
+                                        break
+                                    nudged = True
+                                    msgs.append({"role": "user", "content": "Call a tool now, or done(summary) with what you found."})
+                                    continue
+                                finished = False
+                                for c in calls:
+                                    args = loose_json(c.function.arguments or "{}") or {}
+                                    if c.function.name == "done":
+                                        answer, finished = str(args.get("summary") or "").strip() or last, True
+                                        break
+                                    t2 = time.time()
+                                    if c.function.name not in names:
+                                        res = ("error:BLOCKED: helpers can't use that (no mouse, keyboard or windows); "
+                                               "say in done what the main agent should do")
+                                    elif c.function.name == "web_search" and not google["ok"]:
+                                        res = ("error:BLOCKED: Google is asking for a check, so helpers don't search it any more. "
+                                               "read_page a source you know (the official site, or https://en.wikipedia.org/wiki/<Topic>)")
+                                    else:
+                                        res = actions.constraint_block(c.function.name, args, sctx) or await actions.call(c.function.name, args, sctx)
+                                        if c.function.name == "web_search" and "Google asks for a check" in str(res):
+                                            google["ok"] = False  # never hammer it: every helper stops searching
+                                            res = str(res) + ". Don't search again: read_page a source you know instead."
+                                    res = str(res)[:6000] or "ok"
+                                    if res.startswith("ok"):
+                                        last = res[:1500]
+                                    log("tool", step=step, name=c.function.name, args=args, secs=round(time.time() - t2, 1), result=res[:300])
+                                    msgs.append({"role": "tool", "tool_call_id": c.id, "content": res})
+                                if finished:
+                                    break
+                            else:
+                                answer = "(ran out of steps) " + last
+                    except asyncio.CancelledError:
+                        raise
+                    except TimeoutError:  # one slow queue mustn't hold up the whole task: what it found goes on
+                        status, answer = "error", (f"(out of time after {ULTRA_HELPER_SECS}s) What it had found: {last}" if last
+                                                   else f"error: out of time after {ULTRA_HELPER_SECS}s")
+                    except Exception as e:  # one helper failing never stops the others; what it found so far is kept
+                        while isinstance(e, BaseExceptionGroup) and e.exceptions:  # the browser's task group wraps it
+                            e = e.exceptions[0]
+                        why = f"{type(e).__name__}: {nim.scrub(str(e))[:160]}"
+                        status, answer = "error", (f"(stopped early: {why}) What it had found: {last}" if last else f"error: {why}")
+                    finally:
+                        slots.put_nowait(slot)
+                    results[sub["id"]] = answer or "(no result)"
+                    log("agent_done", status=status, summary=results[sub["id"]][:600], secs=round(time.time() - t1, 1))
+
+            pending, running, n = list(par), {}, 0
+            try:
+                async with asyncio.TaskGroup() as tg:  # Stop cancels every helper
+                    while pending or running:
+                        for s in [s for s in pending if all(d in results for d in s["deps"])]:
+                            pending.remove(s)
+                            running[tg.create_task(sub_agent(n, s))] = s["id"]
+                            n += 1
+                        if not running:
+                            break
+                        finished_tasks, _ = await asyncio.wait(running, return_when=asyncio.FIRST_COMPLETED)
+                        for t in finished_tasks:
+                            running.pop(t, None)
+            finally:
+                stop.set()  # helper threads still inside a request stop retrying and stop logging
+            findings = "\n\n".join(f"[{s['id']}] {s['goal']}\n{results.get(s['id'], '(no result)')}" for s in par)
+            steps_log.extend(f"helper {s['id']} -> {results.get(s['id'], '')[:1500]}" for s in par)
+            note = ("\n\nUltracode: helpers already did these parts in parallel. Use their findings and don't redo them:\n\n"
+                    + findings[:30000] + "\n\n"
+                    + ("Now do these desktop steps yourself, in order: " + "; ".join(f"{s['id']}: {s['goal']}" for s in desk)
+                       + ". Then call done with the full answer." if desk else
+                       "Now check the findings fit together and call done with the full answer for the user (take a quick extra "
+                       "look only if something is clearly missing or a helper failed)."))
+            if isinstance(messages[head - 1].get("content"), str):
+                messages[head - 1]["content"] += note
+            else:
+                messages.append({"role": "user", "content": note.strip()})
+            log("ultra", agents=len(par), secs=round(time.time() - t0, 1))
+
+        if options.get("ultracode") and layer and not loop and route.kind not in ("chat", "images", "knowledge"):
+            if not remote_brain:
+                log("warning", text="Ultracode needs the NVIDIA brain (Settings > Brain); working step by step")
+            elif images:
+                log("warning", text="Ultracode skipped: this message works from pictures" +
+                    (" from earlier in the chat" if options.get("images_from_earlier") else "") + "; working step by step")
+            else:
+                await ultracode()
 
         for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
             if loop and step - last_research >= LOOP_RESEARCH_EVERY and (last_info or director_plan):

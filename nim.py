@@ -1,8 +1,9 @@
-"""GLM-5.3 Flash on NVIDIA's API catalog as IO's director: an official OpenAI-compatible endpoint (no browser window), with
-images, a 1M-token context and 40 requests a minute. The key lives in data/nim_key.txt (you paste it there or in Settings);
-IO never prints it."""
+"""NVIDIA's API catalog as IO's brain: an official OpenAI-compatible endpoint (no browser window) with GLM-5.3 Flash,
+DeepSeek V4.1 Flash and Kimi K3, 40 requests a minute. The key lives in data/nim_key.txt (you paste it there or in
+Settings); IO never prints it."""
 import asyncio
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -25,7 +26,44 @@ NIM_MODELS = [
 # GLM-5.3 Flash (tools + images), DeepSeek V4.1 Flash (tools, text only, very slow queue: ~170 s a turn), Kimi K3 (tools
 # only with tool_choice="required": on "auto" it returns nothing)
 BRAIN_MODELS = ["z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "moonshotai/kimi-k3"]
+BRAIN_LABELS = {"z-ai/glm-5.3-flash": "GLM-5.3 Flash", "deepseek-ai/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+                "moonshotai/kimi-k3": "Kimi K3"}
 NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
+NO_REQUIRED_TOOLS = {"deepseek-ai/deepseek-v4.1-flash"}  # its queue never answered a tool_choice="required" request
+# Ultracode: never more than this many requests to NVIDIA in flight at once, from all of IO (sub-agents, the main brain,
+# look_at_screen); the user's cap, well under the 40-a-minute limit
+MAX_PARALLEL = 5
+PER_MINUTE = 36  # requests started in any 60 s, from all of IO (NVIDIA allows 40)
+SLOT_WAIT = 330  # seconds to wait for a free slot before giving up on this request (longer than any request's timeout)
+_slots = threading.BoundedSemaphore(MAX_PARALLEL)
+_sent: list[float] = []
+_sent_lock = threading.Lock()
+
+
+def _pace() -> None:
+    """Waits until a request fits in the per-minute budget, then books it."""
+    while True:
+        with _sent_lock:
+            now = time.time()
+            _sent[:] = [t for t in _sent if now - t < 60]
+            if len(_sent) < PER_MINUTE:
+                _sent.append(now)
+                return
+            wait = 60 - (now - _sent[0]) + 0.05
+        time.sleep(wait)
+
+
+def create(client, **kw):
+    """client.chat.completions.create, holding one of the MAX_PARALLEL slots while the request is out, and paced under
+    the per-minute limit."""
+    if not _slots.acquire(timeout=SLOT_WAIT):
+        raise TimeoutError(f"all {MAX_PARALLEL} NVIDIA slots stayed busy for {SLOT_WAIT}s")
+    try:
+        _pace()
+        return client.chat.completions.create(**kw)
+    finally:
+        _slots.release()
+
 TEXT_ONLY = {"deepseek-ai/deepseek-v4.1-flash"}  # gets the conversation without screenshots (it calls look_at_screen)
 SLOW_AFTER = 20.0  # seconds: a model averaging more than this is passed over while a quicker one is available
 RETRY_SLOW_EVERY = 6  # rounds: then the best model gets another chance (queues clear)

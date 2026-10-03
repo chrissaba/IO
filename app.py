@@ -55,13 +55,16 @@ EYES_LOAD = {
     "n_parallel": 1,
     "speculative_type": "off",
 }
-MAX_EVENTS_PER_TASK = 200
+MAX_EVENTS_PER_TASK = 600  # an Ultracode task logs for up to 5 helpers at once
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
-    "browser_mode": "edge", "model_mode": "fast", "ask_gemini": False, "gemini_mode": "nim", "advisor_role": "director", "focus_glow": True, "theme": "system",
-    "director_order": "glm_first",  # gemini_mode nim: GLM-5.3 Flash then Duck.ai, or Duck.ai first when speed matters
+    "browser_mode": "edge", "model_mode": "fast", "focus_glow": True, "theme": "system",
+    # the brain: ask_gemini on = the NVIDIA brain (GLM-5.3 Flash, DeepSeek V4.1 Flash, Kimi K3) runs tasks once a key is
+    # saved; off = the local models alone. (The name is from when the remote AI was Gemini; boss.py and the bench read it.)
+    "ask_gemini": True, "gemini_mode": "nim",
+    "ultracode": False,  # by default: a plan first, then up to 5 helpers work on its parts at once (per message too)
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -85,25 +88,32 @@ def load_state() -> None:
     try:
         saved = json.loads(STORE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        state["settings"]["brain_v2"] = True  # a fresh install: nothing to migrate
         return
     state.update({k: saved.get(k, v) for k, v in state.items()})
     state["settings"] = {**DEFAULT_SETTINGS, **state["settings"]}
-    for old in ("planner_mode", "share_context"):  # from when IO had a cloud planner
-        state["settings"].pop(old, None)
-    use_glm_once()
-
-
-def use_glm_once() -> bool:
-    """GLM-5.3 Flash (NVIDIA) becomes the director once its key is there: a one-time switch from the earlier choice
-    (Duck.ai stays behind it in the chain). Never again after that, so choosing another AI in Settings sticks."""
     s = state["settings"]
-    if s.get("glm_switched") or not nim.nim_key():
-        return False
-    s["gemini_mode"], s["glm_switched"] = "nim", True
-    return True
+    # from when IO had a cloud planner, then web chat AIs (Duck.ai, Gemini) as a director with a role and an order
+    for old in ("planner_mode", "share_context", "advisor_role", "director_order"):
+        s.pop(old, None)
+    if s.get("gemini_mode") != "nim":  # no web chat AIs any more: the remote brain is NVIDIA's
+        s["gemini_mode"] = "nim"
+    if not s.get("brain_v2"):  # once: the NVIDIA brain is on whenever a key is saved (it used to hide behind a toggle)
+        if nim.nim_key():
+            s["ask_gemini"] = True
+        s["brain_v2"] = True
     for task in state["tasks"]:  # anything mid-flight when the app closed didn't finish
         if task["status"] in ("queued", "running", "waiting"):
             task.update(status="cancelled", summary="app was closed")
+
+
+def use_nim_once() -> bool:
+    """The first key saved switches the NVIDIA brain on (once: turning it off in Settings afterwards sticks)."""
+    s = state["settings"]
+    if s.get("glm_switched") or not nim.nim_key():
+        return False
+    s["gemini_mode"], s["ask_gemini"], s["glm_switched"] = "nim", True, True
+    return True
 
 
 def save_state() -> None:
@@ -292,9 +302,11 @@ async def retry_eyes_later() -> None:
 # ---------- tasks ----------
 
 def on_event(record: dict) -> None:
-    task = current["task"]
+    task = current["task"]  # boss.log calls this under its own lock (helpers log from several threads at once)
     if task is not None:
-        task["events"] = (task["events"] + [record])[-MAX_EVENTS_PER_TASK:]
+        task["events"].append(record)
+        if len(task["events"]) > MAX_EVENTS_PER_TASK:
+            del task["events"][:-MAX_EVENTS_PER_TASK]
 
 
 def new_task(text: str, source: str = "you", max_steps: int | None = None, chat_id: str = "", images: list[str] | None = None,
@@ -404,10 +416,11 @@ async def worker() -> None:
         current["task"] = task
         options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode", "model_mode")}
         options["chrome_token"] = chrome_token()
-        options["ask_gemini"] = bool(state["settings"].get("ask_gemini"))
-        options["gemini_mode"] = state["settings"].get("gemini_mode", "private")
-        options["advisor_role"] = state["settings"].get("advisor_role", "director")
-        options["director_order"] = state["settings"].get("director_order", "glm_first")
+        # the NVIDIA brain needs its key; without one IO runs on the local models (never a web chat AI)
+        options["ask_gemini"] = bool(state["settings"].get("ask_gemini")) and bool(nim.nim_key())
+        options["gemini_mode"], options["advisor_role"] = "nim", "director"
+        # Ultracode: the message's own switch, else the Settings default (boss caps it at 5 helpers at once)
+        options["ultracode"] = bool(task["ultracode"] if "ultracode" in task else state["settings"].get("ultracode"))
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
         imgs = own or earlier_images(task)
@@ -577,6 +590,7 @@ async def get_state(_request: Request) -> JSONResponse:
             "today": today_stats(),
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
+            "brain_models": [nim.BRAIN_LABELS.get(m, m) for m in nim.BRAIN_MODELS],
             "user": os.environ.get("USERNAME", "").capitalize(),
         }
     )
@@ -613,6 +627,8 @@ async def chat_message(request: Request) -> JSONResponse:
     task = new_task(text or "(see the attached image)", source="chat", chat_id=chat["id"], images=saved, task_id=task_id)
     if body.get("loop"):
         task["loop"] = True
+    if "ultracode" in body:
+        task["ultracode"] = bool(body["ultracode"])
     chat["messages"].append({"task_id": task["id"], "at": time.time()})
     # an image-only first message gets a placeholder name; the first message with text names the chat
     if chat["title"] in ("New chat", "Image", "Images") and text:
@@ -766,18 +782,14 @@ async def save_settings(request: Request) -> JSONResponse:
     s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
     if body.get("theme") in ("system", "light", "dark"):
         s["theme"] = body["theme"]
-    if body.get("advisor_role") in ("director", "advisor"):
-        s["advisor_role"] = body["advisor_role"]
-    if body.get("gemini_mode") in ("private", "account", "duck", "nim"):
-        s["gemini_mode"] = body["gemini_mode"]
-    if body.get("director_order") in ("glm_first", "duck_first"):
-        s["director_order"] = body["director_order"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
     if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
         s["model_mode"] = body["model_mode"]
         asyncio.create_task(switch_models())
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow"):
+    if "ask_gemini" in body:
+        s["brain_v2"] = True  # the user chose: no migration ever flips it again
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode"):
         if key in body:
             s[key] = bool(body[key])
     if not s["focus_glow"]:
@@ -808,17 +820,18 @@ async def save_browser(request: Request) -> JSONResponse:
 
 
 async def save_nim_key(request: Request) -> JSONResponse:
-    """Stores the NVIDIA API key for GLM-5.3 Flash in data/nim_key.txt (git-ignored); an empty one clears it. The key
-    is never sent back or logged: the page only learns whether one is set."""
+    """Stores the NVIDIA API key for the brain (GLM-5.3 Flash, DeepSeek V4.1 Flash, Kimi K3) in data/nim_key.txt
+    (git-ignored); an empty one clears it. The key is never sent back or logged: the page only learns whether one is set."""
     key = str((await request.json()).get("key", "")).strip()
     nim.save_nim_key(key)
-    if use_glm_once():
+    if use_nim_once():
         save_state()
-    return JSONResponse({"ok": True, "nim_key_set": bool(key), "gemini_mode": state["settings"]["gemini_mode"]})
+    return JSONResponse({"ok": True, "nim_key_set": bool(key), "brain_on": bool(key) and bool(state["settings"].get("ask_gemini"))})
 
 
 async def test_nim_key(_request: Request) -> JSONResponse:
-    """Checks the saved NVIDIA key with a free call (the model list): works, expired/invalid, or unreachable."""
+    """Checks the saved NVIDIA key with a free call (the model list): works (and whether all three brain models are
+    offered to it), expired/invalid, or unreachable."""
     key = nim.nim_key()
     if not key:
         return JSONResponse({"ok": False, "result": "No key saved."})
@@ -827,14 +840,18 @@ async def test_nim_key(_request: Request) -> JSONResponse:
         try:
             req = urllib.request.Request(nim.NIM_URL + "/models", headers={"Authorization": f"Bearer {key}"})
             with urllib.request.urlopen(req, timeout=20) as r:
-                return "Works." if r.status == 200 else f"NVIDIA answered {r.status}."
+                if r.status != 200:
+                    return f"NVIDIA answered {r.status}."
+                listed = {m.get("id") for m in json.load(r).get("data", []) if isinstance(m, dict)}
+            missing = [nim.BRAIN_LABELS.get(m, m) for m in nim.BRAIN_MODELS if m not in listed]
+            return "Works." if not missing else f"Works, but {', '.join(missing)} isn't offered to this key."
         except urllib.error.HTTPError as e:
             return "Expired or invalid: paste a new key." if e.code in (401, 403) else f"NVIDIA answered {e.code}."
         except Exception as e:
             return f"Couldn't reach NVIDIA: {type(e).__name__}"
 
     result = await asyncio.to_thread(check)
-    return JSONResponse({"ok": result == "Works.", "result": result})
+    return JSONResponse({"ok": result.startswith("Works"), "result": result})
 
 
 EXTENSION_DIR = HERE / "chrome-extension"

@@ -1099,7 +1099,7 @@ async def run_http(task: dict, cell: dict, ctx: dict, chats: dict, timeout: floa
     if key not in chats:
         chats[key] = (await asyncio.to_thread(api, "/api/chats", {}))["id"]
     ctx["t0"] = time.time()
-    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop"))}))["task_id"]
+    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop")), "ultracode": False}))["task_id"]
     run = {"status": "", "answer": "", "error": "", "stop_secs": None, "questions": [], "had_conversation": bool(task.get("chat"))}
     answered, t_stop, t = set(), None, {}
     limit = task.get("run_secs") or timeout

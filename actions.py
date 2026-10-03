@@ -3445,6 +3445,17 @@ def _real(p: Path) -> Path:
         return p
 
 
+def _private(p: Path) -> bool:
+    """IO's own data and logs (the NVIDIA key, the Chrome token, task history): never read, listed or found for a task,
+    so a web page that talks the agent into it gets nothing."""
+    s = str(_real(p)).lower()
+    for d in (_h().HERE / "data", _h().HERE / "logs"):
+        r = str(_real(d)).lower().rstrip("\\")
+        if s == r or s.startswith(r + "\\"):
+            return True
+    return False
+
+
 def _forbidden(p: Path) -> bool:
     roots = [os.environ.get("SystemRoot", r"C:\Windows"), os.environ.get("ProgramFiles", r"C:\Program Files"),
              os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), os.environ.get("ProgramData", r"C:\ProgramData")]
@@ -3505,6 +3516,8 @@ def _listing_sync(folder: Path, pattern: str, sort: str, n: int, recurse: bool) 
         """, cost=0.4, star=True, top="folder", fallback='PowerShell("Get-ChildItem ...")')
 async def list_files(ctx: Ctx, folder: str, pattern: str = "", sort: str = "newest", n: int = 20, recurse: bool = False, **_) -> str:
     p = _path(folder)
+    if _private(p):
+        raise Fail("BLOCKED", "that is IO's own data folder", "ask_user")
     if not p.exists():
         raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{Path(folder).name}")')
     if p.is_file():
@@ -3582,6 +3595,7 @@ async def find_file(ctx: Ctx, name: str, where: str = "home", newer_than_days: f
         found, partial = await asyncio.to_thread(_walk_find_sync, root, name, float(newer_than_days or 0))
         found.sort(key=lambda x: -x[1])
         hits, via = [p for p, _ in found[:20]], "folder walk"
+    hits = [p for p in hits if not _private(p)]
     if not hits:
         raise Fail("NOT_FOUND", f"no file like {name!r} under {root}" + (" (partial: the walk hit its time limit)" if partial else ""),
                    f'find_file("{name}", where="C:\\\\")' if str(root) != "C:\\" else "ask_user")
@@ -3637,6 +3651,8 @@ def _file_text_sync(p: Path) -> str:
         limits="no PDFs; up to 5 MB; never opens an editor")
 async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 4000, **_) -> str:
     p = _path(path)
+    if _private(p):
+        raise Fail("BLOCKED", "that is IO's own data (keys and history), never read for a task", "ask_user")
     if not p.exists():
         raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
     if p.is_dir():
@@ -4545,6 +4561,8 @@ def _pick(items: list[dict], text: str, roles: set | None) -> list[dict]:
 async def _navigate(ctx: Ctx, url: str) -> str:
     if not re.match(r"^[a-z]+:", url, re.I):
         url = "https://" + url.lstrip("/")
+    if not re.match(r"^https?://", url, re.I):  # file:, chrome:, javascript: ... are not web pages
+        raise Fail("BLOCKED", "only http and https pages", "a web address")
     res = await bcall(ctx, "browser_navigate", {"url": url}, 40)
     if not res.startswith("error"):
         ctx.tab_open = True

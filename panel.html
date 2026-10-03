@@ -236,6 +236,14 @@
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, color-mix(in srgb, var(--accent-text) 45%, var(--text)) 40%, var(--muted) 80%); background-size: 200% 100%;
              -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  /* Ultracode helpers: one row each, with a chip and a purple rule; their own steps inside */
+  .ck.lane { border-left: 2px solid color-mix(in srgb, var(--accent) 40%, var(--line)); padding-left: 8px; margin-left: -10px; }
+  .ck.lane.now { border-left-color: var(--accent); } .ck.lane.fail { border-left-color: var(--bad); }
+  .agent-chip { font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; margin-right: 7px; white-space: nowrap; }
+  .ckdetail .ck { padding: 2px 0; font-size: 12.5px; color: var(--muted); }
+  .ckdetail .found { margin-top: 4px; color: var(--text); } .ckdetail .found .secs { color: var(--faint); }
+  .ultratag { font-size: 11.5px; color: var(--accent-text); display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+  .ultratag svg.lucide { width: 13px; height: 13px; }
   .question { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; padding: 11px 14px; margin: 0 0 12px; }
   .question .q { font-size: 14px; }
   .qrow { display: flex; gap: 8px; margin-top: 9px; } .qrow input { flex: 1; }
@@ -586,6 +594,8 @@
             <input type="file" accept="image/*" multiple x-ref="file" style="display:none" @change="addFiles($event.target.files); $event.target.value = ''">
             <button class="iconbtn" :class="loopNext && 'on'" @click="loopNext = !loopNext; focusComposer()"
                     :title="loopNext ? 'Loop on: IO will keep working on this until you press Stop' : 'Loop: keep working on a goal until you press Stop'"><span class="ic" x-html="ic('repeat')"></span></button>
+            <button class="iconbtn" x-show="s.settings.ask_gemini && s.nim_key_set" :class="ultraOn() && 'on'" @click="ultraNext = !ultraOn(); focusComposer()"
+                    :title="ultraOn() ? 'Ultracode on: a plan first, then up to 5 helpers work on its parts at once' : 'Ultracode: plan first, then up to 5 helpers work in parallel'"><span class="ic" x-html="ic('git-fork')"></span></button>
             <div style="margin-right:auto"></div>
             <button class="iconbtn" x-show="draft.trim()" @click="saveTemplate()" title="Save as a quick start"><span class="ic" x-html="ic('bookmark-plus')"></span></button>
             <button class="send stop" x-show="chatBusy && !draft.trim() && !attachments.length" @click="stopChat()" title="Stop"><span class="ic" x-html="ic('square')"></span></button>
@@ -606,6 +616,7 @@
             <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
             <span :title="'Eyes: ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
           </span>
+          <span class="ultratag" x-show="ultraOn() && s.settings.ask_gemini && s.nim_key_set"><span class="ic" x-html="ic('git-fork', 'sm')"></span>Ultracode</span>
           <div class="modelpick" @mousedown.outside="modelOpen = false">
             <div class="menu modelmenu" x-show="modelOpen" x-transition.opacity.duration.100ms>
               <template x-for="m in MODELS" :key="m.id">
@@ -802,7 +813,7 @@
 
     <!-- ===== settings ===== -->
     <div class="page" x-show="view === 'settings'">
-      <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, and how I plan.</p></div>
+      <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, and which AI does the thinking.</p></div>
       <h2>Permissions</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Max steps per message</div><div>I stop and report back after this many actions.</div></div>
@@ -830,46 +841,41 @@
         <div class="setting"><div class="txt"><div>Files and web pages</div><div>Read and write files, and read web pages as text.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.files" @change="saveSettings()"><span></span></label></div>
       </div>
-      <h2>Model</h2>
+      <h2>Brain</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Which models to use</div>
+        <div class="setting"><div class="txt"><div>Who does the thinking</div>
+            <div x-show="s.settings.ask_gemini">NVIDIA: a frontier model on NVIDIA's API runs each task with IO's tools, the way Claude does. Your local models stay as its eyes and the last fallback. No web chat AIs are used, and research goes through Google.</div>
+            <div x-show="!s.settings.ask_gemini">Local only: everything stays on this PC, and the local models below decide and act.</div></div>
+          <select :value="s.settings.ask_gemini ? 'nim' : 'local'" @change="s.settings.ask_gemini = $event.target.value === 'nim'; saveSettings()"><option value="nim">NVIDIA (recommended)</option><option value="local">Local only</option></select></div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Models, in order</div>
+            <div><span x-text="(s.brain_models || []).map((m, i) => (i + 1) + '. ' + m).join('   ')"></span><br>Each step starts with the model that answered last; if one fails, the next takes over. DeepSeek reads text only and asks to hear the screen.</div></div></div>
+        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
+            <div>Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
+          <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
+          <button class="btn sm" @click="saveNimKey()">Save</button>
+          <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
+          <div class="note" style="flex-basis:100%" x-show="nimNote || !s.nim_key_set" x-text="nimNote || 'No key saved yet: IO works on the local models until you add one.'"></div>
+        </div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Ultracode by default</div>
+            <div>For bigger jobs the brain writes a plan first, then up to 5 helpers work on its parts at the same time, each with a hidden browser of its own. Helpers search, read pages and read files; anything that needs your mouse and keyboard still happens one step at a time. Switch it per message with the fork button next to Loop.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.ultracode" :disabled="!s.nim_key_set" @change="saveSettings(); ultraNext = s.settings.ultracode"><span></span></label></div>
+      </div>
+      <h2>Local models</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Local models</div>
+            <div x-show="s.settings.ask_gemini && s.nim_key_set">The NVIDIA brain decides; these find where to click, and take a step only if NVIDIA can't answer.</div>
             <div x-show="!['smart', 'balanced'].includes(s.settings.model_mode)">Fast: Gemma 4 E4B thinks, UI-TARS finds where to click. Quickest.</div>
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
             <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
           <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
-        <div class="setting"><div class="txt"><div>Use a stronger AI</div>
-            <div>Off keeps IO fully local. On, tasks in apps and loops work with a stronger AI (chosen below), as their director or an advisor.
-              Automated use of a chat site may go against its terms.</div></div>
-          <label class="switch"><input type="checkbox" x-model="s.settings.ask_gemini" @change="saveSettings()"><span></span></label></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Its role</div>
-            <div x-show="s.settings.advisor_role !== 'advisor'">Director: it sees the window, the tools and what just happened, and decides every next action. Qwen carries them out.</div>
-            <div x-show="s.settings.advisor_role === 'advisor'">Advisor: it plans the start and helps when the loop is stuck. Qwen decides each action.</div></div>
-          <select x-model="s.settings.advisor_role" @change="saveSettings()"><option value="director">Director</option><option value="advisor">Advisor</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Which AI to ask</div>
-            <div x-show="s.settings.gemini_mode === 'nim'">GLM-5.3 Flash on NVIDIA's API: sees a screenshot of the window, no browser window, no daily cap. Duck.ai steps in when it can't answer, and Qwen when neither can.</div>
-            <div x-show="s.settings.gemini_mode === 'duck'">Duck.ai: DuckDuckGo's private chat, no account, in your Chrome's IO tab group, with a screenshot of the window. Its chat history is wiped after each question.</div>
-            <div x-show="!['account', 'duck', 'nim'].includes(s.settings.gemini_mode)">Private Gemini: a hidden, signed-out browser with Gemini's default model (Flash-Lite), closed after each question. Nothing is saved. Signed-out Gemini takes no pictures, so it gets the screen described in words.</div>
-            <div x-show="s.settings.gemini_mode === 'account'">Your account: Gemini Pro in your Chrome's IO tab group, with a screenshot of the window. Chats are saved to your Gemini history.</div></div>
-          <select x-model="s.settings.gemini_mode" @change="saveSettings()"><option value="nim">GLM-5.3 Flash (NVIDIA)</option><option value="duck">Duck.ai (private, with screenshot)</option><option value="private">Gemini, signed out (text only)</option><option value="account">Gemini on your account (Pro)</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini && s.settings.gemini_mode === 'nim'"><div class="txt"><div>Director order</div>
-            <div x-show="s.settings.director_order !== 'duck_first'">GLM first (about 30 seconds a round on NVIDIA's free tier), Duck.ai when GLM can't answer.</div>
-            <div x-show="s.settings.director_order === 'duck_first'">Duck.ai first (about 15 seconds a round, but a daily limit), GLM when Duck.ai can't answer.</div></div>
-          <select x-model="s.settings.director_order" @change="saveSettings()"><option value="glm_first">GLM first</option><option value="duck_first">Duck.ai first</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
-          <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
-            <div>For GLM-5.3 Flash. Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
-          <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
-          <button class="btn sm" @click="saveNimKey()">Save</button>
-          <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
-          <div class="note" style="flex-basis:100%" x-show="nimNote" x-text="nimNote"></div>
-        </div>
+        <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
       </div>
       <h2>App</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Appearance</div><div>Light, dark, or follow Windows. Dark mode is also in the menu under your name.</div></div>
           <select x-model="s.settings.theme" @change="saveSettings()"><option value="system">Match Windows</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
-        <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
-          <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Notifications</div><div>Let you know when something finishes or needs you.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.notify" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Keyboard shortcuts</div><div>Ctrl+Alt+Q for a new message, Ctrl+Alt+End to stop everything. Applies after a restart.</div></div>
@@ -880,7 +886,7 @@
 
       <h2>Tools</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Tool check</div><div>Test every tool and both models without touching the screen.</div></div>
+        <div class="setting"><div class="txt"><div>Tool check</div><div>Test every tool and the local models without touching the screen.</div></div>
           <button class="btn" @click="toolCheck()" :disabled="checking" x-text="checking ? 'Checking…' : 'Run check'"></button></div>
         <ul class="checklines" x-show="checkLines.length">
           <template x-for="l in checkLines" :key="l"><li :class="l.startsWith('FAIL') ? 'err' : l.startsWith('OK') ? 'ok' : ''" x-text="l"></li></template>
@@ -1160,6 +1166,8 @@ function agent() {
     get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
     get chatRunning() { return !!this.chat && this.chatTasks(this.chat).some((t) => t.status === "running"); },
     loopNext: false,
+    ultraNext: null,  // the composer's Ultracode switch: null follows the Settings default, then it sticks for the session
+    ultraOn() { return this.ultraNext === null ? !!this.s.settings.ultracode : this.ultraNext; },
     get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },
     loopSteps(t) {
       const ev = t.events || [];
@@ -1330,7 +1338,7 @@ function agent() {
           try { localStorage.setItem("chatId", c.id); } catch {}
         }
         this.dividerLocked = false;  // replying means you've caught up
-        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext }) });
+        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext, ultracode: this.ultraOn() }) });
         this.loopNext = false;
         if (!r.ok) { const d = await r.json().catch(() => ({})); return restore(d.error || "Couldn't send that. Try again."); }
       } catch { return restore("Couldn't reach IO. Try again."); }
@@ -1376,9 +1384,9 @@ function agent() {
       const items = checklist(t);
       const card = items.length
         ? `<div class="checklist">${items.map((it) => `
-            <div class="ck ${it.state}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}', event)"` : ""}>
+            <div class="ck ${it.state}${it.lane ? " lane" : ""}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}', event)"` : ""}>
               <span class="mark">${it.state === "done" ? ic("check") : it.state === "fail" ? ic("x") : it.state === "now" ? ic("loader-circle", "spin") : ""}</span>
-              <div class="cktext"><span class="${it.state === "now" ? "shimmer" : ""}">${esc(it.text)}</span>
+              <div class="cktext">${it.lane ? `<span class="agent-chip">${esc(it.lane)}</span>` : ""}<span class="${it.state === "now" ? "shimmer" : ""}">${esc(it.text)}</span>
                 ${it.detail && this.open[t.id + ":" + it.key] ? `<div class="ckdetail">${it.detail}</div>` : ""}</div>
             </div>`).join("")}</div>`
         : "";
@@ -1430,7 +1438,7 @@ function agent() {
       if (!this.nimKey.trim() && !this.s.nim_key_set) return;
       const r = await post("/api/keys/nim", { key: this.nimKey });
       this.nimKey = "";
-      this.nimNote = r.nim_key_set ? "Key saved." + (r.gemini_mode === "nim" ? " GLM-5.3 Flash is the director." : "") : "Key removed.";
+      this.nimNote = r.nim_key_set ? "Key saved." + (r.brain_on ? " The NVIDIA brain is on." : "") : "Key removed.";
       this.refresh();
     },
     async testBrowser() {
@@ -1680,7 +1688,24 @@ function checklist(t) {
   const items = [];
   const hidden = new Set(["Snapshot", "Wait", "WaitFor", "browser_snapshot", "browser_wait_for"]);  // bookkeeping, not progress
   const isError = (r) => /^(error|\d+ validation error)|Error calling tool|did not allow/i.test(r || "");
+  // Ultracode: each helper's records carry e.agent; they become one row per helper (its steps inside), where the
+  // "agents" record sits in the main agent's list
+  const lanes = new Map();
+  let laneAt = -1;
+  events.forEach((e) => {
+    if (e.event === "agents") (e.agents || []).forEach((a) => lanes.set(a.id, { label: a.label, steps: [], done: null }));
+    if (!e.agent) return;
+    const lane = lanes.get(e.agent) || lanes.set(e.agent, { label: e.agent_label || e.agent, steps: [], done: null }).get(e.agent);
+    if (e.event === "agent_done") lane.done = e;
+    else if (e.event === "tool" && !(hidden.has(e.name) && !isError(e.result))) lane.steps.push(e);
+    else if (e.event === "warning" && /^the brain is now/.test(e.text || "")) lane.steps.push({ name: "", note: e.text });
+  });
   events.forEach((e, i) => {
+    if (e.agent) { if (laneAt < 0) laneAt = items.length; return; }
+    if (e.event === "agents") { if (laneAt < 0) laneAt = items.length; return; }
+    if (e.event === "warning" && /^the brain is now /.test(e.text || "")) {
+      items.push({ key: i, state: "done", text: "Switched to " + e.text.replace(/^the brain is now /, "") }); return;
+    }
     if (e.event === "director" && e.thoughts) {
       // which AI decided (the director falls back GLM -> Duck.ai) and how long its round took
       const who = e.model || { NimDirector: "GLM", DuckAI: "Duck.ai", Gemini: "Gemini" }[e.via] || "";
@@ -1697,16 +1722,33 @@ function checklist(t) {
     const args = Object.entries(e.args || {}).filter(([k]) => !["use_vision", "use_annotation"].includes(k)).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ");
     items.push({ key: i, state: failed ? "fail" : "done", text, detail: `<code>${esc(e.name)}(${esc(args)})</code><div>${esc(short(e.result, 400))}</div>` });
   });
-  if (BUSY.includes(t.status)) {
+  const busy = BUSY.includes(t.status);
+  if (laneAt >= 0) {
+    let n = 0;
+    const rows = [...lanes.entries()].map(([id, l]) => {
+      n += 1;
+      const failedStep = (e) => e.name && isError(e.result);
+      const last = l.steps[l.steps.length - 1];
+      const state = l.done ? (l.done.status === "done" ? "done" : "fail") : busy && l.steps.length ? "now" : busy ? "todo" : "fail";
+      const now = l.done ? (l.done.status === "done" ? "" : " (failed)") : !busy ? " (stopped)" : !last ? " (starting)" : ": " + (last.note || stepText(last.name, last.args || {}));
+      const steps = l.steps.map((e) => `<div class="ck ${failedStep(e) ? "fail" : "done"}"><span class="mark">${failedStep(e) ? ic("x") : ic("check")}</span><div class="cktext">${esc(e.note || ((failedStep(e) ? "Couldn't: " : "") + stepText(e.name, e.args || {})))}</div></div>`).join("");
+      const found = l.done ? `<div class="found">${esc(short(l.done.summary, 600))}${l.done.secs ? ` <span class="secs">(${esc(l.done.secs)}s)</span>` : ""}</div>` : "";
+      return { key: "ag:" + id, state, lane: "Helper " + n, text: short(l.label, 70) + now, detail: (steps + found) || "<div>Waiting for a free slot</div>" };
+    });
+    items.splice(laneAt, 0, ...rows);
+  }
+  if (busy) {
     const plan = [...events].reverse().find((e) => e.event === "plan" && e.plan);
     const planned = plan ? plan.plan.split("\n").map((l) => l.match(/^\s*\d+[.)]\s*(.+)/)).filter(Boolean).map((m) => m[1]) : [];
     const doneCount = items.filter((x) => x.state === "done").length;
     const last = [...events].reverse().find((e) => e.event === "tool");
+    const working = [...lanes.values()].filter((l) => !l.done).length;
     const label = t.status === "waiting" ? "Waiting for your answer" : t.status === "queued" ? "Queued behind another task"
-      : last ? niceTool(last.name).replace(/^./, (c) => c.toUpperCase()) + "…" : "Thinking…";
+      : laneAt >= 0 && working ? `Working in parallel · ${working} of ${lanes.size} helpers busy`
+      : last && !last.agent ? niceTool(last.name).replace(/^./, (c) => c.toUpperCase()) + "…" : "Thinking…";
     if (t.loop) { const recent = items.slice(-12); recent.push({ key: "now", state: "now", text: t.status === "waiting" ? label : "Looping: " + label }); return recent; }
     items.push({ key: "now", state: "now", text: label });
-    planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));
+    if (laneAt < 0) planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));
   }
   return items;
 }
