@@ -897,9 +897,19 @@ def tool_catalog(tools: list[dict]) -> str:
 
 def fit_director_prompt(limit: int, **parts: str) -> str:
     """DIRECTOR_PROMPT under the site's length limit: older guide notes, history and the screen description go first."""
-    budgets = {"guide": 1400, "history": 1400, "screen": 700}
+    budgets = {"guide": 1400, "history": 1600, "screen": 700}
+
+    def cut(k, v):  # whole lines only: the newest history, the start of the guide notes
+        lines, out, n = v.splitlines(), [], 0
+        for line in (reversed(lines) if k == "history" else lines):
+            if n + len(line) > budgets[k]:
+                break
+            out.append(line)
+            n += len(line) + 1
+        return "\n".join(reversed(out) if k == "history" else out) or v[:budgets[k]]
+
     for _ in range(12):
-        filled = {k: (v[-budgets[k]:] if k in ("guide", "history") else v[:budgets[k]]) if k in budgets else v for k, v in parts.items()}
+        filled = {k: cut(k, v) if k in budgets else v for k, v in parts.items()}
         prompt = DIRECTOR_PROMPT.format(**filled)
         if len(prompt) <= limit:
             return prompt
@@ -1785,7 +1795,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 gemini.max_chars, goal=task, shot="A screenshot of the window IO works in is attached.\n" if image else "",
                 guide="\n---\n".join(guide[-2:]) or "(nothing yet)",
                 screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
-                history="\n".join(actions[-14:]) or "(none yet: this is the start)", catalog=tool_catalog(tools))
+                history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
+                catalog=tool_catalog(tools))
             t0 = time.time()
             try:
                 reply = await gemini.ask(prompt, image)
