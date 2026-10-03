@@ -869,9 +869,6 @@ looks like and where it is (e.g. "the red Fire button at the bottom right").
 
 Goal (it never ends; the user stops it): {goal}
 {shot}
-What IO learned from guides:
-{guide}
-
 {screen}Recent actions and their results, oldest first:
 {history}
 
@@ -1764,16 +1761,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         "\n\nWhat you learned from research:\n" + "\n---\n".join(guide[-3:])
 
             # research mode first: learn how the thing works before acting on it
+            # (a director already knows how things work: it only needs the screen and the tools)
             try:
-                t0 = time.time()
-                q = await asyncio.to_thread(local_chat, ("Write one Google search query (under 10 words) that finds a beginner guide for this goal. Name the game or app "
-                                             "itself, not the program or emulator it runs in. Output only the query."),
-                                            task, 40, False)
-                brief = await researcher.ask(q.strip().strip('"') or task, task)
-                if not brief.startswith("error"):
-                    guide.append(brief)
-                    pin_guide()
-                log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
+                if not director:
+                    t0 = time.time()
+                    q = await asyncio.to_thread(local_chat, ("Write one Google search query (under 10 words) that finds a beginner guide for this goal. Name the game or app "
+                                                 "itself, not the program or emulator it runs in. Output only the query."),
+                                                task, 40, False)
+                    brief = await researcher.ask(q.strip().strip('"') or task, task)
+                    if not brief.startswith("error"):
+                        guide.append(brief)
+                        pin_guide()
+                    log("research", question=q, secs=round(time.time() - t0, 1), notes=brief[:600])
             except Exception as e:
                 log("warning", text=f"couldn't research the goal first: {e}"[:300])
             if gemini and not director:
@@ -1832,7 +1831,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         found_points: list[tuple[int, int]] = []  # recent find_on_screen answers: loop clicks must come from one
 
         for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
-            if loop and step - last_research >= LOOP_RESEARCH_EVERY and last_info:
+            if loop and not director and step - last_research >= LOOP_RESEARCH_EVERY and last_info:
                 # research mode again: look up whatever the latest look says it's facing, so it doesn't circle
                 last_research = step
                 try:
