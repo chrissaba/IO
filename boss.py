@@ -803,8 +803,9 @@ do first and what to avoid. Only use what the sources say. Output only the notes
 class Researcher:
     """Google in a headless browser of its own, so looking things up never steals focus from the app being driven."""
 
-    def __init__(self, stack: AsyncExitStack) -> None:
+    def __init__(self, stack: AsyncExitStack, use_gemini: bool = False) -> None:
         self.stack, self.session = stack, None
+        self.gemini = Gemini(stack, "", private=True) if use_gemini else None
 
     async def _session(self):
         if self.session is None:
@@ -817,6 +818,20 @@ class Researcher:
         return self.session
 
     async def ask(self, question: str, task: str) -> str:
+        if self.gemini:
+            # with a web AI allowed, signed-out Gemini (its own hidden throwaway browser, which can search Google itself)
+            # answers better than reading two pages locally; the Google route stays as the fallback
+            try:
+                answer = await self.gemini.ask(RESEARCH_GEMINI.format(task=task, question=question))
+                answer = re.sub(r"\n(Sources?|Show all)\b.*", "", answer, flags=re.S).strip()
+                # its source chips ("Reddit", "+ 1") come through as short lines of their own
+                answer = "\n".join(l for l in answer.splitlines()
+                                   if not re.fullmatch(r"\s*\+ ?\d+\s*", l) and not (l.strip() and len(l) < 60 and not re.search(r"[.:!?]", l)))
+                if answer and not answer.startswith("error"):
+                    return answer[:1500]
+                log("warning", text=f"Gemini research failed, using Google: {answer[:120]}")
+            except Exception as e:
+                log("warning", text=f"Gemini research failed, using Google: {e}"[:200])
         s = await self._session()
         await s.call_tool("browser_navigate", {"url": "https://www.google.com/search?q=" + urllib.parse.quote_plus(question)})
         rows = _result_rows(text_of(await s.call_tool("browser_evaluate", {"function": RESULTS_JS})))
@@ -834,6 +849,10 @@ class Researcher:
         return notes or "error: couldn't make notes from the results"
 
 
+RESEARCH_GEMINI = """Research for an AI agent that is doing this on a PC: {task}
+Question: {question}
+Search the web if useful. Answer in at most 150 words: concrete steps, the names of buttons, menus and items, what to do
+first and what to avoid. No preamble."""
 GEMINI_URL = "https://gemini.google.com/app"
 GEMINI_EVERY = 0  # seconds between questions; no limit: each answer takes 20-90s anyway
 ADVISOR_MAX_CHARS = {"DuckAI": 4400, "Gemini": 8000}  # Duck.ai refuses messages over 4500 characters
@@ -1545,7 +1564,7 @@ LOOP_COMPACT_AT = 8000
 # and no two-step find-then-click habit
 # what a director sees and may use on single tasks: the full list would overflow Duck.ai's 4,500-character messages
 DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortcut", "Scroll", "PowerShell", "wait", "look_at_screen",
-                  "close_windows", "browser_open", "browser_read", "remember", "done"}
+                  "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
 LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25
@@ -1844,7 +1863,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     messages[head - 1]["content"] += prompt_note
             log("loop", goal=task, window=focus)
             tools.append(RESEARCH_TOOL)
-            researcher = Researcher(stack)
+            researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")))
             how = options.get("gemini_mode", "private")
             token = options.get("chrome_token", "")
             if not options.get("ask_gemini") or (how in ("account", "duck") and not token):
@@ -1928,6 +1947,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip())) and (how not in ("account", "duck") or token)):
                 gemini = DuckAI(stack, token) if how == "duck" else Gemini(stack, token, how != "account")
             director = bool(gemini)
+            if director:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
+                researcher = Researcher(stack, use_gemini=True)
+                tools.append(RESEARCH_TOOL)
 
             def window_shot() -> bytes:
                 """The window the task works in once one is known, else the whole main screen, as a small JPEG.
@@ -2331,11 +2353,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = f"error: {e}"
                 elif name == "ask_gemini" and loop and gemini:
                     result = await consult(str(args.get("question") or "What should I do next?"))
-                elif name == "research" and loop:
+                elif name == "research" and (loop or director):
                     last_research = step
                     try:
                         result = await researcher.ask(str(args.get("question") or task), task)
-                        if not result.startswith("error"):
+                        if loop and not result.startswith("error"):
                             guide.append(f"({args.get('question')}) {result}")
                             pin_guide()
                     except Exception as e:
