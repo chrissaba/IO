@@ -979,7 +979,8 @@ def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]
         if name in allowed:
             args = a.get("args") or a.get("arguments") or a.get("parameters") or a.get("input")
             if not isinstance(args, dict):  # or the arguments sit next to the tool name
-                args = {k: v for k, v in a.items() if k not in ("tool", "name", "args", "arguments", "parameters", "input")}
+                used = "tool" if a.get("tool") else "name"  # "name" can be an argument (App's) when "tool" names the tool
+                args = {k: v for k, v in a.items() if k not in (used, "args", "arguments", "parameters", "input")}
             out.append((name, args))
     return str(data.get("thoughts") or "")[:400], out[:8]
 
