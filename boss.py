@@ -1867,7 +1867,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             usable = [t for t in tools if loop or t["function"]["name"] in DIRECTOR_TOOLS]
             # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
             # A fresh conversation (with the full brief) when the old one fails or has grown long.
-            if keep and gemini.in_chat and director_rounds % 20:
+            # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
+            if keep and gemini.in_chat and director_rounds % (5 if image else 20):
                 new = steps_log[director_seen:] or ["(no actions ran)"]
                 prompt = ("Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3500:] +
                           ("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
@@ -2260,6 +2261,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 elif name == "type_text" or (name == "Type" and not args.get("loc")):
                     # Type without a location is the most common small-model slip: type into the focused control instead
                     args = {"text": args.get("text", ""), "press_enter": args.get("press_enter", False)}
+                    if focus or focus_hint:  # into the app being worked in, not whatever you happen to be typing in
+                        await asyncio.to_thread(focus_window, focus or focus_hint)
                     # paste via clipboard: reliable for any text and keyboard layout
                     await win.call_tool("Clipboard", {"mode": "set", "text": args.get("text", "")})
                     await win.call_tool("Shortcut", {"shortcut": "ctrl+v"})
