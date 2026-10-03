@@ -724,23 +724,19 @@ class Eyes:
         url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
         if self.brief:
             question = (question or "What is on the screen?") + " Answer in at most 3 short sentences: what screen or menu is open, and what can be done next."
-        client, model = getattr(self, "remote", None) or (OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL)
-        local = model == BOSS_MODEL
-        reply = client.chat.completions.create(
-            model=model,
-            temperature=0.2,
-            max_tokens=(160 if self.brief else 700) if local else 1500,  # a remote model may spend tokens reasoning first
-            extra_body=(NO_THINKING if self.brief else None) if local else None,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": url}},
-                        {"type": "text", "text": f"This is a screenshot of {('the ' + window + ' window') if window else f'display {display}'}. {question or 'Describe what is on the screen.'}"},
-                    ],
-                }
-            ],
-        )
+        text = f"This is a screenshot of {('the ' + window + ' window') if window else f'display {display}'}. {question or 'Describe what is on the screen.'}"
+        messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": text}]}]
+        for client, model in getattr(self, "remote", None) or []:  # the NVIDIA brain's vision models, in turn
+            try:
+                reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=1500, messages=messages)
+                answer = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
+                if answer:
+                    return answer
+            except Exception:
+                pass  # next vision model, then the local one
+        reply = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120).chat.completions.create(
+            model=BOSS_MODEL, temperature=0.2, max_tokens=160 if self.brief else 700,
+            extra_body=NO_THINKING if self.brief else None, messages=messages)
         return reply.choices[0].message.content or "(no answer)"
 
 
@@ -2230,30 +2226,54 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         and options.get("gemini_mode") == "nim" and nim.nim_key())
     brain_chain = [(boss, BOSS_MODEL)]
     if remote_brain:
-        nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=120)
+        nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=300)  # DeepSeek queues ~3 min
         brain_chain = [(nim_client, m) for m in nim.BRAIN_MODELS] + brain_chain
-        eyes.remote = (nim_client, nim.BRAIN_MODELS[0])  # look_at_screen: the frontier model looks, not the small one
-    brain_at = [0]  # the model answering this task; it moves down the chain on errors and stays there
+        eyes.remote = [(nim_client, m) for m in nim.BRAIN_MODELS if m not in nim.TEXT_ONLY]  # look_at_screen: GLM, then Kimi
+    brain_at = [0]  # the NVIDIA model that answered last; each step starts there
+
+    def text_only(messages):
+        """The conversation without pictures, for a brain that reads text only (DeepSeek): it uses look_at_screen."""
+        out = []
+        for m in messages:
+            c = m.get("content") if isinstance(m, dict) else None
+            if isinstance(c, list):
+                m = {**m, "content": [p if p.get("type") == "text" else
+                                      {"type": "text", "text": "[screenshot not shown to you: call look_at_screen to hear what is on screen]"}
+                                      for p in c]}
+            out.append(m)
+        return out
 
     def brain_create(**kw):
-        """One step of the agent loop on the current brain, falling back down the chain (NVIDIA models, then local)."""
-        last = None
-        for i in range(brain_at[0], len(brain_chain)):
+        """One step of the agent loop. With the NVIDIA brain it goes round GLM-5.3 Flash, DeepSeek V4.1 Flash and Kimi K3
+        (starting from the one that answered last) until one answers, two full rounds; the local model is only the very last
+        resort. Without it, the local model as before."""
+        if not remote_brain:
+            return boss.chat.completions.create(model=BOSS_MODEL, **kw)
+        n, last = len(nim.BRAIN_MODELS), None
+        for attempt in range(2 * n):
+            if attempt == n:
+                time.sleep(5)  # every model failed once: a short breather before the second round
+            i = (brain_at[0] + attempt) % n
             client, model = brain_chain[i]
-            if i == len(brain_chain) - 1:  # the local model: its errors (e.g. context size) go to the caller as before
-                brain_at[0] = i
-                return client.chat.completions.create(model=model, **kw)
             try:
                 kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
+                if model in nim.TEXT_ONLY:
+                    kw2["messages"] = text_only(kw2["messages"])
+                if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
+                    kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
                 r = client.chat.completions.create(model=model, **kw2)
+                m = r.choices[0].message
+                if not (m.tool_calls or (m.content or "").strip()):
+                    raise RuntimeError("empty answer")  # an answer with nothing in it is a failure: next model
                 if brain_at[0] != i:
                     log("warning", text=f"the brain is now {model}")
                 brain_at[0] = i
                 return r
-            except Exception as e:  # rate limit, outage, a model that can't take this request: next one
+            except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
                 last = e
-                log("warning", text=f"{model} failed ({type(e).__name__}): {str(e)[:160]}; trying the next model")
-        raise last
+                log("warning", text=f"{model} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
+        log("warning", text=f"no NVIDIA model answered ({type(last).__name__}); the local model takes this step")
+        return boss.chat.completions.create(model=BOSS_MODEL, **kw)
 
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:
@@ -2455,7 +2475,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """Before reporting back after doing things, check the work; if it falls short, say so and keep going.
             At most MAX_REDOS times per task, and never for plain chat (no tools used)."""
             nonlocal redos
-            if not steps_log or redos >= MAX_REDOS or (remote_brain and brain_at[0] < len(brain_chain) - 1):  # a frontier brain checks itself
+            if not steps_log or redos >= MAX_REDOS or remote_brain:  # a frontier brain checks itself
                 return ""
             try:
                 if layer:  # the resolved request, the user's constraints and what the director saw on screen
@@ -2517,7 +2537,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """The hidden researcher (signed-out Gemini, Google as the fallback), started on first use."""
             nonlocal researcher
             if researcher is None:
-                researcher = Researcher(stack, use_gemini=True)
+                researcher = Researcher(stack, use_gemini=not remote_brain)
             return researcher
 
         async def research_for(question: str) -> str:
@@ -2546,7 +2566,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             log("loop", goal=task, window=focus)
             if not layer:
                 tools.append(RESEARCH_TOOL)
-            researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")))
+            researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")) and not remote_brain)  # no web chat AIs with the NVIDIA brain
             gemini = None if remote_brain else make_director(stack, options)  # one brain: it is the director
             director = bool(gemini) and options.get("advisor_role", "director") == "director"
             if layer:
@@ -2638,7 +2658,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # models are its eyes and hands (finding and clicking things) and take over only if no director answers
             director = bool(gemini)
             if director and not layer:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
-                researcher = Researcher(stack, use_gemini=True)
+                researcher = Researcher(stack, use_gemini=not remote_brain)
                 tools.append(RESEARCH_TOOL)
 
             def window_shot() -> bytes:

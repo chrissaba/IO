@@ -21,9 +21,12 @@ NIM_MODELS = [
     ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "Nemotron 3 Nano Omni"),  # ~4 s, smaller
     ("meta/llama-3.2-90b-vision-instruct", "Llama 3.2 90B Vision"),             # ~9 s, older
 ]
-# the single brain (native tool calls, images): measured 2026-10-03, Kimi K3 doesn't return tool calls on this endpoint,
-# GLM-5.3 Flash and Nemotron 3 Nano Omni do; Llama 3.2 90B takes only one image per request
-BRAIN_MODELS = ["z-ai/glm-5.3-flash", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]
+# the single brain, tried in this order (the user's pick; speed doesn't matter, the next one takes over on an error):
+# GLM-5.3 Flash (tools + images), DeepSeek V4.1 Flash (tools, text only, very slow queue: ~170 s a turn), Kimi K3 (tools
+# only with tool_choice="required": on "auto" it returns nothing)
+BRAIN_MODELS = ["z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "moonshotai/kimi-k3"]
+NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
+TEXT_ONLY = {"deepseek-ai/deepseek-v4.1-flash"}  # gets the conversation without screenshots (it calls look_at_screen)
 SLOW_AFTER = 20.0  # seconds: a model averaging more than this is passed over while a quicker one is available
 RETRY_SLOW_EVERY = 6  # rounds: then the best model gets another chance (queues clear)
 KEEP_TURNS = 24  # conversation turns kept (about 12 rounds); older ones are dropped, the brief and plan carry the gist
