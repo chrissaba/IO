@@ -32,6 +32,7 @@ from mcp.shared.exceptions import MCPError
 from openai import BadRequestError, OpenAI
 from PIL import ImageGrab
 
+import actions
 import planner
 import plugins
 
@@ -73,7 +74,9 @@ REPLAN_AFTER_STEPS = 10
 MAX_REPLANS = 3
 MAX_TOOL_TEXT = 14000
 # re-reading the same thing with nothing in between is a loop; repeating an action (undo x3, PageDown, Next) is not
-LOOP_PRONE = {"Snapshot", "browser_snapshot", "browser_read", "look_at_screen", "find_on_screen", "click_on", "Scrape", "browser_open", "browser_navigate"}
+LOOP_PRONE = {"Snapshot", "browser_snapshot", "browser_read", "look_at_screen", "find_on_screen", "click_on", "Scrape", "browser_open", "browser_navigate",
+              "read_window", "read_page", "list_controls", "check_screen"}
+DESKTOP_READS = {"Snapshot", "look_at_screen", "find_on_screen", "read_window", "list_controls", "check_screen"}  # a window, not a web page
 # conditional offers ("If you want, I'll check the weekend too") aren't promises to keep working
 OFFER = re.compile(r"[^.!?\n]*\b(if you(?:'d)? (?:want|like|need|prefer)|let me know|would you like|want me to|shall i|should i)\b[^.!?\n]*[.!?]?", re.I)
 
@@ -139,6 +142,60 @@ RULES
 - For questions about what is on screen, call look_at_screen. It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot (its title, headings and text).
 - If a tool fails, fix the call and try again or try another way; never report success for a step that failed.
 - Finish with done. Its summary is your answer to the user: include the actual result (the time, the list, the description, the number), never just "I found it" or "I described it". If something blocked you, say what."""
+
+# With the action layer (actions.py) the tool part of SYSTEM is generated from the task's menu, so the prompt never names a
+# tool the model doesn't have; HOW TO DECIDE and RULES stay. data/actions.json {"enabled": false} brings SYSTEM back.
+SYSTEM_LAYER = """You are IO, the user's assistant on their Windows PC. You can chat, answer questions, and do things on the PC with the tools provided.
+
+HOW TO DECIDE
+- Chatting (hello, thanks, how are you, what can you do) or a question you can answer from general knowledge: reply in plain text, no tools.
+- You are IO. "What is IO?", "who are you" and questions about yourself are about you: answer them yourself, no tools.
+- Well-known facts (countries and capitals, famous people and companies, science, history): answer directly, no search.
+- A name or word you don't confidently know (a small website, company, product, app, person, slang): {search} before answering
+  (always Google, never Bing). Don't guess a similar-sounding word, don't assume it means one of your tools, and don't ask the user what it is until you've searched.
+- Needs live or personal information (the time, files, what's open or on screen, a web page, weather, prices): get it with a tool, then answer.
+- Asks you to do something on the PC: do exactly that, nothing extra (no saving, closing or double-checking unless asked).
+- Ambiguous, or needs something only the user knows (which file, which account): call ask_user instead of guessing.
+
+{pick}
+
+{jobs}RULES
+- Results start ok:, unsure: or error:CODE:. After unsure or error, follow its try: hint or check with another action; never report success for a step that failed or wasn't confirmed.
+- Never select-all and copy to read text (that replaces the user's clipboard).
+- window= is part of a title. Titles change as you work ("Untitled - Notepad" becomes your text), so name the app ("Notepad").
+- If something blocked you (a refusal, a user constraint, a failure), say so in done instead of trying around it.
+{browser}- Finish with done. Its summary is your answer to the user: include the actual result (the time, the list, the description, the number), never just "I found it" or "I described it". If something blocked you, say what."""
+# (tool the line needs, line): only lines whose tool is on the menu are shown
+LAYER_JOBS = [
+    ("write_in_app", "Write something in an app: write_in_app(app, text) (it opens the app itself: no open_app first). Save only "
+                     "when asked (save_to= with the full path)."),
+    ("open_app", "Open or switch to an app: open_app(name). Close one: close_window(window)."),
+    ("list_windows", "What's open: list_windows, then list the window titles."),
+    ("read_window", "Text in a window (Notepad, a dialog, Calculator's display): read_window(window)."),
+    ("click", "Click in an app: click(target, window) with the control's visible text; type_into(field, text, window) for a field."),
+    ("pc_info", "The time anywhere, disk space, CPU/GPU/RAM, IP: pc_info(topic, place). Installed or running apps: app_info(name), never by opening it."),
+    ("list_files", "Files and folders: list_files, find_file, read_file, write_file, file_op. Never open Explorer for that."),
+    ("web_answer", "A fact on the web: web_answer(question), then answer from its excerpts. A given page: read_page(url, find=a few words)."),
+    ("look_at_screen", "What's on screen: look_at_screen, then put the full description in your answer."),
+    ("open_settings", "A Windows setting: open_settings(page), then set_control(label, value) or read_window."),
+    ("click_on", "Games and emulators (BlueStacks): no controls to read. Use click_on and look_at_screen with window set to the app's "
+                 "title. Never press Esc or Back there; close menus with their on-screen X."),
+]
+
+
+def layer_system(names: list, browser_where: str = "") -> str:
+    """SYSTEM for the action layer: HOW TO DECIDE, the preference ladder limited to this menu, COMMON JOBS and RULES."""
+    have = set(names)
+    search = ("search the web with web_answer (or web_search, then read_page on the best result)" if "web_answer" in have else
+              "look it up with research" if "research" in have else "find out with tools(\"WEB\") and use(...)")
+    jobs = [line for tool, line in LAYER_JOBS if tool in have]
+    browser = ""
+    if have & {"web_answer", "web_search", "read_page", "web_click", "web_fill"}:
+        browser = (f"- Web actions work in IO's own browser tab. {browser_where} Never drive Chrome or Edge windows with click or keys. "
+                   "look_at_screen can't see that tab: answer about a page from read_page.\n")
+    return SYSTEM_LAYER.format(search=search, pick=actions.system_tools_text(names),
+                               jobs=("COMMON JOBS\n" + "\n".join(f"- {j}" for j in jobs) + "\n\n") if jobs else "", browser=browser)
+
 
 EXTRA_TOOLS = [
     {
@@ -354,10 +411,18 @@ def smart_size(w: int, h: int, factor: int = 28, max_pixels: int = EYES_MAX_PIXE
     return max(factor, int(w * scale // factor) * factor), max(factor, int(h * scale // factor) * factor)
 
 
-def find_window(title: str) -> tuple[int, tuple[int, int, int, int]] | None:
-    """The visible top-level window whose title contains `title` (case-insensitive): (hwnd, rect)."""
+def find_window(title: str, own: bool = False) -> tuple[int, tuple[int, int, int, int]] | None:
+    """The visible top-level window whose title contains `title` (case-insensitive): (hwnd, rect). 'hwnd:N' names one
+    window exactly. A browser window showing IO's own page (its Duck.ai chat, named after the task) only with own=True."""
     user32 = ctypes.windll.user32
     found: list = []
+    m = re.fullmatch(r"hwnd[:=](\d+)", title or "")
+    if m:
+        hwnd = int(m.group(1))
+        r = wt.RECT()
+        if user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) and user32.GetWindowRect(hwnd, ctypes.byref(r)):
+            return hwnd, (r.left, r.top, r.right, r.bottom)
+        return None
 
     def cb(hwnd, _):
         if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
@@ -365,7 +430,7 @@ def find_window(title: str) -> tuple[int, tuple[int, int, int, int]] | None:
             if n:
                 buf = ctypes.create_unicode_buffer(n + 1)
                 user32.GetWindowTextW(hwnd, buf, n + 1)
-                if title.lower() in buf.value.lower():
+                if title.lower() in buf.value.lower() and (own or not actions.own_page(buf.value)):
                     r = wt.RECT()
                     user32.GetWindowRect(hwnd, ctypes.byref(r))
                     if r.right - r.left > 50 and r.bottom - r.top > 50:
@@ -436,6 +501,26 @@ def open_windows() -> list[tuple[int, str]]:
     return out
 
 
+def display_titles(display: int = 0, limit: int = 10) -> str:
+    """The titles of the app windows on one display, front first, so a vision answer can't invent a different desktop."""
+    try:
+        l, t, r, b = displays()[display]
+    except IndexError:
+        return ""
+    user32, out = ctypes.windll.user32, []
+    for hwnd, title in open_windows():
+        rc = wt.RECT()
+        if user32.IsIconic(hwnd) or not user32.GetWindowRect(hwnd, ctypes.byref(rc)):
+            continue
+        w = actions._w(hwnd)
+        if w is None or w.exe in actions.PROTECTED or actions.own_page(title):
+            continue  # the user's private apps (Claude, Discord) are never named in a question that may reach Duck.ai
+        cx, cy = (rc.left + rc.right) // 2, (rc.top + rc.bottom) // 2
+        if l <= cx < r and t <= cy < b and rc.right - rc.left > 100:
+            out.append(f"'{title[:60]}'")
+    return ", ".join(out[:limit])
+
+
 def close_windows(titles: list[str], all_but: list[str] | None = None) -> str:
     """Closes windows the polite way (like clicking X), so apps can still ask to save. IO itself is never closed."""
     user32 = ctypes.windll.user32
@@ -504,8 +589,27 @@ def window_on_top_at(title: str, pt: tuple[int, int]) -> bool:
 
 def send_to_back(title: str) -> None:
     """Puts the window whose title contains `title` at the bottom of the stack, without minimizing or moving it."""
-    if hit := find_window(title):
+    if hit := find_window(title, own=True):
         ctypes.windll.user32.SetWindowPos(hit[0], 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_BOTTOM, no move/size/activate
+
+
+def input_nudge() -> None:
+    """Windows only lets the process that sent the last input hand over the foreground. A tap of an unassigned virtual
+    key (0x97) counts as that input and nothing reacts to it. The Alt this used to be landed its key-up in the window
+    being focused, which put Win11 Notepad into key-tip mode: the next letters typed were eaten ("hello bench" saved as
+    "bench")."""
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x97, 0, 0, 0)
+    user32.keybd_event(0x97, 0, 2, 0)
+
+
+def window_behind(hwnd: int, back_to: int = 0) -> None:
+    """Puts a window at the bottom of the stack (not minimized) and hands the foreground back to back_to."""
+    user32 = ctypes.windll.user32
+    user32.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_BOTTOM, no move/size/activate
+    if back_to and back_to != hwnd and user32.IsWindow(back_to) and user32.IsWindowVisible(back_to):
+        input_nudge()
+        user32.SetForegroundWindow(back_to)
 
 
 def focus_window(title: str) -> str:
@@ -516,10 +620,9 @@ def focus_window(title: str) -> str:
     user32 = ctypes.windll.user32
     if user32.IsIconic(hit[0]):
         user32.ShowWindow(hit[0], 9)  # SW_RESTORE (only when minimized: it would un-maximize a maximized window)
-    # Windows only lets the foreground app hand over focus; a no-op Alt press satisfies that rule
-    user32.keybd_event(0x12, 0, 0, 0)
-    user32.SetForegroundWindow(hit[0])
-    user32.keybd_event(0x12, 0, 2, 0)
+    if user32.GetForegroundWindow() != hit[0]:
+        input_nudge()  # Windows only lets the foreground app hand over focus
+        user32.SetForegroundWindow(hit[0])
     user32.BringWindowToTop(hit[0])
     user32.SetWindowPos(hit[0], 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)  # HWND_TOP, no move/size, show
     time.sleep(0.15)
@@ -956,6 +1059,65 @@ DIRECTOR_BRIEF = """IO: {goal}
 Tools:
 {catalog}
 Next JSON."""
+# the action layer's brief: the nested catalog (top level plus the route's groups expanded) instead of a flat tool list,
+# the resolved request and the user's constraints. Budget (Duck.ai, 4,400 chars) in fit_director_prompt's cut order.
+DIRECTOR_BRIEF_LAYER = """IO: {goal}
+{constraints}{hint}{shot}{plan}{guide}{screen}Recent actions and results, oldest first:
+{history}
+
+{catalog}
+{expansions}
+Next JSON."""
+# expect= is checked literally (a window title or text in the window), so it has to be what will be on screen, not a
+# description of success ("The text appears in Notepad" failed a step that worked)
+DIRECTOR_STANDING_LAYER = actions.DIRECTOR_STANDING.replace('"expect":"what you should see"', '"expect":"a window title or exact text that will show"')
+# when Duck.ai stopped answering in JSON, the standing rules go inline too
+DIRECTOR_PROMPT_LAYER = DIRECTOR_STANDING_LAYER.replace("{", "{{").replace("}", "}}") + "\n\n" + DIRECTOR_BRIEF_LAYER
+DESCRIBED = re.compile(r"\b(is|are|was|appears?|opens?|opened|shows?|showing|visible|focused|ready|displayed|should|will|now|success\w*|"
+                       r"saved|typed|written|created|closed|maximi[sz]ed|minimi[sz]ed|selected|entered|done|complete\w*|in front|frontmost)\b|'s\b", re.I)
+
+
+def usable_expect(expect: str) -> str:
+    """The part of a director's expect= the action library can check: quoted text, else short literal text or a title.
+    A description of success ('Notepad is open and focused') is dropped: the action's own check covers it, and checked
+    literally it would fail a step that worked."""
+    # quotes, not apostrophes: "Notepad's title shows 'eggs'" quotes eggs, not "s title shows "
+    quoted = re.findall(r"\"([^\"]{2,80})\"|“([^”]{2,80})”|(?<!\w)['‘]([^'’]{2,80})['’](?!\w)", expect or "")
+    if quoted:
+        return next(q for q in quoted[0] if q)
+    e = re.sub(r"\s+(dialog|window|box|popup|page|tab|screen)\W*$", "", (expect or "").strip(), flags=re.I)  # "Save As dialog": title "Save As"
+    return "" if not e or DESCRIBED.search(e) or len(e.split()) > 6 else e
+DIRECTOR_BUDGETS = {"history": 1600, "guide": 1400, "screen": 700, "expansions": 1800, "goal": 2400}  # cut in this order...
+DIRECTOR_FLOORS = {"history": 1100, "guide": 200, "screen": 300, "expansions": 900, "goal": 700}  # ...down to these first
+TEXT_SLOT = "«TEXT»"  # stands in for a long text the user gave (to type or write), which IO puts back into the director's args
+TEXT_SLOT_AT = 900  # requests longer than this send their text as the slot
+
+
+def text_slot(request: str) -> tuple[str, str]:
+    """(goal, payload): a long request's text to type moved out of the director's brief (Duck.ai takes 4,400 characters
+    in all) and replaced by TEXT_SLOT, which IO fills back into the actions. ('request', '') when it is short or has no
+    'instruction: text' shape."""
+    if len(request) <= TEXT_SLOT_AT:
+        return request, ""
+    m = re.search(r"[:\n]", request[:400])
+    if not m or len(request) - m.end() < 200:
+        return request, ""
+    head, payload = request[:m.end()].rstrip(), request[m.end():].strip()
+    return (f"{head} {TEXT_SLOT} (the user's text, {len(payload)} characters, starting \"{payload[:100]}\" and ending "
+            f"\"{payload[-60:]}\"; write {TEXT_SLOT} in an action's args where it goes, and IO puts the full text there)"), payload
+
+
+def fill_slot(args, payload: str):
+    """TEXT_SLOT in any string argument -> the user's text."""
+    if not payload:
+        return args
+    if isinstance(args, str):
+        return args.replace(TEXT_SLOT, payload)
+    if isinstance(args, dict):
+        return {k: fill_slot(v, payload) for k, v in args.items()}
+    if isinstance(args, list):
+        return [fill_slot(v, payload) for v in args]
+    return args
 
 
 def tool_catalog(tools: list[dict]) -> str:
@@ -977,11 +1139,24 @@ def tool_catalog(tools: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, **parts: str) -> str:
-    """DIRECTOR_PROMPT under the site's length limit: older guide notes, history and the screen description go first."""
-    budgets = {"guide": 1400, "history": 1600, "screen": 700}
+def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, budgets: dict | None = None, **parts: str) -> str:
+    """DIRECTOR_PROMPT under the site's length limit: older guide notes, history and the screen description go first.
+    budgets (the action layer's brief): parts are cut one at a time in the dict's order, each down to its DIRECTOR_FLOORS
+    entry before the next is touched; expansions lose whole groups from the end."""
+    ordered = budgets is not None
+    budgets = dict(budgets) if ordered else {"guide": 1400, "history": 1600, "screen": 700}
 
     def cut(k, v):  # whole lines only: the newest history, the start of the guide notes
+        if k == "expansions":  # whole groups, in the route's order
+            out, n = [], 0
+            for block in v.split("\n\n"):
+                if n + len(block) > budgets[k]:
+                    break
+                out.append(block)
+                n += len(block) + 2
+            return "\n\n".join(out)
+        if k == "goal":  # the start of the task says what to do
+            return v if len(v) <= budgets[k] else v[:budgets[k]].rsplit(" ", 1)[0] + " …(cut)"
         lines, out, n = v.splitlines(), [], 0
         for line in (reversed(lines) if k == "history" else lines):
             if n + len(line) > budgets[k]:
@@ -990,46 +1165,120 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, **parts: st
             n += len(line) + 1
         return "\n".join(reversed(out) if k == "history" else out) or v[:budgets[k]]
 
-    for _ in range(12):
+    for _ in range(24):
         filled = {k: cut(k, v) if k in budgets else v for k, v in parts.items()}
         prompt = template.format(**{k: v for k, v in filled.items() if "{" + k + "}" in template})
         if len(prompt) <= limit:
             return prompt
-        for k in budgets:
-            budgets[k] = int(budgets[k] * 0.75)
-    return prompt[:limit]
+        if not ordered:
+            for k in budgets:
+                budgets[k] = int(budgets[k] * 0.75)
+            continue
+        over = len(prompt) - limit
+        k = next((k for k in budgets if budgets[k] > DIRECTOR_FLOORS.get(k, 0) and parts.get(k)), None)
+        if k:
+            budgets[k] = max(DIRECTOR_FLOORS.get(k, 0), min(int(budgets[k] * 0.75), budgets[k] - over))
+        else:  # everything at its floor: cut all alike
+            for k in budgets:
+                budgets[k] = int(budgets[k] * 0.75)
+    # never cut the end: the catalog and "Next JSON." are what make the reply usable
+    tail = prompt[-600:]
+    return prompt[:limit - len(tail) - 2] + "\n…" + tail if len(prompt) > limit else prompt
 
 
-def director_plan_of(text: str) -> str:
+_JSON_STR = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
+# a Windows path inside a string: C:\..., %TEMP%\..., ~\..., or a UNC \\server at its start
+_HAS_PATH = re.compile(r'(?<![A-Za-z])[A-Za-z]:\\(?!\\)|%\w+%\\(?!\\)|^~\\(?!\\)|^\\\\(?!\\)')
+
+
+def _escape_paths(s: str) -> str:
+    """Single backslashes inside strings that hold a Windows path doubled before parsing: "C:\\temp\\new.txt" written raw
+    by a model is valid JSON with a TAB and a newline in it, which no later repair can tell from intent. Properly
+    escaped paths ("C:\\\\temp") are left alone."""
+    def fix(m: re.Match) -> str:
+        body = m.group(1)
+        if not _HAS_PATH.search(body):
+            return m.group(0)
+        return '"' + re.sub(r'\\\\|\\"|\\', lambda t: t.group(0) if len(t.group(0)) == 2 else "\\\\", body) + '"'
+    return _JSON_STR.sub(fix, s)
+
+
+def _salvage_actions(s: str) -> dict | None:
+    """A reply cut off mid-JSON (or with one broken action): thoughts, plan and every action object that parses on its
+    own, in order. None when no action survives."""
+    m = re.search(r'"actions"\s*:\s*\[', s)
+    if not m:
+        return None
+    dec, i, acts = json.JSONDecoder(), m.end(), []
+    while i < len(s):
+        while i < len(s) and s[i] in " \t\r\n,":
+            i += 1
+        if i >= len(s) or s[i] != "{":
+            break
+        try:
+            obj, i = dec.raw_decode(s, i)
+        except ValueError:
+            break
+        acts.append(obj)
+    if not acts:
+        return None
+    out: dict = {"actions": acts}
+    for k in ("thoughts", "plan"):
+        km = re.search(r'"' + k + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', s)
+        if km:
+            try:
+                out[k] = json.loads('"' + km.group(1) + '"')
+            except ValueError:
+                out[k] = km.group(1)
+    return out
+
+
+def loose_json(text: str) -> dict | None:
+    """The JSON object in a model's reply, forgiving the usual slips: Windows paths with single backslashes
+    ("C:\\Temp", repaired before parsing so \\t and \\n in them stay path characters), trailing commas, a stray
+    language tag ("json\\n{...") and a reply cut off after some complete actions. None when there is no object."""
+    start = (text or "").find("{")
+    if start < 0:
+        return None
+    end = text.rfind("}")
+    s = text[start:end + 1] if end > start else text[start:]
+    escaped = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', _escape_paths(s))
+    for candidate in (_escape_paths(s), escaped, re.sub(r",\s*([}\]])", r"\1", escaped), s):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        return data if isinstance(data, dict) else None
+    return _salvage_actions(escaped) or _salvage_actions(_escape_paths(text[start:]))
+
+
+def director_plan_of(text: str, code: str = "") -> str:
     """The long-term plan the director keeps in its replies ('' if none)."""
-    m = re.search(r"\{.*\}", text, re.S)
-    try:
-        plan = json.loads(m.group(0)).get("plan") if m else ""
-    except (ValueError, AttributeError):
-        return ""
+    data = (loose_json(code) if code else None) or loose_json(text) or {}
+    plan = data.get("plan") or ""
     return (plan if isinstance(plan, str) else json.dumps(plan, ensure_ascii=False))[:600]
 
 
-def parse_director(text: str, allowed: set) -> tuple[str, list[tuple[str, dict]]]:
-    """(thoughts, [(tool, args)]) from the director's reply; tools IO doesn't have are dropped."""
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return "", []
-    try:
-        data = json.loads(m.group(0))
-    except ValueError:
+def parse_director(text: str, allowed: set, code: str = "") -> tuple[str, list[tuple[str, dict]]]:
+    """(thoughts, [(tool, args)]) from the director's reply; tools IO doesn't have are dropped. code: the reply's code
+    block as the page holds it (tried first: the visible text can carry the fence and the Copy button). An action's
+    "expect" goes into its args; the action library checks it, everything else drops it."""
+    data = (loose_json(code) if code else None) or loose_json(text)
+    if not data:
         return "", []
     acts = data.get("actions") or data.get("action") or []  # it sometimes answers with a single "action"
     out = []
     for a in acts if isinstance(acts, list) else [acts]:
         if isinstance(a, str):
-            a = {"tool": a, "args": {k: v for k, v in data.items() if k not in ("thoughts", "action", "actions")}}
+            a = {"tool": a, "args": {k: v for k, v in data.items() if k not in ("thoughts", "action", "actions", "plan")}}
         name = a.get("tool") or a.get("name") if isinstance(a, dict) else None
         if name in allowed:
             args = a.get("args") or a.get("arguments") or a.get("parameters") or a.get("input")
             if not isinstance(args, dict):  # or the arguments sit next to the tool name
                 used = "tool" if a.get("tool") else "name"  # "name" can be an argument (App's) when "tool" names the tool
-                args = {k: v for k, v in a.items() if k not in (used, "args", "arguments", "parameters", "input")}
+                args = {k: v for k, v in a.items() if k not in (used, "args", "arguments", "parameters", "input", "expect")}
+            if a.get("expect") and isinstance(a.get("expect"), str):
+                args = {**args, "expect": a["expect"]}
             out.append((name, args))
     return str(data.get("thoughts") or "")[:400], out[:8]
 
@@ -1041,6 +1290,7 @@ class Gemini:
 
     def __init__(self, stack: AsyncExitStack, token: str, private: bool = True) -> None:
         self.stack, self.token, self.session, self.last, self.private = stack, token, None, 0.0, private
+        self.tab = False  # account mode: IO's tab is open in Chrome (a navigate worked)
         self.takes_images = not private  # signed-out Gemini takes no uploads
         self.max_chars = ADVISOR_MAX_CHARS["Gemini"]
 
@@ -1067,7 +1317,15 @@ class Gemini:
             r, w = await self.stack.enter_async_context(stdio_client(browser_params({"browser_mode": "chrome", "chrome_token": self.token}), errlog=sys.stderr))
             self.session = await self.stack.enter_async_context(ClientSession(r, w, client_info=BROWSER_CLIENT))
             await self.session.initialize()
+            # registered after the session, so it runs before the session closes (the stack unwinds last-in first-out)
+            self.stack.push_async_callback(self.close)
         return self.session
+
+    async def close(self) -> None:
+        """Account mode, end of the task (done, Stop or an error): hand IO's tab back; the extension closes it on DONE_URL."""
+        if self.tab and not self.private:  # (with no tab, any call would make the extension open a new connect page)
+            await hand_back_tab(self.session)
+        self.tab = False
 
     def ready_in(self) -> int:
         return max(0, round(self.last + GEMINI_EVERY - time.time()))
@@ -1077,7 +1335,8 @@ class Gemini:
             return f"error: Gemini was asked recently; it can be asked again in {wait}s. Keep going with what you have."
         self.last = time.time()
         s = await self._session()
-        await s.call_tool("browser_navigate", {"url": GEMINI_URL})
+        self.tab, had_tab = True, self.tab  # (should Stop land mid-navigate, the tab may well be open)
+        self.tab = had_tab or not text_of(await s.call_tool("browser_navigate", {"url": GEMINI_URL})).startswith("error")
         await asyncio.sleep(2)
         if image:
             pasted = page_text(text_of(await s.call_tool("browser_evaluate", {"function": GEMINI_PASTE_JS % json.dumps(base64.b64encode(image).decode())})))
@@ -1116,6 +1375,28 @@ class Gemini:
 
 
 DUCK_URL = "https://duck.ai/"
+# Where IO's Chrome tabs go when a task ends: IO's extension closes any tab that arrives here, even the last tab of a
+# window, which it otherwise only ungroups and leaves open (Duck.ai chat and all). Never mid-task: closing the last
+# controlled tab ends the extension's connection, and with it that session's browser tools.
+DONE_URL = f"http://127.0.0.1:{os.environ.get('BOSS_APP_PORT', '8765')}/static/io-done.html"
+
+
+async def hand_back_tab(session, before: str = "") -> None:
+    """End of a task: run `before` in IO's tab (deleting the Duck.ai chat), then send the tab to DONE_URL.
+    Never raises; shielded, so a second Stop during the cleanup can't leave the tab half done."""
+    async def goodbye():
+        try:
+            if before:
+                await asyncio.wait_for(session.call_tool("browser_evaluate", {"function": before}), 4)
+            await asyncio.wait_for(session.call_tool("browser_navigate", {"url": DONE_URL}), 5)
+        except (Exception, asyncio.CancelledError):  # the tab may be gone already, or closed by the extension mid-navigation
+            pass
+    try:
+        await asyncio.shield(goodbye())
+    except asyncio.CancelledError:
+        pass
+
+
 DUCK_ATTACH_JS = """() => {
   const inp = document.querySelector('input[type=file]');
   if (!inp) return 'no-input';
@@ -1147,10 +1428,36 @@ DUCK_READ_JS = """() => {
   const at = main.lastIndexOf('You said');
   const parts = at < 0 ? [] : main.slice(at).split('Duck.ai said');
   const asked = main.split('You said').length - 1;
-  return JSON.stringify({limited, challenge, asked, generating: /Generating response/.test(main), text: parts.length > 1 ? parts[parts.length - 1] : ''});
+  const text = parts.length > 1 ? parts[parts.length - 1] : '';
+  // the reply's JSON as its code block holds it (the visible text carries the fence label and Copy button); only when
+  // that block belongs to the newest answer, not an older one
+  const blocks = [...document.querySelectorAll('pre code')];
+  const fallback = blocks.length ? blocks : [...document.querySelectorAll('pre, code')];
+  const last = fallback.length ? fallback[fallback.length - 1].textContent : '';
+  const flat = s => s.replace(/\\s+/g, '');
+  const code = last && text && last.includes('{') && flat(text).includes(flat(last).slice(0, 60)) ? last : '';
+  return JSON.stringify({limited, challenge, asked, generating: /Generating response/.test(main), text, code});
 }"""
 # Duck.ai keeps recent chats in the browser: delete just this one (its own Delete chat button), nothing else of yours
 DUCK_MAX_IMAGES = 5
+# Duck.ai's daily cap (~250 messages here): once it says so, every task skips it for a while instead of each spending a
+# 30 s round finding out again. Kept in a file so a restart remembers.
+DUCK_LIMIT_PAUSE = 3600
+DUCK_LIMIT_FILE = HERE / "data" / "duck_limit.json"
+
+
+def duck_paused_until() -> float:
+    try:
+        return float(json.loads(DUCK_LIMIT_FILE.read_text(encoding="utf-8")).get("until", 0))
+    except (OSError, ValueError, AttributeError):
+        return 0.0
+
+
+def duck_pause(until: float) -> None:
+    try:
+        DUCK_LIMIT_FILE.write_text(json.dumps({"until": until}), encoding="utf-8")
+    except OSError:
+        pass
 # Duck.ai refuses a 6th picture in a conversation and then won't send anything until the pending ones are removed
 DUCK_IMAGE_LIMIT_JS = """() => {
   if (!/only attach \\d+ images? per conversation/i.test(document.body.innerText)) return 'ok';
@@ -1174,11 +1481,7 @@ DUCK_FORGET_JS = """async () => {
 
 
 def complete_json(text: str) -> bool:
-    m = re.search(r"\{.*\}", text, re.S)
-    try:
-        return bool(m) and isinstance(json.loads(m.group(0)), dict)
-    except ValueError:
-        return False
+    return loose_json(text) is not None
 
 
 def duck_answer(text: str) -> str:
@@ -1209,25 +1512,44 @@ class DuckAI:
             r, w = await self.stack.enter_async_context(stdio_client(browser_params({"browser_mode": "chrome", "chrome_token": self.token}), errlog=sys.stderr))
             self.session = await self.stack.enter_async_context(ClientSession(r, w, client_info=BROWSER_CLIENT))
             await self.session.initialize()
+            # registered after the session, so it runs before the session closes (the stack unwinds last-in first-out)
+            self.stack.push_async_callback(self.close)
         return self.session
 
+    async def close(self) -> None:
+        """End of the task (done, Stop or an error): delete the conversation and hand the tab back; the extension closes
+        it on DONE_URL. (Left to the disconnect alone, a tab that is the last in its window stayed open, chat and all.)"""
+        if self.tab:  # (with no tab, any call would make the extension open a new connect page)
+            await hand_back_tab(self.session, DUCK_FORGET_JS)
+        self.in_chat, self.images, self.tab = False, 0, False
+        actions.OWN_PAGE_TITLES.clear()
+
+    tab = False  # IO's tab is open in Chrome (a navigate worked)
     in_chat = False  # a director conversation is open in the tab
     images = 0  # pictures sent in it (Duck.ai allows DUCK_MAX_IMAGES per conversation)
+    last_code = ""  # the last answer's code block as the page holds it (parse_director tries it first)
 
     async def ask(self, prompt: str, image: bytes = b"", keep: bool = False, instructions: str = "") -> str:
         """keep: continue the open conversation (and leave it open after) instead of a fresh, forgotten chat."""
         if wait := self.ready_in():
             return f"error: the advisor was asked recently; it can be asked again in {wait}s. Keep going with what you have."
         self.last = time.time()
+        self.last_code = ""
         s = await self._session()
 
         async def js(code: str) -> str:
             return page_text(text_of(await s.call_tool("browser_evaluate", {"function": code})))
 
-        if not (keep and self.in_chat):
+        # a full conversation can't take the director's next screenshot: that round starts a new one (it sends the full brief)
+        if not (keep and self.in_chat) or (image and self.images >= DUCK_MAX_IMAGES):
+            if self.in_chat:
+                await js(DUCK_FORGET_JS)  # the old conversation goes, like any finished one
+                self.in_chat = False
             # a fresh URL each time forces a real reload (duck.ai -> duck.ai kept the old conversation on screen; going via
             # about:blank instead made the extension let go of the tab)
-            await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000)}"})
+            self.tab, had_tab = True, self.tab  # (should Stop land mid-navigate, the tab may well be open)
+            opened = text_of(await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000)}"}))
+            self.tab = had_tab or not opened.startswith("error")
             await asyncio.sleep(1)
             if instructions:  # standing instructions for the new conversation (read when the page loads)
                 await js(DUCK_INSTRUCT_JS % json.dumps(instructions))
@@ -1277,20 +1599,30 @@ class DuckAI:
                     continue
                 new = duck_answer(state.get("text", ""))
                 same = same + 1 if new and new == text and not state.get("generating") else 0
-                text = new
-                if same >= 2 or (same >= 1 and complete_json(text)):  # a finished JSON reply needn't wait for a second check
+                text, code = new, str(state.get("code") or "")
+                if same >= 2 or (same >= 1 and (complete_json(text) or complete_json(code))):  # a finished JSON reply needn't wait for a second check
+                    self.last_code = code
                     break
         finally:
+            if text and not asyncio.current_task().cancelling():
+                try:  # Duck.ai names the chat after the task ("Open document window"): its window is IO's, never the user's
+                    title = (await asyncio.wait_for(js("() => document.title"), 3)).strip()
+                    if title and not title.startswith("###") and len(title) < 120:
+                        actions.OWN_PAGE_TITLES.add(title)
+                except Exception:
+                    pass
             if keep and text:
                 self.in_chat = True
                 self.images += bool(image)
-            else:
+            elif not asyncio.current_task().cancelling():  # on Stop, close() deletes the chat and hands the tab back
                 try:
                     await js(DUCK_FORGET_JS)
-                    await s.call_tool("browser_navigate", {"url": "about:blank"})
+                    # a fresh, empty Duck.ai page: about:blank made the extension let go of the tab, which then stayed behind
+                    await s.call_tool("browser_navigate", {"url": f"{DUCK_URL}?r={int(time.time() * 1000)}"})
                 except Exception:
                     pass
-        return text[:2000] if text else "error: no answer from Duck.ai"
+        # (whole: 8 actions with their expect= run past 2,000 characters, and a cut reply lost its last actions)
+        return text[:8000] if text else "error: no answer from Duck.ai"
 
 
 async def meanings_hint(session, page: str, task: str) -> str:
@@ -1349,6 +1681,11 @@ def fix_args(name: str, args: dict) -> dict:
         loc = {str(k).strip("\"' "): v for k, v in loc.items()}
         if {"x", "y"} <= loc.keys():
             args["loc"] = [round(float(loc["x"])), round(float(loc["y"]))]
+    elif isinstance(loc, list) and len(loc) >= 2:  # ["812", "640"] from the compact schemas
+        try:
+            args["loc"] = [round(float(loc[0])), round(float(loc[1]))]
+        except (TypeError, ValueError):
+            pass
     return args
 
 
@@ -1418,9 +1755,37 @@ listeners: list = []
 focus_hint = ""
 
 
+focus_hwnd = 0  # the same window, once resolved (exe-aware, never IO's own Duck.ai window); 0 = not known
+
+
 def hint_focus(title: str) -> None:
-    global focus_hint
+    """Where the task works now. Resolved once to a window the way actions.resolve does it (by exe for app words, IO's
+    own browser pages skipped), so the glow and the refocus after a Duck.ai round can't pick the Duck.ai chat that
+    Duck.ai names after the task ("Notepad task execution")."""
+    global focus_hint, focus_hwnd
     focus_hint = title
+    focus_hwnd = 0
+    if title:
+        try:
+            w = actions.resolve(None, title)
+            focus_hwnd = w.hwnd if w and not (w.exe in actions.BROWSERS and not re.search(r"chrome|edge|browser|firefox", title, re.I)) else 0
+        except Exception:
+            focus_hwnd = 0
+
+
+def glow_hint() -> str:
+    """What the focus glow outlines: 'hwnd:N' once the window is known, else the title hint."""
+    if focus_hwnd and ctypes.windll.user32.IsWindow(focus_hwnd):
+        return f"hwnd:{focus_hwnd}"
+    return focus_hint
+
+
+def refocus(title: str) -> str:
+    """Brings the task's window back to the front after a Duck.ai round: by hwnd when known, else by title (browser
+    windows showing IO's own pages skipped)."""
+    if focus_hwnd and focus_hint and title == focus_hint and ctypes.windll.user32.IsWindow(focus_hwnd):
+        return actions._text(focus_hwnd) if actions._focus_sync(focus_hwnd) else ""
+    return focus_window(title)
 
 
 def log(event: str, **data) -> None:
@@ -1462,18 +1827,27 @@ def remember(text: str) -> str:
 # ---------- risky actions that need the user's OK when confirm_risky is on ----------
 
 RISKY_POWERSHELL = re.compile(
-    r"\b(Remove-Item|rm|del|erase|rmdir|rd|Format-Volume|format|Clear-Content|Stop-Computer|Restart-Computer|shutdown|"
-    r"Stop-Process|taskkill|kill|Set-ExecutionPolicy|reg\s+delete|Remove-ItemProperty|Uninstall-\w+|Send-MailMessage)\b",
+    # (format alone is format.com; Format-Table/Format-List only lay out output: they asked the user to allow a read)
+    r"(?<![-\w])(Remove-Item|rm|del|erase|rmdir|rd|Format-Volume|format(?!-)|Clear-Content|Stop-Computer|Restart-Computer|shutdown|"
+    r"Stop-Process|taskkill|kill|Set-ExecutionPolicy|reg\s+delete|Remove-ItemProperty|Uninstall-\w+|Send-MailMessage)(?![-\w])",
     re.I,
 )
 
 
-def risky_reason(name: str, args: dict) -> str:
-    """Why an action needs confirmation, or "" if it doesn't."""
+def risky_reason(name: str, args: dict, request: str = "") -> str:
+    """Why an action needs confirmation, or "" if it doesn't. request: what the user asked (a named clipboard is theirs)."""
     if name == "PowerShell" and RISKY_POWERSHELL.search(str(args.get("command", ""))):
         return f"run PowerShell: {args.get('command')}"
     if name == "FileSystem" and (args.get("mode") in ("delete", "move") or (args.get("mode") == "write" and args.get("overwrite"))):
         return f"{args.get('mode')} the file {args.get('path')}"
+    if name == "FileSystem" and args.get("mode") == "write":  # writing over a file that is there replaces it
+        try:
+            if Path(os.path.expandvars(str(args.get("path") or ""))).exists():
+                return f"overwrite the file {args.get('path')}"
+        except (OSError, ValueError):
+            pass
+    if name == "Clipboard" and args.get("mode") == "set" and not re.search(r"clipboard|copy", request, re.I):
+        return "replace what is on your clipboard"
     if name == "close_windows":
         keep = [k.lower() for k in (args.get("all_except") or [])]
         wanted = [t.lower() for t in (args.get("titles") or [])]
@@ -1484,6 +1858,17 @@ def risky_reason(name: str, args: dict) -> str:
     if name == "Process" and args.get("mode") == "kill":
         return f"kill the process {args.get('name') or args.get('pid')}"
     return ""
+
+
+RISK_KINDS = [("delete", re.compile(r"\b(delete|recycle|remove|remove-item|rm|del|erase|rmdir|rd|clear-content|format)\b", re.I)),
+              ("overwrite", re.compile(r"\b(overwrite|replace)\b", re.I)), ("kill", re.compile(r"\b(kill|stop-process|taskkill)\b", re.I)),
+              ("close", re.compile(r"\b(close|alt\+f4|ctrl\+w)\b", re.I)), ("run", re.compile(r"\b(run|start-process)\b", re.I))]
+
+
+def risk_kind(reason: str) -> str:
+    """What kind of risky action a confirmation was about, so a 'no' covers the same thing done another way (recycle,
+    then Remove-Item, then FileSystem delete asked the user four times for one deletion)."""
+    return next((k for k, rx in RISK_KINDS if rx.search(reason)), reason)
 
 
 # plugin tools (notes, databases, git, GitHub...) that change things: by the server's own hint, by name,
@@ -1525,6 +1910,7 @@ def clean_summary(text: str) -> str:
     text = re.sub(r"\s*\[actions taken:.*?\]\s*$", "", text or "", flags=re.S)
     text = re.sub(r"\s*\(context, not part of the request:.*?\)\s*$", "", text, flags=re.S)
     text = re.sub(r"\n\s*done\.?\s*$", "", text, flags=re.I)  # a stray "done" line after the answer
+    text = re.sub(r"^\s*done\s*:\s*(?=\S)", "", text, flags=re.I)  # or a "done:" label before it
     return text.strip()
 
 
@@ -1544,6 +1930,8 @@ Given the user's request, the actions it took with their results, and the answer
 the user's request (not any plan) was really done. Claiming an action happened when it failed, skipping something the
 user asked for, or stating live facts (times, files, screen contents, page contents) the results don't show mean it is
 not done. Answering a general-knowledge question from knowledge is fine, and so is honestly saying a tool failed.
+Tool results are real readings from this PC: never doubt them from your own knowledge (games, apps, versions and names
+newer than you know exist). One result that answers the request is enough, even if other attempts returned nothing.
 If the results reasonably support the answer, say YES: don't ask for extra proof the user didn't want.
 Reply with exactly YES, or NO: followed by one sentence saying what is missing or wrong and what to do next."""
 
@@ -1566,6 +1954,18 @@ LOOP_COMPACT_AT = 8000
 DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortcut", "Scroll", "PowerShell", "wait", "look_at_screen",
                   "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
 LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
+# (those two sets are the rollback lists; with the action layer the loop set is actions.LOOP_MENU plus these window actions:
+# a covered or minimised game window is brought back with focus_window, not with guessed clicks)
+LOOP_WINDOW_ACTIONS = ["focus_window"]
+VAGUE_NOTE = ("The request doesn't say which file or window. Ask the user which one with ask_user first, before searching "
+              "or opening anything; if they don't say, open nothing")
+# what else a locked loop may reach through use() or the director: looking, clicking found points, notes; never apps,
+# files, the web or closing windows
+LOOP_LOCK_EXTRA = {"find_on_screen", "find_all", "read_region", "Click", "hold", "remember", "ask_gemini", "tools", "use", "done", "wait"}
+REMEMBER_REQUEST = re.compile(r"\bremember\b|\bnote (that|this|down)\b|\bfrom now on\b|\bnext time\b", re.I)
+INFO_GROUPS = {"READ", "PC", "FILE", "WEB", "DO"}  # native results that answer something: the fallback when a summary says nothing
+GLOW_NEUTRAL = {"PowerShell", "Clipboard", "Process", "FileSystem", "Scrape", "Snapshot", "remember", "wait", "research", "ask_user",
+                "ask_gemini", "tools", "use"}  # tools that work in no window: the focus glow stays where it is
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25
 LOOP_RESEARCH_EVERY = 20  # steps without research before a loop looks up whatever it's working on now  # the same call this many times in a row is a rut, even in a game
@@ -1594,6 +1994,9 @@ def local_chat(system: str, user: str, max_tokens: int = 300, think: bool = True
 RESOLVE_SYSTEM = """You turn the user's latest chat message into a standalone request, using the conversation before it.
 Resolve words like "it", "that", "the moon", "again", "what about..." from what was being discussed (for example after
 "What is IO?" answered about the assistant IO, "what about the moon?" means "What is Io, the moon of Jupiter?").
+A bare name or short fragment continues the user's last request with that name in it: after "check if I have runescape
+installed", "runelite?" means "Check if I have RuneLite installed." (not "What is RuneLite?"); after "what's the weather
+in Paris", "and london?" means "What's the weather in London?".
 Keep the user's intent and wording otherwise. If the message already stands alone, return it unchanged.
 Output only the rewritten request, one line."""
 
@@ -1603,14 +2006,20 @@ def resolve_followup(task: str, conversation: list[dict]) -> str:
     for m in conversation[-8:]:
         content = m["content"] if isinstance(m["content"], str) else ""
         turns.append(f"{m['role']}: {clean_summary(content)[:400]}")
-    text = local_chat(RESOLVE_SYSTEM, "Conversation:\n" + "\n".join(turns) + f"\n\nLatest message: {task}", max_tokens=80)
-    return text.splitlines()[0].strip().strip('"') if text else task
+    # no thinking: with it Qwen spent the 80 tokens reasoning and answered nothing, so follow-ups were never resolved
+    text = local_chat(RESOLVE_SYSTEM, "Conversation:\n" + "\n".join(turns) + f"\n\nLatest message: {task}", max_tokens=80, think=False)
+    line = text.splitlines()[0].strip().strip('"') if text else ""
+    return line if 0 < len(line) <= max(300, 4 * len(task)) else task
 
 
-def check_work(task: str, steps: list[str], answer: str) -> str:
-    """'' when the work looks done; otherwise what is missing, in one sentence."""
-    verdict = local_chat(CHECK_SYSTEM, f"Request: {task}\n\nActions and results:\n" + "\n".join(steps[-8:]) +
-                         f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=120)
+def check_work(task: str, steps: list[str], answer: str, constraints: str = "", evidence: str = "") -> str:
+    """'' when the work looks done; otherwise what is missing, in one sentence. constraints: what the user said not to do;
+    evidence: what the director saw on its screenshots (this checker sees no image)."""
+    verdict = local_chat(CHECK_SYSTEM, f"Request: {task}" + (f"\nThe user's constraints: {constraints}" if constraints else "") +
+                         "\n\nActions and results:\n" + "\n".join(steps[-8:]) +
+                         # the director's own words, not proof: only the results above show what really happened
+                         (f"\n\nThe deciding model's own (unverified) claim: {evidence[:300]}" if evidence else "") +
+                         f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=120, think=False)  # (thinking ate the 120 tokens: no verdict)
     if verdict.upper().startswith("NO"):
         return verdict[2:].lstrip(" :.-") or "the request doesn't look done yet"
     return ""
@@ -1712,6 +2121,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 br_r, br_w = await stack.enter_async_context(stdio_client(browser_params(options), errlog=sys.stderr))
                 br = await stack.enter_async_context(ClientSession(br_r, br_w, client_info=BROWSER_CLIENT))
                 await br.initialize()
+                if options.get("browser_mode") == "chrome":
+                    async def close_tab():  # IO's tab in your Chrome: the extension closes it on DONE_URL (Edge's window goes with its process)
+                        try:
+                            opened = ctx.tab_open  # (False once the action layer's cleanup has handed it back)
+                        except NameError:  # the task ended before its steps began
+                            return
+                        if opened:
+                            await hand_back_tab(br)
+                    stack.push_async_callback(close_tab)  # before the session closes (last-in first-out), however the task ends
                 # in your own Chrome, closing is left to you
                 allowed = BROWSER_TOOLS - {"browser_close"} if options.get("browser_mode") == "chrome" else BROWSER_TOOLS
                 for t in (await br.list_tools()).tools:
@@ -1774,26 +2192,98 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             user_content = [*images, {"type": "text", "text": prompt}]
         else:
             user_content = prompt
-        if "browser_navigate" in sessions:
-            system = SYSTEM.replace("{browser_where}", BROWSER_WHERE.get(options.get("browser_mode", "edge"), BROWSER_WHERE["edge"]))
+
+        # the action layer (actions.py): one registry generates the local model's menu, SYSTEM's tool ladder, the planner's
+        # tool paragraph and the director's nested catalog. data/actions.json {"enabled": false} gives back today's lists.
+        layer = actions.enabled()
+        ctx = actions.Ctx(options=options, win=win, browser=sessions.get("browser_navigate"), browser_mode=options.get("browser_mode", "edge"),
+                          eyes=eyes, ask=None if loop else ask, loop=loop, request=standalone,
+                          constraints=actions.constraints_of(standalone, conversation) if layer else [],
+                          log=lambda m: log("warning", text=str(m)[:300]))
+        found_points = ctx.found_points  # vision answers: loop clicks must come from one (shared with the action library)
+        route = actions.route_of(standalone, loop, bool(images))
+        vague = layer and route.kind == "vague"
+        if vague and isinstance(user_content, str):
+            # Qwen otherwise searched folders for 2-3 minutes (and the checker called asking a failure) before asking
+            user_content += f"\n\n({VAGUE_NOTE})"
+        defs = {t["function"]["name"]: t for t in tools}  # every L1 tool this task can run, by name
+        plugin_names = [alias for alias, _, _ in plugin_tools]
+        menu_names: list[str] = []  # the local model's menu (registry names), in preference order
+        messages: list[dict] = []
+        advisor_tool = False  # loops with an advisor (not a director): ask_gemini is on the menu
+        browser_where = BROWSER_WHERE.get(options.get("browser_mode", "edge"), BROWSER_WHERE["edge"])
+
+        def executable(n: str) -> bool:
+            """Whether this task can run a registry entry: native actions (FILE ones only with file access), and L1 tools
+            whose session or branch exists here."""
+            a = actions.REGISTRY.get(n)
+            if a is None:
+                return False
+            if a.fn is not None:
+                if not options["browser"] and a.group == "WEB":
+                    return False
+                return options["files"] or (a.group != "FILE" and n != "screenshot")
+            if n == "research":
+                return bool(options["browser"])  # a hidden researcher (a browser of its own) starts on first use
+            if n == "ask_gemini":
+                return advisor_tool
+            return n in defs
+
+        def task_allows(n: str) -> bool:
+            """Whether a call may run in this task, however it was reached (the menu, use(), the director): the toggles,
+            and in a loop locked on a window only the loop's own set (never open_app, files or the web)."""
+            if n in plugin_defs:
+                return True
+            if n not in actions.REGISTRY:
+                return n in defs or n in ("browser_open", "browser_read")
+            if not executable(n):
+                return False
+            if loop and focus:
+                return n in actions.LOOP_MENU or n in LOOP_WINDOW_ACTIONS or n in LOOP_LOCK_EXTRA
+            return True
+
+        ctx.allowed = task_allows  # use() and tools() answer by the same rule
+        # a long request's text to type goes to the director as TEXT_SLOT (its brief must fit 4,400 characters)
+        director_goal, slot_text = text_slot(ctx.request) if layer else (ctx.request, "")
+
+        def apply_menu(names: list) -> None:
+            """The local model's tools (compact registry schemas, plus the plugins) and the SYSTEM that matches them."""
+            menu_names[:] = [n for n in dict.fromkeys(names) if executable(n)]
+            tools[:] = actions.openai_tools(menu_names) + [plugin_defs[a] for a in plugin_names]
+            if messages:
+                messages[0]["content"] = layer_system(menu_names, browser_where)
+
+        if layer:
+            first = actions.menu(route, actions.available(ctx, decider="local"), ask=bool(ask) and not loop)
+            if loop:
+                first = actions.LOOP_MENU + LOOP_WINDOW_ACTIONS + ["done", "tools", "use"]
+            if REMEMBER_REQUEST.search(standalone):
+                first.append("remember")
+            apply_menu(first)
+            system = layer_system(menu_names, browser_where)
+        elif "browser_navigate" in sessions:
+            system = SYSTEM.replace("{browser_where}", browser_where)
         else:  # browser off or failed to start: point web work at Scrape or the desktop tools instead
             system = re.sub(r"- For anything on a website.*?\n", "- For websites, use Scrape to read a page as text; to interact with one, "
                             "launch the browser with App and use Snapshot, Click and Type.\n", SYSTEM, count=1)
             system = system.replace(" It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot "
                                     "(its title, headings and text).", "")
-        messages: list[dict] = [{"role": "system", "content": system}, *conversation, {"role": "user", "content": user_content}]
+        messages[:] = [{"role": "system", "content": system}, *conversation, {"role": "user", "content": user_content}]
         head = len(messages)  # everything after this is the task's own working notes, which can be summarized
         steps_log: list[str] = []  # every action with its result, for checking the work before answering
         redos = 0
-        log("start", task=task, tools=[t["function"]["name"] for t in tools])
+        log("start", task=task, tools=[t["function"]["name"] for t in tools], tools_chars=len(json.dumps(tools, ensure_ascii=False)),
+            route=route.kind if layer else "", constraints=actions.constraints_text(ctx.constraints))
         extra_tools = "\n".join(f"- {alias}: {(t.description or '').split('. ')[0][:120]}" for alias, _, t in plugin_tools)
         last_error, refused_done = "", False
+        refused_kinds: dict[str, str] = {}  # kinds of risky action the user said no to in this task -> what was asked
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         said_more = False
-        browser_tab_open = False  # set once browser_open has opened IO's tab in this task
+        route_failures = vision_misses = 0  # errors and unsure results this task (escalation to the director); NOT_FOUND/UNSUPPORTED
+        director_saw = ""  # the director's last thoughts: evidence for the work check, which sees no screenshot
         recent: list[str] = []  # recent call keys, to spot a snapshot/read/snapshot/read loop
         last_info = ""  # the last answer-like tool result, used when the model's own summary says nothing
-        actions: list[str] = []  # short action/result lines, for replanning
+        action_lines: list[str] = []  # short action/result lines, for replanning
         error_streak, replans, last_plan_step, plain_replies = 0, 0, 0, 0
 
         async def check_before_done(answer: str) -> str:
@@ -1803,7 +2293,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if not steps_log or redos >= MAX_REDOS:
                 return ""
             try:
-                problem = await asyncio.to_thread(check_work, task, steps_log, answer)
+                if layer:  # the resolved request, the user's constraints and what the director saw on screen
+                    rules = "; ".join(x for x in (actions.constraints_text(ctx.constraints),
+                                                  "the request doesn't say which one, so asking the user and opening nothing until they say is right"
+                                                  if vague else "") if x)
+                    problem = await asyncio.to_thread(check_work, ctx.request, steps_log, answer, rules, director_saw if director else "")
+                else:
+                    problem = await asyncio.to_thread(check_work, task, steps_log, answer)
             except Exception as e:
                 log("warning", text=f"couldn't check the work: {e}")
                 return ""
@@ -1823,7 +2319,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 asked = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m["role"] == "user" and isinstance(m["content"], str)]
                 if asked:
                     parts.append("Earlier requests in this conversation:\n" + "\n".join(f"user: {a}" for a in asked))
-            if "browser_navigate" not in sessions:
+            if layer:  # the tool paragraph comes from the registry; only what it can't say goes here
+                if ctx.constraints:
+                    parts.append(f"The user said: {actions.constraints_text(ctx.constraints)}.")
+                if "browser_navigate" in sessions:
+                    where = "IO's own tab in the user's Chrome (tab group 'IO')" if options.get("browser_mode") == "chrome" else "IO's own Edge window"
+                    parts.append(f"Web actions work in {where}.")
+            elif "browser_navigate" not in sessions:
                 parts.append("The agent has no browser tools this time: plan Scrape to read a page, or App, Snapshot, Click and Type to use a browser window.")
             else:
                 where = "IO's own tab in the user's Chrome (tab group 'IO')" if options.get("browser_mode") == "chrome" else "IO's own Edge window"
@@ -1835,13 +2337,27 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             context = "\n\n".join(p for p in parts if p)
             try:
                 t0 = time.time()
-                text = await asyncio.to_thread(planner.plan_local, standalone, context, BOSS_URL, BOSS_MODEL, history)
+                text = await asyncio.to_thread(planner.plan_local, standalone, context, BOSS_URL, BOSS_MODEL, history,
+                                               actions.planner_text(menu_names) if layer else "")
             except Exception as e:
                 log("warning", text=f"planning failed: {e}")
                 return
             if text:
                 messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
             log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
+
+        researcher = None
+
+        def get_researcher() -> Researcher:
+            """The hidden researcher (signed-out Gemini, Google as the fallback), started on first use."""
+            nonlocal researcher
+            if researcher is None:
+                researcher = Researcher(stack, use_gemini=True)
+            return researcher
+
+        async def research_for(question: str) -> str:
+            return await get_researcher().ask(question, ctx.request or task)
+        ctx.research = research_for  # web_answer falls back to it when Google is blocked or finds nothing
 
         if loop:
             # you confirm every loop before it starts: it keeps acting on the PC until you press Stop
@@ -1856,13 +2372,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 # every screenshot, find and click stays inside this window's content, so nothing beside it gets hit
                 eyes.content = True
                 eyes.brief = True
-                tools[:] = [t for t in tools if t["function"]["name"] in LOOP_TOOLS]
+                if not layer:
+                    tools[:] = [t for t in tools if t["function"]["name"] in LOOP_TOOLS]
                 prompt_note = (f"\nThe goal is in the '{focus}' window. find_on_screen and look_at_screen only see its content area, and "
                                "clicks outside it are blocked.")
                 if isinstance(messages[head - 1]["content"], str):
                     messages[head - 1]["content"] += prompt_note
             log("loop", goal=task, window=focus)
-            tools.append(RESEARCH_TOOL)
+            if not layer:
+                tools.append(RESEARCH_TOOL)
             researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")))
             how = options.get("gemini_mode", "private")
             token = options.get("chrome_token", "")
@@ -1873,8 +2391,17 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             else:
                 gemini = Gemini(stack, token, how != "account")
             director = bool(gemini) and options.get("advisor_role", "director") == "director"
+            if layer:
+                # the lean loop set (GAME helpers, vision, a few keys) for a locked window; without one, the general menu
+                # plus the vision tools (the GAME helpers need a locked window)
+                ctx.focus = focus
+                advisor_tool = bool(gemini and not director)
+                base = (actions.LOOP_MENU + LOOP_WINDOW_ACTIONS if focus else
+                        actions.ROUTES["general"].menu + ["click_on", "hold_on", "look_at_screen", "wait", "research"])
+                apply_menu(base + ["done", "tools", "use"] + (["ask_gemini"] if advisor_tool else []))
             if gemini and not director:
-                tools.append(ASK_GEMINI_TOOL)
+                if not layer:
+                    tools.append(ASK_GEMINI_TOOL)
                 if isinstance(messages[head - 1]["content"], str):
                     messages[head - 1]["content"] += ("\n- When research hasn't helped and you're still stuck, call ask_gemini with a specific question "
                                                       "(a stronger model).")
@@ -1895,7 +2422,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
                 prompt = fit_advisor_prompt(gemini.max_chars, shot="A screenshot of the window I'm working in is attached.\n\n" if image else "",
                                             goal=task, guide="\n---\n".join(guide[-2:]) or "(none yet)", screen=last_info or "(not looked yet)",
-                                            actions="\n".join(actions[-10:]) or "(none yet)", question=question)
+                                            actions="\n".join(action_lines[-10:]) or "(none yet)", question=question)
                 t0 = time.time()
                 try:
                     answer = await gemini.ask(prompt, image)
@@ -1943,18 +2470,23 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # single tasks get the director too (not small talk): it sees the screen and decides the steps until it calls done
             how, token = options.get("gemini_mode", "private"), options.get("chrome_token", "")
             gemini = None
-            if (options.get("ask_gemini") and options.get("advisor_role", "director") == "director" and not images
-                    and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip())) and (how not in ("account", "duck") or token)):
+            # with the action layer, routes that never need it (chat, images, knowledge) never start Duck.ai at all
+            wanted = route.director_after is not None if layer else not images and not (len(task.split()) <= 6 and SMALL_TALK.match(task.strip()))
+            if (options.get("ask_gemini") and options.get("advisor_role", "director") == "director" and wanted
+                    and (how not in ("account", "duck") or token)):
+                # (its browser session only opens on the first question, so a route that never escalates costs nothing)
                 gemini = DuckAI(stack, token) if how == "duck" else Gemini(stack, token, how != "account")
-            director = bool(gemini)
-            if director:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
+            # the director decides from the start on its routes (app, general); elsewhere the local model does, and the
+            # director takes over after route.director_after failed or unconfirmed steps
+            director = bool(gemini) and (not layer or route.decider == "director")
+            if director and not layer:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
                 researcher = Researcher(stack, use_gemini=True)
                 tools.append(RESEARCH_TOOL)
 
             def window_shot() -> bytes:
                 """The window the task works in once one is known, else the whole main screen, as a small JPEG.
                 (Not just the front window: "what's on my main monitor" must show the monitor, not one app on it.)"""
-                hit = find_window(focus_hint) if focus_hint else None
+                hit = find_window(glow_hint()) if focus_hint else None
                 area = hit[1] if hit else displays()[0]
                 shot = ImageGrab.grab(bbox=area, all_screens=True).convert("RGB")
                 shot.thumbnail((1280, 1280))
@@ -1962,28 +2494,85 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 shot.save(buf, format="JPEG", quality=80)
                 return buf.getvalue()
         director_queue: list[tuple[str, dict]] = []
-        director_paused_until = 0.0
+        director_paused_until = duck_paused_until()  # a limit hit in an earlier task still counts
         director_seen = director_rounds = director_guides = 0
         director_full, director_plan = False, ""
 
+        def director_names() -> list[str]:
+            """What the director may call: every director-mode action this task can run, not just the ones its catalog
+            shows, so actions it learned through tools() are accepted. A loop locked on a window keeps its lean set."""
+            if loop and focus:
+                return [n for n in dict.fromkeys(actions.LOOP_MENU + LOOP_WINDOW_ACTIONS + ["done", "tools"]) if executable(n)]
+            names = [n for n in actions.available(ctx, decider="director") if executable(n)]
+            # the raw Windows-MCP tools that touch the clipboard, files or processes stay out unless the request is about
+            # them: the FILE and PC actions do the same with checks (Clipboard set overwrote the user's clipboard unasked)
+            raw_ok = {n for n, word in (("Clipboard", r"clipboard"), ("Process", r"process|task manager|kill|running"),
+                                        ("FileSystem", r"\bfile|folder")) if re.search(word, ctx.request, re.I)}
+            return [n for n in names if not (loop and actions.REGISTRY[n].group == "GAME" and actions.native(n))  # GAME needs a locked window
+                    and (n not in ("Clipboard", "Process", "FileSystem") or n in raw_ok)]
+
+        def director_hint() -> str:
+            """Rules the director broke on single tasks: it guessed which document from Recent items (and opened the
+            user's own zip), and it took IO's own Duck.ai window for the document."""
+            if loop:
+                return ""
+            return ("Rules: open, close or change only what the request names; if it doesn't say which file or window, "
+                    "ask_user first. IO's own Duck.ai/Chrome window is never the target.\n")
+
+        def director_catalog(names: list) -> tuple[str, str]:
+            """(top level, expanded groups): in a locked loop the GAME and SEE groups plus the rest of its set on one line;
+            otherwise the starred actions per group and the route's groups in full (ACT first: clicking and typing need the
+            details most)."""
+            if loop and focus:
+                top = actions.catalog_top(names, loop=True)
+                rest = [n for n in names if actions.REGISTRY[n].group not in ("GAME", "SEE", "END")]
+                if rest:
+                    top += "\nALSO " + " ".join(actions.REGISTRY[n].signature(skip=("window", "expect")) for n in rest)
+                return top, ""
+            groups = sorted(actions.ROUTES["general"].expand if loop else route.expand, key=lambda g: g != "ACT")
+            return actions.catalog_top(names), "\n\n".join(actions.catalog_group(g, names) for g in groups)
+
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
-            nonlocal director_seen, director_rounds, director_full, director_plan, director_guides
+            nonlocal director_seen, director_rounds, director_full, director_plan, director_guides, director_saw
+            front_before = await asyncio.to_thread(actions.fg)
             await asyncio.to_thread(send_to_back, "Duck.ai")  # its own tab is never what the screenshot should show
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
             keep = isinstance(gemini, DuckAI)
-            # a loop locked on a window already has a small toolset; anything else gets the compact director list
-            usable = [t for t in tools if (loop and focus) or t["function"]["name"] in DIRECTOR_TOOLS | LOOP_TOOLS]
+            if layer:
+                allowed = set(director_names())
+            else:
+                # a loop locked on a window already has a small toolset; anything else gets the compact director list
+                usable = [t for t in tools if (loop and focus) or t["function"]["name"] in DIRECTOR_TOOLS | LOOP_TOOLS]
+                allowed = {t["function"]["name"] for t in usable}
             # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
             # A fresh conversation (with the full brief) when the old one fails or has grown long.
             # Duck.ai takes at most 5 pictures per conversation: with screenshots, a new one every 5 rounds
             if keep and gemini.in_chat and (not image or gemini.images < DUCK_MAX_IMAGES) and director_rounds % 20:
                 new = steps_log[director_seen:] or ["(no actions ran)"]
                 fresh = (guide[director_guides:] if loop else [])  # research done since its last round
-                prompt = ("".join(f"New from guides: {g[:700]}\n" for g in fresh) +
-                          "Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3000:] +
-                          ("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
-                          "\nIf the same thing keeps not working, change approach. Next JSON.")
+                # a tools() answer goes whole: it is the catalog page the director asked for
+                head = "".join(f"New from guides: {g[:700]}\n" for g in fresh[-2:])
+                tail = (("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
+                        "\nIf the same thing keeps not working, change approach. Next JSON.")
+                results = "\n".join(re.sub(r"\s+", " ", a)[:950 if a.startswith("tools(") else 320] for a in new)
+                room = gemini.max_chars - len(head) - len(tail) - 40  # the newest results are the ones that matter
+                prompt = head + "Results of your last actions:\n" + results[-max(800, min(3000, room)):] + tail
+                if len(prompt) > gemini.max_chars:
+                    prompt = prompt[-gemini.max_chars:]
+            elif layer:
+                top, expansions = director_catalog(sorted(allowed, key=list(actions.REGISTRY).index))
+                prompt = fit_director_prompt(
+                    gemini.max_chars, DIRECTOR_BRIEF_LAYER if keep and not director_full else DIRECTOR_PROMPT_LAYER, budgets=DIRECTOR_BUDGETS,
+                    goal=f"Goal (it never ends; the user stops it): {task}" if loop else f"Task (do it, then call done with the answer for the user): {director_goal}",
+                    hint=director_hint(),
+                    constraints=f"Constraints (the user's own words, never break them): {actions.constraints_text(ctx.constraints)}\n" if ctx.constraints else "",
+                    shot="A screenshot of the window IO works in is attached.\n" if image else "",
+                    plan=f"Your plan so far: {director_plan}\n\n" if director_plan else "",
+                    guide=("What guides say about it (for long-term planning):\n" + "\n---\n".join(guide[-2:]) + "\n\n") if loop and guide else "",
+                    screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
+                    history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
+                    catalog=top, expansions=expansions)
             else:
                 # with Duck.ai the rules live in its standing instructions; if it stopped answering in JSON, send them inline again
                 prompt = fit_director_prompt(
@@ -1999,33 +2588,59 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             director_guides = len(guide) if loop else 0
             t0 = time.time()
             try:
-                reply = await (gemini.ask(prompt, image, keep=True, instructions=DIRECTOR_STANDING) if keep else gemini.ask(prompt, image))
+                standing = DIRECTOR_STANDING_LAYER if layer else DIRECTOR_STANDING
+                reply = await (gemini.ask(prompt, image, keep=True, instructions=standing) if keep else gemini.ask(prompt, image))
                 if keep and reply.startswith("error") and not reply.startswith("error: limit"):
                     director_rounds = 0  # start over in a new conversation next time
             except Exception as e:
                 reply = f"error: {e}"
             # asking Duck.ai brings its Chrome tab forward: send it behind everything, then the app back to the front
             await asyncio.to_thread(send_to_back, "Duck.ai")
+            front_now = await asyncio.to_thread(actions.fg)
+            if front_now and front_now.exe in actions.BROWSERS and (front_before is None or front_now.hwnd != front_before.hwnd):
+                # Duck.ai titles its chats after the task ("Notepad task execution"), so its window is the browser window
+                # that came to the front during the round, not one titled Duck.ai: behind everything, and the front back
+                await asyncio.to_thread(window_behind, front_now.hwnd, front_before.hwnd if front_before else 0)
             if focus or focus_hint:
-                await asyncio.to_thread(focus_window, focus or focus_hint)
-            thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, {t["function"]["name"] for t in usable})
+                await asyncio.to_thread(refocus, focus or focus_hint)
+            code = getattr(gemini, "last_code", "")
+            thoughts, batch = ("", []) if reply.startswith("error") else parse_director(reply, allowed, code)
             if not reply.startswith("error"):
-                director_plan = director_plan_of(reply) or director_plan
+                director_plan = director_plan_of(reply, code) or director_plan
                 director_full = not batch  # an answer that isn't usable JSON: the next conversation gets the full rules inline
                 if not batch:
                     director_rounds = 0
+            director_saw = thoughts or director_saw
+            # an unusable reply is logged whole: a cut-off one hid why it didn't parse
             log("director", step=step, via=type(gemini).__name__, secs=round(time.time() - t0, 1), thoughts=thoughts,
-                actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:300] if not batch else "")
+                actions=[f"{n}({json.dumps(a, ensure_ascii=False)[:100]})" for n, a in batch], error=reply[:4000] if not batch else "")
             if reply.startswith("error: limit"):
                 nonlocal director_paused_until
-                director_paused_until = time.time() + 1800
-                log("progress", step=step, n=0, summary="Duck.ai's usage limit was reached: Qwen decides on its own for 30 minutes, then IO asks Duck.ai again.")
+                director_paused_until = time.time() + DUCK_LIMIT_PAUSE
+                duck_pause(director_paused_until)
+                log("progress", step=step, n=0, summary="Duck.ai's usage limit was reached: Qwen decides on its own for an hour, then IO asks Duck.ai again.")
             director_queue.extend(batch)
             return (thoughts or "(director)") if batch else ""
 
         # attached images: the boss answers from what it sees instead of planning; small talk needs no plan
         small_talk = len(task.split()) <= 6 and bool(SMALL_TALK.match(task.strip()))
-        if not images and not small_talk:
+        if layer:
+            # no plan where one action answers (chat, facts, files, screen) or where the director decides anyway
+            plan_now = route.planner == "as_today" or (route.planner == "if_director_off" and not director)
+        else:
+            plan_now = not images and not small_talk
+        if layer:
+            async def put_away() -> None:
+                """End of the task (done, Stop or an error): IO's tab and any dialog it left open go; what the user asked
+                for stays. On the stack, so it runs before the browser session closes."""
+                try:
+                    await asyncio.wait_for(actions.call("cleanup", {}, ctx), 6)
+                except (Exception, asyncio.CancelledError):
+                    # a Stop while a task is being stopped is already propagating (a callback can't swallow it); one
+                    # pressed during the cleanup of a finished task leaves it finished, with its answer
+                    pass
+            stack.push_async_callback(put_away)
+        if plan_now:
             await get_plan()
         compact_at, keep_recent = (LOOP_COMPACT_AT, LOOP_KEEP_RECENT) if loop else (COMPACT_AT, KEEP_RECENT)
         # what fits: the model's context (16K for Qwen 3.6, 32K for the others) less the fixed prompt, the tool list and the
@@ -2038,7 +2653,6 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         progress_notes = 0
         if not loop:
             focus = ""
-        found_points: list[tuple[int, int]] = []  # recent find_on_screen answers: loop clicks must come from one
 
         for step in (itertools.count(1) if loop else range(1, max_steps + 1)):
             if loop and step - last_research >= LOOP_RESEARCH_EVERY and (last_info or director_plan):
@@ -2069,7 +2683,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 stuck = (error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS) and replans < MAX_REPLANS
             if stuck:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
-                await get_plan("\n".join(actions[-12:]))
+                await get_plan("\n".join(action_lines[-12:]))
             if sum(len(str(m.get("content") or "")) for m in messages[head:]) > compact_at:
                 cut = len(messages) - keep_recent
                 while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
@@ -2081,6 +2695,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         log("compact", step=step, text=summary_text)
                     except Exception as e:
                         log("warning", text=f"couldn't summarize older steps: {e}")
+            if (layer and not loop and gemini and not director and route.director_after is not None
+                    and route_failures >= route.director_after):
+                # the local model's route keeps failing: the director (it sees the screen) decides for the rest of the task
+                director = True
+                log("progress", step=step, n=0, summary=f"handing over to the director after {route_failures} failed or unconfirmed steps")
             t0 = time.time()
             pending = None  # director mode: the next queued action stands in for the local model's choice
             if director:
@@ -2195,6 +2814,30 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     args = json.loads(c.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                if not isinstance(args, dict):
+                    args = {}
+                for _ in range(4):
+                    if not (layer and name == "use"):
+                        break
+                    # the local model's door to every action: unwrapped first (nested ones too), so everything below
+                    # (constraints, confirmation, toggles) sees the real one
+                    inner = args.get("args")
+                    if isinstance(inner, str):
+                        inner = loose_json(inner) or {}
+                    name, args = str(args.get("name") or "").strip(), inner if isinstance(inner, dict) else {}
+                if layer and pending is not None and slot_text:
+                    args = fill_slot(args, slot_text)  # the director wrote «TEXT» where the user's long text goes
+                if layer and name == "Click" and not args.get("loc") and (args.get("label") or args.get("text") or args.get("name") or args.get("target")):
+                    # Click by a control's name is click(target) (one letter's case apart, small models mix them up)
+                    args = {"target": str(args.get("label") or args.get("text") or args.get("name") or args.get("target")),
+                            **{k: args[k] for k in ("window", "button") if args.get(k)}}
+                    name = "click"
+                if not actions.native(name):
+                    args.pop("expect", None)  # the director's expect= is for the action library's own checks
+                elif "expect" in args:
+                    args["expect"] = usable_expect(str(args["expect"]))
+                    if not args["expect"]:
+                        args.pop("expect")
                 t1 = time.time()
                 key = name + json.dumps(args, sort_keys=True, ensure_ascii=False)
                 recent.append(key)
@@ -2217,8 +2860,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                         continue
                 elif name in LOOP_PRONE and len(recent) >= 6 and all(k.split("{")[0] in LOOP_PRONE for k in recent[-6:]) and len(set(recent[-6:])) <= 3:
+                    desktop = all(k.split("{")[0] in DESKTOP_READS for k in recent[-6:])
                     recent.clear()
-                    result = ("You keep re-reading the same page without getting closer. Do something different: open a more specific page "
+                    result = ("You keep reading the same window without anything changing. Act on what you read (click, type_into, "
+                              "hotkeys), wait_until something changes, or answer with what you have." if desktop else
+                              "You keep re-reading the same page without getting closer. Do something different: open a more specific page "
                               "(for example the exact article, like https://en.wikipedia.org/wiki/Io_(moon)), click a link by its ref from "
                               "browser_snapshot, or answer with what you have.")
                     log("tool", step=step, name=name, args=args, result=result)
@@ -2259,28 +2905,62 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     log("done", step=step, summary=summary)
                     return summary
 
-                if not options["confirm_risky"]:
+                # what the user said not to do ("dont open it") is refused before anything else, in one place; so is
+                # anything this task can't run (a toggle is off, or a locked loop's window set), however it was reached
+                why = actions.constraint_block(name, args, ctx) if layer else ""
+                if layer and not why and not task_allows(name) and name in actions.REGISTRY:
+                    why = (f"error:BLOCKED: {name} isn't available in this task" +
+                           (f" (a loop locked on '{focus}' only acts in that window)" if loop and focus else " (turned off in IO's settings)"))
+                if not why and name == "Shortcut" and re.sub(r"\s+", "", str(args.get("shortcut", "")).lower()) == "alt+space":
+                    why = "error:BLOCKED: alt+space (the window menu) grabs the mouse pointer | try: window_state(window, state)"
+                if why or not options["confirm_risky"]:
                     reason = ""
                 elif name in plugin_meta:
                     reason = plugin_risky(name, plugin_meta[name], args)
                 else:
-                    reason = risky_reason(name, args)
+                    reason = (actions.risky(name, args, ctx) if layer else "") or risky_reason(name, args, ctx.request if layer else task)
                 if reason:
-                    answer = (await ask(f"The agent wants to {reason}. Allow it? (yes/no)")) if ask else "no"
+                    kind = risk_kind(reason)
+                    if kind in refused_kinds:  # the user already said no to this kind of thing: don't ask again
+                        answer = "no"
+                        result = (f"The user already refused to {refused_kinds[kind]} in this task; this ({reason}) is the same kind "
+                                  "of action. Don't try it any other way: call done and say what was not done and why.")
+                    else:
+                        answer = (await ask(f"The agent wants to {reason}. Allow it? (yes/no)")) if ask else "no"
+                        result = f"The user did not allow this action ({reason}). Do not retry it or do it another way; call done saying it wasn't done."
                     if not answer.strip().lower().startswith("y"):
-                        result = f"The user did not allow this action ({reason}). Do not retry it; find another way or call done."
+                        refused_kinds.setdefault(kind, reason)
                         log("tool", step=step, name=name, args=args, result=result)
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
-                        actions.append(f"{name} -> refused by user")
+                        action_lines.append(f"{name} -> refused by user")
+                        steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> refused by the user: {reason}")
+                        if director:
+                            director_queue.clear()  # its plan assumed this would run
                         continue
 
-                if loop and focus and name in ("find_on_screen", "look_at_screen", "click_on", "hold_on"):
+                native = layer and actions.native(name)
+                if loop and focus and (name in ("find_on_screen", "look_at_screen", "click_on", "hold_on")
+                                       or (native and "window" in actions.REGISTRY[name].params)):
                     args = {**args, "window": focus}
+                elif native and isinstance(args.get("window"), str) and " - " in args["window"]:
+                    # titles change under the model ("Untitled - Notepad" becomes "*eggs - Notepad" once it types): an old
+                    # title that matches nothing any more means the same app's window
+                    if await asyncio.to_thread(actions.resolve, ctx, args["window"]) is None:
+                        app_part = args["window"].rsplit(" - ", 1)[-1].strip()
+                        if app_part and await asyncio.to_thread(actions.resolve, ctx, app_part) is not None:
+                            args = {**args, "window": app_part}
                 if name in ("find_on_screen", "look_at_screen", "click_on", "hold_on") and args.get("window"):
                     hint_focus(str(args["window"]))
                 elif name == "App" and args.get("name") and args.get("mode", "launch") in ("launch", "switch"):
                     hint_focus(str(args["name"]))
-                elif not loop:
+                elif native:
+                    # the glow goes where the action works; open_app and write_in_app set it to the real title themselves,
+                    # and an action without a window works in the task's window, so the glow stays
+                    if args.get("window") and not str(args["window"]).startswith("hwnd") and str(args["window"]).lower() != "web":
+                        hint_focus(str(args["window"]))
+                    elif name == "open_settings":
+                        hint_focus("Settings")
+                elif not loop and not (layer and name in GLOW_NEUTRAL):
                     hint_focus("")  # working somewhere else: the glow follows the foreground window
                 point = None
                 if loop and focus and name in ("Click", "hold", "Scroll", "Move", "Drag"):
@@ -2289,8 +2969,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         point = (int(float(loc[0])), int(float(loc[1])))
                     except (TypeError, ValueError, IndexError):
                         point = None
-                blocked = ""
-                if point:
+                blocked = why
+                if point and not blocked:
                     area = await asyncio.to_thread(content_rect, focus)
                     if area and not (area[0] <= point[0] < area[2] and area[1] <= point[1] < area[3]):
                         blocked = (f"error: ({point[0]}, {point[1]}) is outside the {focus} content area {area}; nothing was clicked. "
@@ -2299,6 +2979,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         blocked = "error: nothing was clicked. Don't guess coordinates: call find_on_screen for what you want, then use its x, y."
                 if blocked:
                     result = blocked
+                elif native:
+                    result = await actions.call(name, args, ctx)
+                elif layer and name == "click_on" and not loop and (args.get("window") or focus_hint):
+                    # click_on in a known window is click's vision rung: the cover check, the cross-check against the
+                    # window's controls and the did-anything-change check come with it (loops keep their tuned path)
+                    result = await actions.call("click", {"target": str(args.get("description") or ""), "window": str(args.get("window") or ""),
+                                                          "how": "vision"}, ctx)
                 elif name in ("find_on_screen", "click_on", "hold_on"):
                     got = await asyncio.to_thread(eyes.find, args.get("description", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
                     if "x" in got:
@@ -2328,8 +3015,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result += (" Note: this is the same spot your last searches found. If acting on it didn't do what you wanted, "
                                        "it isn't the thing you're after: look at the screen and try something else, or research how this part works.")
                 elif name == "look_at_screen":
-                    result = await asyncio.to_thread(eyes.describe, args.get("question", ""), int(args.get("display", 0) or 0), str(args.get("window") or ""))
-                elif name == "browser_read" and not browser_tab_open:
+                    question, display = str(args.get("question") or ""), int(args.get("display", 0) or 0)
+                    if layer and not args.get("window") and (titles := await asyncio.to_thread(display_titles, display)):
+                        # what is really open there, so a small model can't describe a desktop that isn't (the "Linux desktop")
+                        question = (question or "Describe what is on the screen.") + f" (Open windows on this display, front first: {titles}.)"
+                    result = await asyncio.to_thread(eyes.describe, question, display, str(args.get("window") or ""))
+                elif name == "browser_read" and not ctx.tab_open:
                     result = "error: IO has no browser tab open in this task. Open a page with browser_open first."
                 elif name == "browser_read":
                     try:
@@ -2344,7 +3035,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     url = str(args.get("url") or "about:blank")
                     try:
                         result = inline_browser_snapshot(text_of(await sessions["browser_navigate"].call_tool("browser_navigate", {"url": url})), browser_dir)
-                        browser_tab_open = not result.startswith("error")
+                        ctx.tab_open = ctx.tab_open or not result.startswith("error")
                         if "google." in url and "/search" in url:
                             result = (await search_results(sessions["browser_navigate"])) or result
                         elif DISAMBIGUATION.search(result):
@@ -2353,10 +3044,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = f"error: {e}"
                 elif name == "ask_gemini" and loop and gemini:
                     result = await consult(str(args.get("question") or "What should I do next?"))
-                elif name == "research" and (loop or director):
+                elif name == "research" and (loop or director or layer):
                     last_research = step
                     try:
-                        result = await researcher.ask(str(args.get("question") or task), task)
+                        result = await get_researcher().ask(str(args.get("question") or task), task)
                         if loop and not result.startswith("error"):
                             guide.append(f"({args.get('question')}) {result}")
                             pin_guide()
@@ -2382,22 +3073,47 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 elif name == "type_text" or (name == "Type" and not args.get("loc")):
                     # Type without a location is the most common small-model slip: type into the focused control instead
                     args = {"text": args.get("text", ""), "press_enter": args.get("press_enter", False)}
-                    if focus or focus_hint:  # into the app being worked in, not whatever you happen to be typing in
-                        await asyncio.to_thread(focus_window, focus or focus_hint)
-                    # paste via clipboard: reliable for any text and keyboard layout
-                    await win.call_tool("Clipboard", {"mode": "set", "text": args.get("text", "")})
-                    await win.call_tool("Shortcut", {"shortcut": "ctrl+v"})
-                    if args.get("press_enter"):
-                        await win.call_tool("Shortcut", {"shortcut": "enter"})
-                    result = "typed"
-                elif (name.startswith("browser_") and name not in ("browser_open", "browser_navigate") and not browser_tab_open):
+                    if layer:
+                        # into the app being worked in (focused by hwnd, and only if it isn't in front already: a focus
+                        # change taps a key, and Win11 Notepad's key tips would swallow the text), past its "what's new"
+                        # popup; typed key by key, so the user's clipboard stays as it was (long text: pasted, then put
+                        # back); never into Claude, Discord, IO's panel or a browser window the request doesn't name, and it
+                        # stops if the user moves the focus mid-way
+                        where = focus or focus_hint
+                        target = (await asyncio.to_thread(actions.resolve, ctx, where)) if where else None
+                        try:
+                            if target is not None:
+                                actions.guard_input(ctx, target)
+                                await actions.focus(target)
+                                await actions.clear_tips(target)  # a popup that asks something: error:COVERED, nothing typed
+                            target = actions.fg()
+                            if target is None:
+                                raise actions.Fail("NOT_FOCUSED", "no window has the keyboard", "focus_window(window) or type_into(field, text, window)")
+                            actions.guard_input(ctx, target)
+                            how = await asyncio.to_thread(actions.type_text_safe, str(args.get("text", "")), bool(args.get("press_enter")),
+                                                          target.exe, target.hwnd)
+                            result = f"ok: typed {len(str(args.get('text', '')))} characters into '{target.title[:50]}' via {how}"
+                        except actions.Fail as e:
+                            result = e.result
+                        except Exception as e:
+                            result = f"error:UNSUPPORTED: typing failed: {type(e).__name__}: {e}"[:300]
+                    else:
+                        if focus or focus_hint:  # into the app being worked in, not whatever you happen to be typing in
+                            await asyncio.to_thread(focus_window, focus or focus_hint)
+                        # paste via clipboard: reliable for any text and keyboard layout
+                        await win.call_tool("Clipboard", {"mode": "set", "text": args.get("text", "")})
+                        await win.call_tool("Shortcut", {"shortcut": "ctrl+v"})
+                        if args.get("press_enter"):
+                            await win.call_tool("Shortcut", {"shortcut": "enter"})
+                        result = "typed"
+                elif (name.startswith("browser_") and name not in ("browser_open", "browser_navigate") and not ctx.tab_open):
                     # any browser call connects to Chrome and opens IO's tab group: only once the task has opened a page
                     result = ("error: IO has no browser tab open in this task. browser_* tools only work on web pages opened "
                               "with browser_open; they can't touch windows, dialogs or Chrome's own tabs on the PC. For those use "
                               "Snapshot, Click, find_on_screen or close_windows.")
                 elif name in sessions:
                     if name == "browser_navigate":
-                        browser_tab_open = True
+                        ctx.tab_open = True
                     if name not in aliases:
                         args = fix_args(name, args)
                     if name == "Snapshot":
@@ -2440,14 +3156,31 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 if not last_error:
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
-                if director and last_error:
+                # unsure: it ran but couldn't be confirmed. Not a failure for done's sake, but the director's next actions
+                # assumed it worked, and it counts toward handing the route over
+                unconfirmed = layer and result.startswith("unsure:")
+                if director and (last_error or unconfirmed):
                     director_queue.clear()  # the rest of its plan assumed this worked: ask the director again with the result
-                actions.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}")  # for replanning
+                if layer and (last_error or unconfirmed):
+                    route_failures += 1
+                if layer and re.match(r"error:(NOT_FOUND|UNSUPPORTED)", result) and not director and not loop:
+                    vision_misses += 1
+                    menu, added = actions.escalate(menu_names, vision_misses, [n for n in actions.available(ctx) if executable(n)])
+                    if added:  # the exact ways keep missing: the vision tools join the local model's menu
+                        apply_menu(menu)
+                        result += f" (added tools: {', '.join(added)})"
+                action_lines.append(f"{name}({json.dumps(args, ensure_ascii=False)[:120]}) -> {result[:120]}")  # for replanning
                 steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> {result[:1500]}")
                 log("tool", step=step, name=name, args=args, secs=round(time.time() - t1, 1), result=result[:300])
                 messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                 if name in ("look_at_screen", "PowerShell", "browser_read") and not last_error:
                     last_info = result
+                elif native and result.startswith("ok:") and (actions.REGISTRY[name].group in INFO_GROUPS or name == "game_state"):
+                    last_info = result
+                if native and name == "close_window" and result.startswith("ok:") and focus_hint and not loop:
+                    w_arg = str(args.get("window") or "").lower()
+                    if not w_arg or w_arg in focus_hint.lower() or focus_hint.lower() in w_arg:
+                        hint_focus("")  # its window is gone: the glow follows the foreground window again
 
         log("gave_up", steps=max_steps)
         return f"stopped after {max_steps} steps without finishing"
@@ -2460,6 +3193,9 @@ def main() -> None:
     args = parser.parse_args()
     print(asyncio.run(run(args.task, args.max_steps)))
 
+
+# the action library uses this module's helpers (quick_click, ps_wrap, Eyes, ...) through this binding, imported or run
+actions.bind(sys.modules[__name__])
 
 if __name__ == "__main__":
     main()

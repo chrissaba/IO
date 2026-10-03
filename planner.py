@@ -36,9 +36,35 @@ When replanning after failures, never repeat a step that failed: use a different
 or a web search; for a site that won't load, another site), or plan done explaining what blocked it.
 Output only the plan."""
 
+# With IO's action layer the tool paragraph comes from the same registry as the agent's own tool list (tools_text), so the
+# plan only names tools the agent really has; the rules below talk about actions, not the old click-and-type recipes.
+SYSTEM_ACTIONS = """You plan tasks for a Windows desktop agent. A small local model carries out your plan.
+{tools}
 
-def plan_local(task: str, context: str, base_url: str, model: str, history: str = "") -> str:
-    """A plan from the local boss model. "" when it says NO_PLAN. history: recent actions, when replanning."""
+Write a short numbered plan, at most 8 steps. Each step is one concrete action naming the tool to use and its main argument.
+Pick the first tool that fits: the higher-level actions find, act and check their own result, so one step often does a whole
+job (write_in_app, save_file_as, web_answer, pc_info, app_info). write_in_app opens the app itself: never plan open_app
+before it. Do only what the task asks.
+Facts about the PC (the time, installed apps, disk space, what's open) come from pc_info, app_info or list_windows, never from
+opening an app. If the task says not to open, save or close something, never plan that.
+To read text in a window plan read_window, never select-all and copy: that replaces the user's clipboard.
+For websites use the web actions (they work in IO's own tab); never drive a Chrome or Edge window.
+For games and emulators, use click_on/look_at_screen with window set to the app's title, and close menus with their X button, never Esc/Back.
+Write steps, never answers or facts read from the current state.
+The agent itself is called IO. Questions about IO, about the agent, or what it can do are conversation.
+If the task names something unfamiliar (a small website, company, product, app, person), plan a web search first (always Google, never Bing).
+Well-known facts (capitals, famous people and companies, science) need no plan: NO_PLAN.
+If the message is conversation rather than something to do on the PC (a greeting, thanks, small talk, or a question
+answerable from well-known general knowledge), output exactly NO_PLAN.
+When replanning after failures, never repeat a step that failed: follow the failed result's try: hint or use a different
+tool, or plan done explaining what blocked it.
+Output only the plan."""
+
+
+def plan_local(task: str, context: str, base_url: str, model: str, history: str = "", tools_text: str = "") -> str:
+    """A plan from the local boss model. "" when it says NO_PLAN. history: recent actions, when replanning.
+    tools_text: the agent's tool paragraph from the action registry (replaces the hand-written one)."""
+    system = SYSTEM_ACTIONS.format(tools=tools_text) if tools_text else SYSTEM
     user = f"Task: {task}"
     if context:
         user += f"\n\nCurrent state of the PC:\n{context}"
@@ -46,6 +72,6 @@ def plan_local(task: str, context: str, base_url: str, model: str, history: str 
         user += f"\n\nThe agent got stuck. Recent actions and results:\n{history}\n\nWrite a new plan from the current state."
     client = OpenAI(base_url=base_url, api_key="local", max_retries=1, timeout=60)
     reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=400,
-                                           messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
+                                           messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     text = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
     return "" if text.upper().startswith("NO_PLAN") else text

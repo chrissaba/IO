@@ -522,7 +522,7 @@ async def startup() -> None:
 @asynccontextmanager
 async def lifespan(_app):
     load_state()
-    overlay.start(hint=lambda: boss.focus_hint)
+    overlay.start(hint=lambda: boss.glow_hint())
     asyncio.create_task(startup())
     asyncio.create_task(worker())
     asyncio.create_task(scheduler())

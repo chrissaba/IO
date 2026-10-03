@@ -339,14 +339,35 @@ function uniqueGroupStyle(clientName, taken) {
 		color
 	};
 }
-async function cleanupStalePlaywrightGroups() {
+// IO: IO groups with no connection behind them (left from before a restart of this worker or Chrome, or by a connection
+// that ended): IO's own pages in them (Duck.ai, Gemini, blank, IO's local pages, the connect page) are closed; anything
+// else is only ungrouped. liveGroupIds: groups of connections still running, left alone.
+async function cleanupStalePlaywrightGroups(liveGroupIds = []) {
 	try {
-		const stale = (await chrome.tabGroups.query({})).filter((g) => g.title === PLAYWRIGHT_GROUP_TITLE || g.title?.startsWith(PLAYWRIGHT_GROUP_TITLE_PREFIX));
-		const tabIds = (await Promise.all(stale.map((g) => chrome.tabs.query({ groupId: g.id })))).flat().map((t) => t.id).filter((id) => id !== void 0);
-		if (tabIds.length) await ungroupTabs(tabIds);
+		// "IO", "IO (2)" (a second connection at once) or "IO · <client>"
+		const isIoGroup = (g) => g.title === PLAYWRIGHT_GROUP_TITLE || /^IO \(\d+\)$/.test(g.title ?? "") || g.title?.startsWith(PLAYWRIGHT_GROUP_TITLE_PREFIX);
+		const stale = (await chrome.tabGroups.query({})).filter((g) => isIoGroup(g) && !liveGroupIds.includes(g.id));
+		const tabs = (await Promise.all(stale.map((g) => chrome.tabs.query({ groupId: g.id })))).flat().filter((t) => t.id !== void 0);
+		const mine = tabs.filter((t) => isIoPage(t.url || t.pendingUrl)).map((t) => t.id);
+		const rest = tabs.filter((t) => !mine.includes(t.id)).map((t) => t.id);
+		if (mine.length) await safeCloseTabs(mine);
+		if (rest.length) await ungroupTabs(rest);
 	} catch (error) {
 		debugLog("Error cleaning up stale groups:", error);
 	}
+}
+// IO sends its tabs to this page of its own server (boss.DONE_URL) when a task ends, however it ends
+function isDonePage(url) {
+	try {
+		const u = new URL(url);
+		return (u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.pathname === "/static/io-done.html";
+	} catch {
+		return false;
+	}
+}
+function isIoPage(url) {
+	if (!url) return false;
+	return /^https:\/\/duck\.ai\//.test(url) || /^https:\/\/gemini\.google\.com\/app/.test(url) || url.startsWith("about:blank") || /^http:\/\/(127\.0\.0\.1|localhost):\d+\/static\//.test(url) || url.startsWith(chrome.runtime.getURL("connect.html"));
 }
 var ConnectedTabGroup = class {
 	clientName;
@@ -355,6 +376,7 @@ var ConnectedTabGroup = class {
 	_isTabReserved;
 	_groupId = null;
 	_groupTabIds = /* @__PURE__ */ new Set();
+	_userTabIds = /* @__PURE__ */ new Set();
 	_onTabUpdatedListener;
 	_onTabRemovedListener;
 	onclose;
@@ -368,6 +390,8 @@ var ConnectedTabGroup = class {
 		this._connection.ontabdetached = (tabId) => this._onTabDetached(tabId);
 		this._onTabUpdatedListener = this._onTabUpdated.bind(this);
 		this._onTabRemovedListener = this._onTabRemoved.bind(this);
+		// IO: a tab of yours (picked on the connect page, or dragged into the group) is only ungrouped when IO lets go
+		if (selectedTab?.id !== void 0 && !isIoPage(selectedTab.url || selectedTab.pendingUrl) && !isNewTabPage(selectedTab.url)) this._userTabIds.add(selectedTab.id);
 		chrome.tabs.onUpdated.addListener(this._onTabUpdatedListener);
 		chrome.tabs.onRemoved.addListener(this._onTabRemovedListener);
 		this._connection.attachTab(selectedTab);
@@ -375,6 +399,9 @@ var ConnectedTabGroup = class {
 	}
 	connectedTabIds() {
 		return [...this._groupTabIds];
+	}
+	get groupId() {
+		return this._groupId;
 	}
 	close(reason) {
 		this._connection.close(reason);
@@ -399,14 +426,26 @@ var ConnectedTabGroup = class {
 				return;
 			}
 			this._groupTabIds.add(tabId);
+			if (!this._connection.attachedTabs.has(tabId)) this._userTabIds.add(tabId);  // you dragged it in
 			if (!isNonDebuggableUrl(tab.url)) this._connection.attachTab(tab);
-		} else {
-			this._groupTabIds.delete(tabId);
-			if (this._connection.attachedTabs.has(tabId)) this._connection.detachTab(tabId);
+		} else this._leaveOrFollow(tabId);
+	}
+	// IO: dragging the group into another window ungroups its tabs for a moment (and can give the group a new id). Look
+	// again shortly before letting a tab go, which would end the connection and leave the tab in an "IO" group for good.
+	async _leaveOrFollow(tabId) {
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (!tab || !this._groupTabIds.has(tabId) || tab.groupId === this._groupId) return;
+		if (tab.groupId >= 0 && (await chrome.tabGroups.get(tab.groupId).catch(() => null))?.title === this.groupStyle.title) {
+			this._groupId = tab.groupId;
+			return;
 		}
+		this._groupTabIds.delete(tabId);
+		if (this._connection.attachedTabs.has(tabId)) this._connection.detachTab(tabId);
 	}
 	_onTabRemoved(tabId) {
 		this._groupTabIds.delete(tabId);
+		this._userTabIds.delete(tabId);
 	}
 	_onTabAttached(tabId) {
 		this._updateBadge(tabId, CONNECTED_BADGE);
@@ -419,8 +458,10 @@ var ConnectedTabGroup = class {
 		chrome.tabs.onUpdated.removeListener(this._onTabUpdatedListener);
 		chrome.tabs.onRemoved.removeListener(this._onTabRemovedListener);
 		const groupTabs = [...this._groupTabIds];
+		const userTabs = new Set(this._userTabIds);
 		this._groupTabIds.clear();
-		if (groupTabs.length) closeGroupTabs(groupTabs);
+		this._userTabIds.clear();
+		if (groupTabs.length) closeGroupTabs(groupTabs, userTabs);
 		this.onclose?.();
 	}
 	async _updateBadge(tabId, { text, color, title }) {
@@ -459,23 +500,50 @@ var ConnectedTabGroup = class {
 		}
 	}
 };
-// IO: when the agent disconnects, its tabs go with it instead of being left behind ungrouped. A tab that is the last
-// one in its window is only ungrouped, so closing the group never closes a Chrome window.
-async function closeGroupTabs(tabIds) {
+// IO: when the agent disconnects, its tabs go with it instead of being left behind ungrouped (the old rule only ungrouped
+// a tab that was the last in its window, which left the Duck.ai chat open whenever Chrome had no other window). A tab
+// of yours (picked on the connect page or dragged into the group) is only ungrouped, unless it is on one of IO's pages.
+async function closeGroupTabs(tabIds, userTabIds = new Set()) {
+	const tabs = (await Promise.all(tabIds.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
+	const keep = tabs.filter((t) => userTabIds.has(t.id) && !isIoPage(t.url || t.pendingUrl)).map((t) => t.id);
+	const close = tabs.filter((t) => !keep.includes(t.id)).map((t) => t.id);
+	if (keep.length) await ungroupTabs(keep);
+	if (close.length) await safeCloseTabs(close);
+}
+function isNewTabPage(url) {
+	return !url || url === "chrome://newtab/" || url.startsWith("chrome://new-tab-page");
+}
+// Windows Chrome opened just for IO's connect page (no other tab in them then): IO's to close when it's done
+var ioWindowIds = /* @__PURE__ */ new Set();
+var closingTabIds = /* @__PURE__ */ new Set();
+chrome.windows.onRemoved.addListener((windowId) => ioWindowIds.delete(windowId));
+// Closes IO's tabs without ever closing anything of yours. A tab that shares its window with other tabs is removed.
+// A window left with only IO's tabs is removed when it was opened for IO or another Chrome window is open; otherwise
+// a New Tab page takes IO's place, so a window of yours never disappears.
+async function safeCloseTabs(tabIds) {
+	const ids = tabIds.filter((id) => !closingTabIds.has(id));  // the done page and the disconnect can both ask
+	ids.forEach((id) => closingTabIds.add(id));
 	try {
-		const tabs = (await Promise.all(tabIds.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
-		const close = [];
-		for (const tab of tabs) {
-			const inWindow = await chrome.tabs.query({ windowId: tab.windowId });
-			const closing = close.filter((t) => t.windowId === tab.windowId).length;
-			if (inWindow.length - closing > 1) close.push(tab);
+		const tabs = (await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
+		const byWindow = /* @__PURE__ */ new Map();
+		for (const tab of tabs) byWindow.set(tab.windowId, [...(byWindow.get(tab.windowId) ?? []), tab.id]);
+		for (const [windowId, closing] of byWindow) {
+			const others = (await chrome.tabs.query({ windowId })).filter((t) => !closing.includes(t.id));
+			if (!others.length) {
+				const otherWindows = (await chrome.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.id !== windowId);
+				if (ioWindowIds.has(windowId) || otherWindows.length) {
+					await retryOnDrag(() => chrome.windows.remove(windowId));
+					continue;
+				}
+				await retryOnDrag(() => chrome.tabs.create({ windowId, active: true }));
+			}
+			await retryOnDrag(() => chrome.tabs.remove(closing));
 		}
-		const keep = tabs.filter((tab) => !close.includes(tab)).map((tab) => tab.id);
-		if (close.length) await retryOnDrag(() => chrome.tabs.remove(close.map((tab) => tab.id)));
-		if (keep.length) await ungroupTabs(keep);
 	} catch (error) {
 		debugLog("Error closing group tabs:", error);
-		await ungroupTabs(tabIds);
+		await ungroupTabs(ids);
+	} finally {
+		ids.forEach((id) => closingTabIds.delete(id));
 	}
 }
 async function ungroupTabs(tabIds) {
@@ -531,6 +599,10 @@ var PlaywrightExtension = class {
 	constructor() {
 		chrome.runtime.onMessage.addListener(this._onMessage.bind(this));
 		chrome.action.onClicked.addListener(this._onActionClicked.bind(this));
+		// IO: a tab arriving at IO's done page is closed, whichever group it is in (or none): only IO goes there
+		chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+			if (isDonePage(changeInfo.url ?? (changeInfo.status === "complete" ? tab.url : ""))) safeCloseTabs([tabId]);
+		});
 		this._cleanupPromise = cleanupStalePlaywrightGroups();
 	}
 	_onMessage(message, sender, sendResponse) {
@@ -582,9 +654,15 @@ var PlaywrightExtension = class {
 			if (tab.id !== selectorTabId && this._connectedTabIds().has(tab.id)) throw new Error("This tab is already connected to another client");
 			const connection = await this._pendingConnections.take(selectorTabId);
 			if (!connection) throw new Error("Pending client connection closed");
+			// IO: Chrome opened the connect page in a window of its own (it had none open): that window is IO's to close
+			if ((await chrome.tabs.query({ windowId: tab.windowId }).catch(() => [])).length === 1) ioWindowIds.add(tab.windowId);
 			const id = ++this._lastConnectionId;
 			const group = new ConnectedTabGroup(connection, tab, clientName, uniqueGroupStyle(clientName, [...this._connections.values()].map((group) => group.groupStyle)), (tabId) => this._pendingConnections.has(tabId));
-			group.onclose = () => this._connections.delete(id);
+			group.onclose = () => {
+				this._connections.delete(id);
+				// IO: then sweep any IO group nobody is connected to any more (once this group's own close has run)
+				setTimeout(() => cleanupStalePlaywrightGroups(this._liveGroupIds()), 1500);
+			};
 			this._connections.set(id, group);
 			await Promise.all([chrome.tabs.update(tab.id, { active: true }), chrome.windows.update(tab.windowId, { focused: true })]).catch(() => {});
 			if (tab.id !== selectorTabId) await chrome.tabs.remove(selectorTabId).catch(() => {});
@@ -604,6 +682,9 @@ var PlaywrightExtension = class {
 		const tabs = await chrome.tabs.query({});
 		const connectedTabIds = this._connectedTabIds();
 		return tabs.filter((tab) => !isNonDebuggableUrl(tab.url) && (tab.id === selectorTabId || !connectedTabIds.has(tab.id)));
+	}
+	_liveGroupIds() {
+		return [...this._connections.values()].map((group) => group.groupId).filter((groupId) => groupId !== null);
 	}
 	_connectedTabIds() {
 		return new Set([...this._connections.values()].flatMap((group) => group.connectedTabIds()));

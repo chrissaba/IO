@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IO is done with this tab</title>
+<link rel="icon" href="/static/io-64.png">
+<!-- IO sends its tabs here when a task ends; IO's Chrome extension closes any tab that arrives here -->
+<style>
+  @font-face { font-family: Lora; src: url(/static/fonts/lora-400.woff2) format("woff2"); font-weight: 400; }
+  @font-face { font-family: Geist; src: url(/static/fonts/geist-400.woff2) format("woff2"); font-weight: 400; }
+  :root { --bg: #faf9fc; --text: #1f1c2c; --muted: #5f5b72; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #23222a; --text: #f1f0f7; --muted: #aeabbd; } }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: var(--bg); color: var(--text); font: 14px/1.6 Geist, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 440px; padding: 24px; text-align: center; }
+  img { width: 56px; height: 56px; border-radius: 14px; }
+  h1 { font: 400 26px/1.3 Lora, Georgia, serif; margin: 14px 0 6px; }
+  p { margin: 0 0 6px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <img src="/static/io-64.png" alt="">
+  <h1>IO is done with this tab</h1>
+  <p>The task has finished. IO's extension normally closes this tab by itself.</p>
+  <p>If it is still here, reload IO in chrome://extensions. You can close this tab.</p>
+</main>
+</body>
+</html>

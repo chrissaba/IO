@@ -11,6 +11,7 @@ import ctypes
 import ctypes.wintypes as wt
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -149,12 +150,22 @@ def _eligible(hwnd) -> bool:
     return bool(r) and r[2] - r[0] > 50 and r[3] - r[1] > 50
 
 
+BROWSER_TITLE = re.compile(r"\s[-–—]\s(Google Chrome|Microsoft​? Edge|Mozilla Firefox|Brave|Opera)$")
+
+
 def _find(title: str):
-    """The frontmost eligible window whose title contains `title` (case-insensitive)."""
+    """The frontmost eligible window whose title contains `title` (case-insensitive), or exactly 'hwnd:N'. A browser
+    window only when the hint names a browser: IO's own Duck.ai chat is titled after the task ("Notepad task execution")."""
+    m = re.fullmatch(r"hwnd[:=](\d+)", title)
+    if m:
+        hwnd = int(m.group(1))
+        return hwnd if _eligible(hwnd) else None
     low, found = title.lower(), []
+    browser_ok = bool(re.search(r"chrome|edge|firefox|brave|opera|browser", low))
 
     def cb(hwnd, _):
-        if low in _text(hwnd).lower() and _eligible(hwnd):
+        t = _text(hwnd)
+        if low in t.lower() and (browser_ok or not BROWSER_TITLE.search(t)) and _eligible(hwnd):
             found.append(hwnd)
             return False
         return True

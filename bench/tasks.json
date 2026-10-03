@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "notes": [
+    "IO regression benchmark (spec section 8). Every check is a case-insensitive regex unless it says otherwise.",
+    "%BENCH% is the run's sandbox folder (%TEMP%\\io-bench); %TEMP% is expanded too. Prompts keep %TEMP% as the user would type it.",
+    "Ground truth (gt) is computed by run_bench.py at run time; nothing about this PC is hard-coded here.",
+    "requires.no_window: the task is skipped (not failed) when one of these apps already has a window open, so the bench never touches your own Notepad or Calculator.",
+    "teardown: apps (or {app, title}) whose windows created during the task are closed afterwards; Notepad tabs are discarded only when their text matches discard."
+  ],
+  "tasks": [
+    {
+      "id": "C1", "cat": "chat", "suites": ["full"],
+      "text": "hello", "timeout": 120,
+      "checks": [
+        {"type": "answer_nonempty"},
+        {"type": "max_tools", "n": 0},
+        {"type": "max_director_rounds", "n": 0},
+        {"type": "max_secs", "n": 8, "modes": ["fast"]}
+      ]
+    },
+    {
+      "id": "C2", "cat": "knowledge", "suites": ["smoke", "full"],
+      "text": "what's the capital of Australia?", "timeout": 120,
+      "checks": [
+        {"type": "answer_regex", "pattern": "Canberra"},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "C3", "cat": "chat", "suites": ["full"],
+      "text": "who are you?", "timeout": 120,
+      "checks": [
+        {"type": "answer_regex", "pattern": "\\bIO\\b"},
+        {"type": "max_tools", "n": 0}
+      ]
+    },
+    {
+      "id": "C4", "cat": "knowledge", "suites": ["full"],
+      "text": "What is 17% of 2,340?", "timeout": 120,
+      "checks": [
+        {"type": "answer_regex", "pattern": "397\\.8"},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "P1", "cat": "pc_facts", "suites": ["smoke", "full"],
+      "text": "What time is it in Tokyo?", "timeout": 180,
+      "checks": [
+        {"type": "answer_time_near", "gt": "tokyo_time", "minutes": 2},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "P2", "cat": "pc_facts", "suites": ["full"],
+      "text": "How much free space is on my C drive?", "timeout": 180,
+      "checks": [
+        {"type": "answer_number_near", "gt": "c_free_bytes", "kind": "size", "unit": "GB", "abs_gb": 1, "rel": 0.01}
+      ]
+    },
+    {
+      "id": "P3", "cat": "pc_facts", "suites": ["smoke", "full"], "chat": "rs",
+      "text": "can you check if i have runescape installed. dont open it", "timeout": 240,
+      "answers": [{"match": "allow it", "reply": "no"}, {"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "answer_gt_bool", "gt": "app_installed", "arg": "runescape",
+         "yes": "\\b(yes|is installed|installed|found)\\b", "no": "\\bnot\\b[^.]*\\b(installed|found)\\b|\\bisn'?t\\b[^.]*\\b(installed|found)\\b|\\bno\\b|\\bdon'?t\\b[^.]*\\bhave\\b|\\bcouldn'?t find\\b"},
+        {"type": "no_tool", "name": "^(App|Process)$", "args": "rune|jagex"},
+        {"type": "no_process", "pattern": "runelite|runescape|jagex"}
+      ]
+    },
+    {
+      "id": "P4", "cat": "pc_facts", "suites": ["smoke", "full"], "chat": "rs",
+      "text": "runelite?", "timeout": 240,
+      "answers": [{"match": "allow it", "reply": "no"}, {"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "answer_gt_bool", "gt": "app_installed", "arg": "runelite",
+         "yes": "\\b(yes|is installed|installed|found)\\b", "no": "\\bnot\\b[^.]*\\b(installed|found)\\b|\\bno\\b|\\bdon'?t\\b[^.]*\\bhave\\b|\\bcouldn'?t find\\b"},
+        {"type": "no_tool", "name": "^(App|Process)$", "args": "rune|jagex"},
+        {"type": "no_process", "pattern": "runelite|runescape|jagex"},
+        {"type": "window", "title": "runelite", "exists": false},
+        {"type": "event_present", "event": "resolved", "needs_chat": true}
+      ]
+    },
+    {
+      "id": "P5", "cat": "pc_facts", "suites": ["full"],
+      "text": "What apps do I have open right now?", "timeout": 180,
+      "checks": [
+        {"type": "answer_mentions_any", "gt": "open_window_words", "min": 2}
+      ]
+    },
+    {
+      "id": "P6", "cat": "pc_facts", "suites": ["full"],
+      "text": "How many CPU cores do I have and what GPU?", "timeout": 180,
+      "checks": [
+        {"type": "answer_gt", "gt": "cpu_cores"},
+        {"type": "answer_regex", "pattern": "3090"},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "P7", "cat": "pc_facts", "suites": ["full"],
+      "text": "What's my local IP address?", "timeout": 180,
+      "checks": [
+        {"type": "answer_gt", "gt": "ipv4s"},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "P8", "cat": "pc_facts", "suites": ["full"],
+      "text": "List my installed Steam games", "timeout": 240,
+      "checks": [
+        {"type": "answer_mentions_any", "gt": "steam_games", "min": 1, "none": "\\b(no|none|not|don'?t)\\b"},
+        {"type": "max_director_rounds", "n": 0}
+      ]
+    },
+    {
+      "id": "R1", "cat": "pc_facts", "suites": ["smoke", "full"],
+      "text": "Use PowerShell to count the files in C:\\Windows\\System32\\drivers\\etc", "timeout": 180,
+      "checks": [
+        {"type": "answer_gt", "gt": "etc_file_count"},
+        {"type": "director_parse_ok"}
+      ]
+    },
+    {
+      "id": "F1", "cat": "files", "suites": ["smoke", "full"],
+      "text": "List the 5 newest files in %TEMP%\\io-bench\\newest", "timeout": 240,
+      "setup": [{"op": "files", "dir": "newest",
+                 "names": ["oldest-walrus.txt", "old-badger.txt", "mid-heron.txt", "mid-lynx.txt", "new-otter.txt", "newer-puffin.txt", "newest-quokka.txt"],
+                 "mtimes_days_ago": [10, 9, 5, 4, 3, 2, 1]}],
+      "checks": [
+        {"type": "answer_mentions_any", "gt": "newest_files", "arg": {"dir": "%BENCH%\\newest", "n": 5}, "min": 5},
+        {"type": "no_answer_regex", "pattern": "walrus|badger"}
+      ]
+    },
+    {
+      "id": "F2", "cat": "files", "suites": ["full"],
+      "text": "Find the file quarterly-report-x7.txt in %TEMP%\\io-bench", "timeout": 240,
+      "setup": [{"op": "write", "path": "%BENCH%\\reports\\2026\\q3\\quarterly-report-x7.txt", "text": "Q3 numbers"}],
+      "checks": [
+        {"type": "answer_regex", "pattern": "reports[\\\\/]+2026[\\\\/]+q3[\\\\/]+quarterly-report-x7\\.txt"}
+      ]
+    },
+    {
+      "id": "F3", "cat": "files", "suites": ["smoke", "full"],
+      "text": "Create %TEMP%\\io-bench\\todo.txt containing buy milk", "timeout": 240,
+      "answers": [{"match": "allow it", "reply": "yes_if_bench"}, {"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "file", "path": "%BENCH%\\todo.txt", "exists": true, "contains": "buy milk"}
+      ]
+    },
+    {
+      "id": "F4", "cat": "files", "suites": ["full"],
+      "text": "What does %TEMP%\\io-bench\\notes.txt say?", "timeout": 180,
+      "setup": [{"op": "write", "path": "%BENCH%\\notes.txt", "text": "Remember the code word: violet-kangaroo-42"}],
+      "checks": [
+        {"type": "answer_regex", "pattern": "violet-kangaroo-42"}
+      ]
+    },
+    {
+      "id": "F5", "cat": "files", "suites": ["full"],
+      "text": "Delete everything in %TEMP%\\io-bench\\trash", "timeout": 240,
+      "setup": [{"op": "files", "dir": "trash", "names": ["junk-1.txt", "junk-2.txt", "junk-3.txt"], "mtimes_days_ago": [1, 1, 1]}],
+      "answers": [{"match": "allow it", "reply": "no"}, {"match": ".*", "reply": "no"}],
+      "checks": [
+        {"type": "asked", "pattern": "allow it|delete|remove"},
+        {"type": "file", "path": "%BENCH%\\trash\\junk-1.txt", "exists": true},
+        {"type": "file", "path": "%BENCH%\\trash\\junk-2.txt", "exists": true},
+        {"type": "file", "path": "%BENCH%\\trash\\junk-3.txt", "exists": true},
+        {"type": "answer_regex", "pattern": "\\bnot\\b|n't\\b|declin|refus|cancel|permission|allow|unable|blocked|denied|remain|still there|kept"}
+      ]
+    },
+    {
+      "id": "F6", "cat": "files", "suites": ["full"],
+      "text": "How big is the %TEMP%\\io-bench\\big folder?", "timeout": 180,
+      "setup": [{"op": "bigfiles", "dir": "big", "total_mb": 12}],
+      "checks": [
+        {"type": "answer_number_near", "gt": "folder_size_bytes", "arg": "%BENCH%\\big", "kind": "size", "unit": "MB", "rel": 0.10}
+      ]
+    },
+    {
+      "id": "A1", "cat": "app", "suites": ["full"],
+      "text": "Open Calculator", "timeout": 180,
+      "requires": {"no_window": ["calculator"]},
+      "checks": [
+        {"type": "window", "app": "calculator", "exists": true},
+        {"type": "max_tools", "n": 3}
+      ],
+      "teardown": ["calculator"]
+    },
+    {
+      "id": "A2", "cat": "app", "suites": ["smoke", "full"],
+      "text": "Open Notepad and write: eggs, milk, bread", "timeout": 300,
+      "requires": {"no_window": ["notepad"]},
+      "checks": [
+        {"type": "window", "app": "notepad", "exists": true, "text": "eggs[\\s\\S]*bread"}
+      ],
+      "teardown": [{"app": "notepad", "discard": "eggs|milk|bread"}]
+    },
+    {
+      "id": "A3", "cat": "app", "suites": ["full"],
+      "text": "Close Calculator", "timeout": 180,
+      "requires": {"no_window": ["calculator"]},
+      "setup": [{"op": "open", "app": "calculator"}],
+      "answers": [{"match": "allow it", "reply": "yes_if_bench"}, {"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "window", "app": "calculator", "exists": false}
+      ],
+      "teardown": ["calculator"]
+    },
+    {
+      "id": "A4", "cat": "app", "suites": ["smoke", "full"],
+      "text": "Calculate 1234 times 5678 in the Calculator app", "timeout": 300,
+      "requires": {"no_window": ["calculator"]},
+      "checks": [
+        {"type": "answer_regex", "pattern": "7,?006,?652"},
+        {"type": "window", "app": "calculator", "exists": true, "text": "7,?006,?652"}
+      ],
+      "teardown": ["calculator"]
+    },
+    {
+      "id": "A5", "cat": "app", "suites": ["full"],
+      "text": "Open File Explorer to my Downloads folder", "timeout": 240,
+      "checks": [
+        {"type": "window", "app": "explorer", "title": "Downloads", "exists": true}
+      ],
+      "teardown": [{"app": "explorer", "title": "Downloads"}]
+    },
+    {
+      "id": "A6", "cat": "settings", "suites": ["full"],
+      "text": "Open the display settings", "timeout": 240,
+      "requires": {"no_window": ["settings"]},
+      "checks": [
+        {"type": "window", "app": "settings", "exists": true, "text": "Display"}
+      ],
+      "teardown": ["settings"]
+    },
+    {
+      "id": "A7", "cat": "app", "suites": ["full"],
+      "text": "Maximize the Notepad window", "timeout": 180,
+      "requires": {"no_window": ["notepad"]},
+      "setup": [{"op": "open", "app": "notepad"}],
+      "checks": [
+        {"type": "window", "app": "notepad", "exists": true, "zoomed": true}
+      ],
+      "teardown": [{"app": "notepad", "discard": "^\\s*$"}]
+    },
+    {
+      "id": "A8", "cat": "app", "suites": ["full"],
+      "text": "What text is in the Notepad window?", "timeout": 240,
+      "requires": {"no_window": ["notepad"]},
+      "setup": [{"op": "write", "path": "%BENCH%\\otter.txt", "text": "BENCH-OTTER-77"}, {"op": "open", "app": "notepad", "path": "%BENCH%\\otter.txt"}],
+      "checks": [
+        {"type": "answer_regex", "pattern": "BENCH-OTTER-77"}
+      ],
+      "teardown": [{"app": "notepad", "discard": "BENCH-OTTER-77"}]
+    },
+    {
+      "id": "A9", "cat": "app", "suites": ["smoke", "full"],
+      "text": "Open Notepad, write hello bench, and save it as %TEMP%\\io-bench\\saved.txt", "timeout": 360,
+      "requires": {"no_window": ["notepad"]},
+      "answers": [{"match": "allow it", "reply": "yes_if_bench"}, {"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "file", "path": "%BENCH%\\saved.txt", "exists": true, "contains": "hello bench"}
+      ],
+      "teardown": [{"app": "notepad", "discard": "hello bench"}]
+    },
+    {
+      "id": "W1", "cat": "web", "suites": ["smoke", "full"],
+      "text": "Open example.com in your browser tab and tell me the page title", "timeout": 240,
+      "checks": [
+        {"type": "answer_regex", "pattern": "Example Domain"}
+      ],
+      "opens_titles": ["Example Domain"]
+    },
+    {
+      "id": "W2", "cat": "web", "suites": ["full"],
+      "text": "On Wikipedia, what is the diameter of Io, Jupiter's moon?", "timeout": 300,
+      "checks": [
+        {"type": "answer_regex", "pattern": "3,?6[34]\\d"}
+      ],
+      "opens_titles": ["Wikipedia"]
+    },
+    {
+      "id": "W3", "cat": "knowledge", "suites": ["full"],
+      "text": "When was Python 3.13 released?", "timeout": 240,
+      "checks": [
+        {"type": "answer_regex", "pattern": "October\\s+(7,?\\s+)?2024|7\\s+October,?\\s+2024|2024-10-07|Oct\\.?\\s+7,?\\s+2024"}
+      ]
+    },
+    {
+      "id": "W4", "cat": "web", "suites": ["full"],
+      "text": "What is duck.ai?", "timeout": 240,
+      "checks": [
+        {"type": "answer_regex", "pattern": "DuckDuckGo"}
+      ]
+    },
+    {
+      "id": "W5", "cat": "web", "suites": ["smoke", "full"],
+      "text": "Open example.com and click the \"More information\" link (or \"Learn more\"). Where does it go?", "timeout": 300,
+      "checks": [
+        {"type": "answer_regex", "pattern": "iana\\.org"}
+      ],
+      "opens_titles": ["Example Domain", "IANA"]
+    },
+    {
+      "id": "S1", "cat": "screen", "suites": ["smoke", "full"],
+      "text": "What's on my main monitor right now?", "timeout": 240,
+      "requires": {"no_window": ["notepad"]},
+      "setup": [{"op": "write", "path": "%BENCH%\\zebra.txt", "text": "BENCH-ZEBRA"}, {"op": "open", "app": "notepad", "path": "%BENCH%\\zebra.txt"},
+                {"op": "maximize", "app": "notepad"}],
+      "checks": [
+        {"type": "answer_regex", "pattern": "Notepad|ZEBRA"},
+        {"type": "no_answer_regex", "pattern": "Duck"}
+      ],
+      "teardown": [{"app": "notepad", "discard": "BENCH-ZEBRA"}]
+    },
+    {
+      "id": "S2", "cat": "screen", "suites": ["full"],
+      "text": "Is Calculator open? Look at the screen.", "timeout": 240,
+      "requires": {"no_window": ["calculator"]},
+      "setup": [{"op": "open", "app": "calculator"}],
+      "checks": [
+        {"type": "answer_regex", "pattern": "\\byes\\b|\\bopen\\b"}
+      ],
+      "teardown": ["calculator"]
+    },
+    {
+      "id": "Q1", "cat": "app", "suites": ["full"],
+      "text": "Open the document I was working on", "timeout": 240,
+      "answers": [{"match": ".*", "reply": "never mind"}],
+      "checks": [
+        {"type": "asked", "pattern": "."},
+        {"type": "no_new_window"}
+      ],
+      "teardown": [{"app": "notepad", "discard": "^\\s*$"}]
+    },
+    {
+      "id": "X1", "cat": "app", "suites": ["smoke", "full"],
+      "text": "Write the numbers 1 to 200 in Notepad, one per line", "timeout": 120, "run_secs": 10,
+      "requires": {"no_window": ["notepad"]},
+      "checks": [
+        {"type": "status", "is": "cancelled", "within_secs": 5}
+      ],
+      "teardown": [{"app": "notepad", "discard": "^[\\d\\s,.]*$"}]
+    },
+    {
+      "id": "G1", "cat": "game", "suites": ["full"], "loop": true,
+      "text": "Play Idle Obelisk Miner in the BlueStacks window until I tell you to stop. Follow the on-screen tasks.",
+      "timeout": 420, "run_secs": 300,
+      "requires": {"window": ["bluestacks"]},
+      "answers": [{"match": "start a loop", "reply": "yes"}, {"match": "allow it", "reply": "no"}, {"match": ".*", "reply": "keep going"}],
+      "checks": [
+        {"type": "tool_count", "min": 10},
+        {"type": "tool_count", "name": "click_on|hold_on|click|tap", "result": "found at|via vision", "min": 3},
+        {"type": "tool_count", "result": "outside the .{0,40}content area", "max": 0},
+        {"type": "no_tool", "name": "^Shortcut$", "args": "\\besc\\b|escape|\\bback\\b"},
+        {"type": "window", "app": "bluestacks", "exists": true},
+        {"type": "tool_count", "result": "made this exact call", "max": 2},
+        {"type": "director_parse_rate", "min": 0.9}
+      ]
+    }
+  ]
+}
