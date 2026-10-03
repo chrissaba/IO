@@ -1087,7 +1087,10 @@ class DuckAI:
             await self.session.initialize()
         return self.session
 
-    async def ask(self, prompt: str, image: bytes = b"") -> str:
+    in_chat = False  # a director conversation is open in the tab
+
+    async def ask(self, prompt: str, image: bytes = b"", keep: bool = False) -> str:
+        """keep: continue the open conversation (and leave it open after) instead of a fresh, forgotten chat."""
         if wait := self.ready_in():
             return f"error: the advisor was asked recently; it can be asked again in {wait}s. Keep going with what you have."
         self.last = time.time()
@@ -1096,11 +1099,13 @@ class DuckAI:
         async def js(code: str) -> str:
             return page_text(text_of(await s.call_tool("browser_evaluate", {"function": code})))
 
-        await s.call_tool("browser_navigate", {"url": DUCK_URL})
-        await asyncio.sleep(1)
-        await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
-        await s.call_tool("browser_navigate", {"url": DUCK_URL})
-        await asyncio.sleep(3)
+        if not (keep and self.in_chat):
+            await s.call_tool("browser_navigate", {"url": DUCK_URL})
+            await asyncio.sleep(1)
+            await js(DUCK_NO_HISTORY_JS)  # don't keep IO's chats in Duck.ai's history in your browser
+            await s.call_tool("browser_navigate", {"url": DUCK_URL})
+            await asyncio.sleep(3)
+        self.in_chat = False
         if image and "no-input" in await js(DUCK_ATTACH_JS % json.dumps(base64.b64encode(image).decode())):
             prompt = prompt.replace("A screenshot of the window I'm working in is attached.\n\n", "")
         await asyncio.sleep(2 if image else 0.3)
@@ -1131,11 +1136,14 @@ class DuckAI:
                 if same >= 2:
                     break
         finally:
-            try:
-                await js(DUCK_FORGET_JS)
-                await s.call_tool("browser_navigate", {"url": "about:blank"})
-            except Exception:
-                pass
+            if keep and text:
+                self.in_chat = True
+            else:
+                try:
+                    await js(DUCK_FORGET_JS)
+                    await s.call_tool("browser_navigate", {"url": "about:blank"})
+                except Exception:
+                    pass
         return text[:2000] if text else "error: no answer from Duck.ai"
 
 
@@ -1786,19 +1794,32 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             gemini, director = None, False
         director_queue: list[tuple[str, dict]] = []
         director_paused_until = 0.0
+        director_seen = director_rounds = 0
 
         async def direct(step: int) -> str:
             """Director mode: asks the stronger model for the next actions and queues them; returns its thoughts ('' on failure)."""
+            nonlocal director_seen, director_rounds
             image = await asyncio.to_thread(window_shot) if gemini.takes_images else b""
-            prompt = fit_director_prompt(
-                gemini.max_chars, goal=task, shot="A screenshot of the window IO works in is attached.\n" if image else "",
-                guide="\n---\n".join(guide[-2:]) or "(nothing yet)",
-                screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
-                history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
-                catalog=tool_catalog(tools))
+            keep = isinstance(gemini, DuckAI)
+            # one ongoing conversation, so it remembers what it tried: after the first round only the new results go in.
+            # A fresh conversation (with the full brief) when the old one fails or has grown long.
+            if keep and gemini.in_chat and director_rounds % 20:
+                new = steps_log[director_seen:] or ["(no actions ran)"]
+                prompt = ("Results of your last actions:\n" + "\n".join(re.sub(r"\s+", " ", a)[:320] for a in new)[-3500:] +
+                          ("\nA new screenshot is attached." if image else f"\nIO's eyes now see: {last_info[:500]}") +
+                          "\nIf the same thing keeps not working, change approach. Reply with the next JSON only.")
+            else:
+                prompt = fit_director_prompt(
+                    gemini.max_chars, goal=task, shot="A screenshot of the window IO works in is attached.\n" if image else "", guide="",
+                    screen="" if image else f"What IO's eyes last saw on screen:\n{last_info or '(nothing yet)'}\n\n",
+                    history="\n".join(re.sub(r"\s+", " ", a)[:320] for a in steps_log[-14:]) or "(none yet: this is the start)",
+                    catalog=tool_catalog(tools))
+            director_seen, director_rounds = len(steps_log), director_rounds + 1
             t0 = time.time()
             try:
-                reply = await gemini.ask(prompt, image)
+                reply = await (gemini.ask(prompt, image, keep=True) if keep else gemini.ask(prompt, image))
+                if keep and reply.startswith("error") and not reply.startswith("error: limit"):
+                    director_rounds = 0  # start over in a new conversation next time
             except Exception as e:
                 reply = f"error: {e}"
             if focus:
