@@ -40,6 +40,16 @@ STRENGTHS = {"moonshotai/kimi-k3": "strongest planner of the fast ones; best for
              "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "quickest; fine for simple yes/no questions about the screen",
              "meta/llama-3.2-90b-vision-instruct": "older but quick; describes screenshots plainly",
              "deepseek-ai/deepseek-v4.1-flash": "deep reasoning on text, but queues for minutes: only when time doesn't matter"}
+# strongest planner first: after a failed step the next decision goes down this list instead of racing (a race is won by
+# the quickest model, often a small one, which kept retrying a broken approach on a hard build)
+PLANNER_ORDER = ["moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "meta/muse-glimmer-30b",
+                 "meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]
+
+
+def planner_rank(model: str) -> int:
+    return PLANNER_ORDER.index(model) if model in PLANNER_ORDER else len(PLANNER_ORDER)
+
+
 # context windows in tokens, where known; anything else is assumed to take CONTEXT_DEFAULT. A race sends the same
 # conversation to several models, so the brain's budget is the smallest window among them
 CONTEXT = {"meta/llama-3.2-90b-vision-instruct": 131072}

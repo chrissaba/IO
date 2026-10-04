@@ -14,7 +14,12 @@ RECALL_BUDGET = 6000  # all playbooks handed to one task
 MIN_STEPS = 4  # a task shorter than this teaches nothing worth keeping
 _lock = threading.Lock()
 STOP = {"the", "and", "for", "with", "that", "this", "you", "your", "from", "into", "until", "tell", "stop", "want", "try",
-        "can", "please", "then", "open", "have", "has", "just", "keep", "going", "play", "game", "app", "window", "it", "its"}
+        "can", "please", "then", "open", "have", "has", "just", "keep", "going", "play", "game", "app", "window", "it", "its",
+        # words nearly every PC task shares: an expense-tracker build matched a "serve a static page" playbook on folder,
+        # documents, browser, server, http, proof and png alone, and followed its steps (wrong server, wrong folder)
+        "folder", "folders", "documents", "desktop", "downloads", "file", "files", "browser", "page", "web", "site", "new",
+        "make", "build", "create", "write", "save", "screenshot", "localhost", "http", "https", "www", "com", "org", "net",
+        "server", "run", "start", "use", "show", "called", "png", "jpg", "txt", "html", "proof", "test", "tests", "finish"}
 
 LEARN_SYSTEM = """You maintain a playbook that an AI agent on a Windows PC reads before doing this kind of task again.
 You get the current playbook (may be empty) and a log of the latest run: the request, each action with its result,
@@ -22,10 +27,12 @@ and how it ended. Rewrite the playbook so the next run is faster and makes fewer
 - concrete facts: where buttons and menus are, what each screen means, the order that works, good settings or targets
 - what failed or wasted time, and what to do instead
 - for games: the progression loop, what to buy or upgrade first, how to spot and close pop-ups and ads
-Keep what is still true from the old playbook, fix what the run proved wrong, drop guesses. At most 2500 characters,
-short lines, no story of the run.
-Reply ONLY with JSON: {"name": "<short name of the task or app, e.g. Idle Obelisk Miner>", "keywords": ["3-8 words a
-future request or window title would contain"], "playbook": "..."}"""
+Keep what is still true from the old playbook, fix what the run proved wrong, drop guesses. Write down only facts the run
+verified. Keep what was specific to this request (its file names, ports, the kind of page) apart from what holds for any
+run, so a similar but different request doesn't copy it. At most 2500 characters, short lines, no story of the run.
+Reply ONLY with JSON: {"name": "<short name of the task or app, e.g. Idle Obelisk Miner>", "keywords": ["3-8 words specific
+to this kind of task (app, game, site or product names), never general ones like folder, browser, server, file or page"],
+"playbook": "..."}"""
 
 
 def _words(text: str) -> set:
@@ -81,8 +88,10 @@ def recall(text: str) -> str:
             _save(skills)
     if not picked:
         return ""
-    return ("Skills you taught yourself on earlier runs of this kind of task (follow them unless the screen shows "
-            "otherwise):\n" + "\n\n".join(picked))
+    # notes, not orders: "follow them" made a run copy a static-page recipe into an app build that needed its own server
+    return ("Notes you wrote yourself on earlier runs of similar-looking tasks. Use what fits; the request always comes first: "
+            "where it asks for something different (another app, server, folder, file or order of steps), do what it asks, "
+            "not what these notes did. Facts in them can be out of date.\n" + "\n\n".join(picked))
 
 
 def learn(ask, request: str, steps: list[str], outcome: str, window: str = "") -> str:

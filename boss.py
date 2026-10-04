@@ -173,7 +173,7 @@ HOW TO DECIDE
 - Never select-all and copy to read text (that replaces the user's clipboard).
 - window= is part of a title. Titles change as you work ("Untitled - Notepad" becomes your text), so name the app ("Notepad").
 - If something blocked you (a refusal, a user constraint, a failure), say so in done instead of trying around it.
-{browser}- Finish with done. Its summary is your answer to the user: include the actual result (the time, the list, the description, the number), never just "I found it" or "I described it". If something blocked you, say what."""
+{folders}{browser}- Finish with done. Its summary is your answer to the user: include the actual result (the time, the list, the description, the number), never just "I found it" or "I described it". If something blocked you, say what."""
 # (tool the line needs, line): only lines whose tool is on the menu are shown
 LAYER_JOBS = [
     ("write_in_app", "Write something in an app: write_in_app(app, text) (it opens the app itself: no open_app first). Save only "
@@ -185,6 +185,9 @@ LAYER_JOBS = [
     ("pc_info", "The time anywhere, disk space, CPU/GPU/RAM, IP: pc_info(topic, place). Installed or running apps: app_info(name), never by opening it."),
     ("list_files", "Files and folders: list_files, find_file, read_file, write_file, file_op. Never open Explorer for that."),
     ("web_answer", "A fact on the web: web_answer(question), then answer from its excerpts. A given page: read_page(url, find=a few words)."),
+    ("web_fill", "Use a web page or web app (fill its form, press its buttons, even one on localhost): browser_open(url) opens it in "
+                 "IO's tab in the user's browser, then web_fill({label: value, ...}) for all its fields at once and web_click(text). "
+                 "Never click or type into a browser window by screen position or with click/type_into."),
     ("look_at_screen", "What's on screen: look_at_screen, then put the full description in your answer."),
     ("open_settings", "A Windows setting: open_settings(page), then set_control(label, value) or read_window."),
     ("click_on", "Games and emulators (BlueStacks): no controls to read. Use click_on and look_at_screen with window set to the app's "
@@ -192,8 +195,20 @@ LAYER_JOBS = [
 ]
 
 
-def layer_system(names: list, browser_where: str = "") -> str:
-    """SYSTEM for the action layer: HOW TO DECIDE, the preference ladder limited to this menu, COMMON JOBS and RULES."""
+FRONTIER_STYLE = """WORKING STYLE
+- Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
+  calls at once, or one steps call (they run in order; a failure stops the rest). Each reply costs a slow round trip.
+- Change code with edit_file (exact old text -> new); rewrite a whole file only when most of it changes.
+- Check your work the way the user will use it before calling done: run the tests and read their output, request the
+  server's page and its API, look at the result. A command's "Status Code" is the last program's exit code: not 0 means it failed.
+- A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
+
+"""
+
+
+def layer_system(names: list, browser_where: str = "", frontier: bool = False) -> str:
+    """SYSTEM for the action layer: HOW TO DECIDE, the preference ladder limited to this menu, COMMON JOBS and RULES.
+    frontier: a large NVIDIA brain, which also gets WORKING STYLE (batching, editing, checking its work)."""
     have = set(names)
     search = ("search the web with web_answer (or web_search, then read_page on the best result)" if "web_answer" in have else
               "look it up with research" if "research" in have else "find out with tools(\"WEB\") and use(...)")
@@ -203,7 +218,38 @@ def layer_system(names: list, browser_where: str = "") -> str:
         browser = (f"- Web actions work in IO's own browser tab. {browser_where} Never drive Chrome or Edge windows with click or keys. "
                    "look_at_screen can't see that tab: answer about a page from read_page.\n")
     return SYSTEM_LAYER.format(search=search, pick=actions.system_tools_text(names),
-                               jobs=("COMMON JOBS\n" + "\n".join(f"- {j}" for j in jobs) + "\n\n") if jobs else "", browser=browser)
+                               jobs=(FRONTIER_STYLE if frontier else "") +
+                               (("COMMON JOBS\n" + "\n".join(f"- {j}" for j in jobs) + "\n\n") if jobs else ""), browser=browser,
+                               folders=user_folders())
+
+
+def kill_by_name_problem(name: str) -> str:
+    """Why killing by name is the wrong move when the name matches several processes ('' when it matches one or none).
+    A run that wanted to stop its own stray web server (it had the pid from netstat) asked to kill 'python.exe', which
+    would also have stopped Unsloth Studio (IO's eyes), IO's Windows-MCP servers and four other servers."""
+    try:
+        import psutil
+        want = name.lower().removesuffix(".exe")
+        hits = []
+        for p in psutil.process_iter(["pid", "name", "cmdline"]):
+            if (p.info["name"] or "").lower().removesuffix(".exe") == want:
+                hits.append(f"{p.info['pid']}: {' '.join(p.info['cmdline'] or [])[:100]}")
+    except Exception:
+        return ""
+    if len(hits) <= 1:
+        return ""
+    return (f"error:BLOCKED: {len(hits)} processes are named {name}, and killing by name stops all of them (other apps and IO's own "
+            "helpers too). Kill the one you mean by its pid. They are:\n" + "\n".join(hits[:15]))
+
+
+def user_folders() -> str:
+    """Where the user's folders really are: Windows can move Documents and Desktop (OneDrive, or by hand), and a brain
+    that guessed C:\\Users\\<name>\\Documents built a project in a folder Explorer doesn't show as Documents."""
+    try:
+        where = ", ".join(f"{n} is {actions.known_folder(n)}" for n in ("Documents", "Desktop", "Downloads"))
+        return f"- The user's folders: {where}. \"My Documents\" means that path; use these full paths.\n"
+    except Exception:
+        return ""
 
 
 EXTRA_TOOLS = [
@@ -878,7 +924,7 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
             a, b = 0, 200
         else:  # the line before a hit: its end
             a, b = max(0, len(line) - 200), len(line)
-        return ("…" if a > 0 else "") + line[a:b] + ("…" if b < len(line) else "")
+        return ("â€¦" if a > 0 else "") + line[a:b] + ("â€¦" if b < len(line) else "")
 
     keep, used = set(), 0
     for i in sorted(hits, key=lambda i: -score[i]):  # best matches first, each with its neighbours
@@ -890,7 +936,7 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
         used += cost
     out, last = [], -2
     for i in sorted(keep):  # shown in page order
-        out.append(("…\n" if i != last + 1 and out else "") + clip(i))
+        out.append(("â€¦\n" if i != last + 1 and out else "") + clip(i))
         last = i
     if len(keep) < len(hits):
         out.append("[more matches cut]")
@@ -1268,7 +1314,7 @@ def usable_expect(expect: str) -> str:
     A description of success ('Notepad is open and focused') is dropped: the action's own check covers it, and checked
     literally it would fail a step that worked."""
     # quotes, not apostrophes: "Notepad's title shows 'eggs'" quotes eggs, not "s title shows "
-    quoted = re.findall(r"\"([^\"]{2,80})\"|“([^”]{2,80})”|(?<!\w)['‘]([^'’]{2,80})['’](?!\w)", expect or "")
+    quoted = re.findall(r"\"([^\"]{2,80})\"|â€œ([^â€]{2,80})â€|(?<!\w)['â€˜]([^'â€™]{2,80})['â€™](?!\w)", expect or "")
     if quoted:
         return next(q for q in quoted[0] if q)
     e = re.sub(r"\s+(dialog|window|box|popup|page|tab|screen)\W*$", "", (expect or "").strip(), flags=re.I)  # "Save As dialog": title "Save As"
@@ -1286,7 +1332,7 @@ predict in one reply, up to 8, in order (e.g. open_app, type_into, hotkeys, then
 only where you must see a result before you can choose (search results, a list to pick from, a dialog you can't predict).
 Each action checks itself; when one fails or is unsure the rest are skipped and you get the results.
 When the batch's own checks will prove the task done and you already know the answer (e.g. calculator("37*24") then done
-with "37 × 24 = 888"), end the batch with done(summary). When the answer is something an action reads, wait for its result.
+with "37 Ã— 24 = 888"), end the batch with done(summary). When the answer is something an action reads, wait for its result.
 Describe click targets by what they look like and where they are. Never repeat an action that just failed the same way."""
 # After a director batch that ended on one of these groups' actions and worked, the local model may call done itself
 # (a ~30 s GLM round that only said done cost A4 more than half its time)
@@ -1294,7 +1340,7 @@ FINISH_GROUPS = {"DO", "READ", "PC"}
 FINISH_CHECK = """The actions above all worked. The user's request: {task}
 If their results already complete the request, call done now with the answer for the user (the real values from the
 results). If anything is still left to do, reply with just: not yet."""
-TEXT_SLOT = "«TEXT»"  # stands in for a long text the user gave (to type or write), which IO puts back into the director's args
+TEXT_SLOT = "Â«TEXTÂ»"  # stands in for a long text the user gave (to type or write), which IO puts back into the director's args
 TEXT_SLOT_AT = 900  # requests longer than this send their text as the slot
 
 
@@ -1361,7 +1407,7 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, budgets: di
                 n += len(block) + 2
             return "\n\n".join(out)
         if k == "goal":  # the start of the task says what to do
-            return v if len(v) <= budgets[k] else v[:budgets[k]].rsplit(" ", 1)[0] + " …(cut)"
+            return v if len(v) <= budgets[k] else v[:budgets[k]].rsplit(" ", 1)[0] + " â€¦(cut)"
         lines, out, n = v.splitlines(), [], 0
         for line in (reversed(lines) if k == "history" else lines):
             if n + len(line) > budgets[k]:
@@ -1388,7 +1434,7 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, budgets: di
                 budgets[k] = int(budgets[k] * 0.75)
     # never cut the end: the catalog and "Next JSON." are what make the reply usable
     tail = prompt[-600:]
-    return prompt[:limit - len(tail) - 2] + "\n…" + tail if len(prompt) > limit else prompt
+    return prompt[:limit - len(tail) - 2] + "\nâ€¦" + tail if len(prompt) > limit else prompt
 
 
 _JSON_STR = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
@@ -1479,7 +1525,19 @@ def split_steps(calls: list) -> tuple[list, dict]:
             cid = f"{c.id}-{i}"
             out.append(SimpleNamespace(id=cid, function=SimpleNamespace(name=tool, arguments=json.dumps(a, ensure_ascii=False))))
             batch_of[cid] = (c.id, i, note if i == 0 else "")
+    if len(out) > 1:
+        # several calls in one reply are a batch too: a click that missed made the typing after it land in the wrong
+        # place (IO's own window); only a failed action stops the rest, since independent reads don't depend on each other
+        rest = [c for c in out if c.id not in batch_of]
+        for i, c in enumerate(rest):
+            batch_of[c.id] = ("reply:" + rest[0].id, i, "")
     return out, batch_of
+
+
+# calls that only look (a failed one doesn't stop the other calls in its reply)
+READ_ONLY = {"web_search", "web_answer", "read_page", "read_file", "list_files", "find_file", "look_at_screen", "Snapshot",
+             "list_windows", "list_controls", "find_control", "read_window", "check_screen", "find_on_screen", "browser_snapshot",
+             "browser_read", "research", "ask_model", "wait", "pc_info", "app_info", "game_state"}
 
 
 def director_plan_of(text: str, code: str = "") -> str:
@@ -2053,10 +2111,18 @@ def compact(messages: list[dict], keep: int = 2, trim: int = 1500, snaps_kept: i
     return out
 
 
-# Windows PowerShell 5.1 writes its output in the ANSI code page, so names like "Battlefield™ 6" came back garbled or the
+# Windows PowerShell 5.1 writes its output in the ANSI code page, so names like "Battlefieldâ„¢ 6" came back garbled or the
 # line went missing, and its first-run progress records arrived as CLIXML noise. The command's output is passed back as
 # base64 UTF-8 instead, with progress records off, and files are read as UTF-8 (5.1 assumes ANSI).
-PS_WRAP = "$ProgressPreference = 'SilentlyContinue'; $PSDefaultParameterValues['*:Encoding'] = 'utf8'; $__io = & {{\n{cmd}\n}} 2>&1 | Out-String -Width 300; 'IO64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($__io))"
+# Errors come back as their plain text, the way a terminal shows them: PowerShell 5.1 wraps each line a program writes to
+# stderr in an error record ("python : Traceback..." plus five lines of "At line:2 char:39 / + CategoryInfo ..."), which
+# buried a failing test run's traceback. The last program's exit code comes back too (IOEC): Windows-MCP's "Status Code"
+# is PowerShell's own, always 0, so a crashed test run read as a success and the brain moved on.
+PS_WRAP = ("$ProgressPreference = 'SilentlyContinue'; $PSDefaultParameterValues['*:Encoding'] = 'utf8'; $global:LASTEXITCODE = $null; "
+           "$env:PYTHONUNBUFFERED = '1'; "  # a Python program's prints and its traceback come back in the order they happened
+           "$__io = & {{\n{cmd}\n}} 2>&1 | ForEach-Object {{ if ($_ -is [System.Management.Automation.ErrorRecord]) {{ $_.Exception.Message }} "
+           "else {{ $_ }} }} | Out-String -Width 300; $__ec = $global:LASTEXITCODE; "
+           "'IO64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($__io)) + ' IOEC:' + $__ec")
 
 
 def ps_wrap(cmd: str) -> str:
@@ -2094,7 +2160,10 @@ def ps_unwrap(result: str) -> str:
     except ValueError:
         return result
     status = re.search(r"Status Code: *(-?\d+)", result)
-    return f"Response: {text or '(no output)'}\n\nStatus Code: {status.group(1) if status else 0}"
+    code = re.search(r"IOEC:(-?\d+)", result)  # the last program's exit code, when the command ran one
+    code = code.group(1) if code else (status.group(1) if status else "0")
+    failed = " (the last program failed)" if code not in ("0", "") else ""
+    return f"Response: {text or '(no output)'}\n\nStatus Code: {code}{failed}"
 
 
 def model_context(default: int = 16384) -> int:
@@ -2346,6 +2415,11 @@ DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortc
                   "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
 HELPER_SYSTEM = ("An AI agent working on a Windows PC asks you for advice. Its goal: {goal}\nAnswer its question directly in at most "
                  "150 words: what to do next and why, naming buttons and places as they appear on screen. Don't ask questions back.")
+# screen points in tool results: list_controls' "(4108,101)", find_on_screen's {"x": 1, "y": 2}, Snapshot's [x, y]
+SCREEN_POINT = re.compile(r"\((\d{1,5}),\s*(\d{1,5})\)|\[(?=\d)(\d{1,5}),\s*(\d{1,5})\]|\"x\":\s*(\d{1,5}),\s*\"y\":\s*(\d{1,5})")
+# the NVIDIA brain's reply budget: 2,048 cut off a reply that wrote a whole source file in one call (its longest
+# reply in the hard test was 2,019 tokens); all five brain models accept this much (tested 2026-10-04)
+BRAIN_MAX_OUT = 16384
 RACE_TALK_GRACE = 8.0  # seconds a race waits, after a reply without a tool call, for one that has a tool call
 REFLECT_NOTE = ("Your last steps didn't work. Take stock before acting: in a few lines, write what you already know for certain "
                 "(facts found, folders and files made, what is running or open), then what is left of the task. Don't redo "
@@ -2650,15 +2724,23 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             from the one that answered last) until one answers, two full rounds, or races several at once (Settings);
             the local model is only the main agent's very last resort. Without it, the local model as before."""
             purpose = kw.pop("purpose", role)
+            strong = kw.pop("strong", False)  # after a failed step: the strongest planner decides, no race
             if not remote_brain:
                 return local_create(boss, BOSS_MODEL, _purpose=purpose, **kw)
             width = min(int(options.get("race_width") or 0), nim.MAX_PARALLEL)
-            if width >= 2 and role == "decide next step":  # the main agent's steps and questions; helpers go in turn
+            if width >= 2 and role == "decide next step" and not strong:  # the main agent's steps; helpers go in turn
                 r = race(kw, purpose, width)
                 if r is not None:
                     return r
             n, last = len(brain_models), None
             order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
+            if strong:
+                # the quickest model wins a race, often a small one; a step that just failed deserves the best reasoning on
+                # offer (healthy ones first, by planner strength), at the cost of a slower answer
+                now = time.time()
+                order = sorted(range(n), key=lambda j: (now - nim._health.get(brain_models[j], {}).get("failed", 0) <= 120,
+                                                        nim.planner_rank(brain_models[j])))
+                purpose += " (strongest, after a failure)"
             for attempt in range(2 * n):
                 if stop is not None and stop.is_set():
                     raise RuntimeError("stopped")
@@ -2910,7 +2992,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             tools[:] = [ask_model_tool() if t["function"]["name"] == "ask_model" else t
                         for t in actions.openai_tools(menu_names)] + [plugin_defs[a] for a in plugin_names]
             if messages:
-                messages[0]["content"] = layer_system(menu_names, browser_where)
+                messages[0]["content"] = layer_system(menu_names, browser_where, remote_brain)
 
         if layer:
             first = actions.menu(route, actions.available(ctx, decider="local"), ask=bool(ask) and not loop)
@@ -2925,7 +3007,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if REMEMBER_REQUEST.search(standalone):
                 first.append("remember")
             apply_menu(first)
-            system = layer_system(menu_names, browser_where)
+            system = layer_system(menu_names, browser_where, remote_brain)
         elif "browser_navigate" in sessions:
             system = SYSTEM.replace("{browser_where}", browser_where)
         else:  # browser off or failed to start: point web work at Scrape or the desktop tools instead
@@ -2945,6 +3027,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         dead_taps = 0  # taps in a row that changed nothing visible in a loop's window
         last_call: dict = {}  # the previous call and its result: the same again is said out loud, not silently re-run
+        screen_points: list = []  # screen points tools have reported (controls, finds): what raw clicks may use
         said_more = False
         route_failures = vision_misses = 0  # errors and unsure results this task (escalation to the director); NOT_FOUND/UNSUPPORTED
         director_saw = ""  # the director's last thoughts: evidence for the work check, which sees no screenshot
@@ -3371,7 +3454,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         # the NVIDIA brain uses all the context it has: the smallest window among the models it may send a step to (a race
         # sends the same conversation to several), less the reply. Everything it has read stays word for word until the
         # run fills ~3/4 of that; only then are the oldest steps folded into a summary
-        ctx_tokens = (min(nim.context_tokens(m) for m in brain_models) - 4096) if remote_brain else await asyncio.to_thread(model_context)
+        ctx_tokens = (min(nim.context_tokens(m) for m in brain_models) - BRAIN_MAX_OUT) if remote_brain else await asyncio.to_thread(model_context)
         room = max(6000, int((ctx_tokens - 1400) * 2.5) - fixed)
         compact_at = min(compact_at, int(room * 0.6))
         if remote_brain:
@@ -3652,7 +3735,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             brain_create,
                             messages=seen(compact(messages, keep=keep_full, trim=4000, snaps_kept=2, cap=tool_cap) if remote_brain else
                                           compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap)), tools=tools,
-                            temperature=0.3, max_tokens=2048 if remote_brain else 1024,
+                            temperature=0.3, max_tokens=BRAIN_MAX_OUT if remote_brain else 1024,
                         )
                     except Exception as e:
                         log("warning", text=f"loop step {step} failed, retrying: {e}"[:300])
@@ -3671,7 +3754,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # read the same pages again and again
                     messages=seen(compact(messages, keep=keep_full, snaps_kept=snaps_kept,
                                           cap=tool_cap if remote_brain else 0)), tools=tools, temperature=0.2,
-                    max_tokens=2048 if remote_brain else 1024,
+                    max_tokens=BRAIN_MAX_OUT if remote_brain else 1024, strong=error_streak > 0,
                 )
             except BadRequestError as e:
                 if "context" not in str(e).lower():
@@ -3771,7 +3854,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         inner = loose_json(inner) or {}
                     name, args = str(args.get("name") or "").strip(), inner if isinstance(inner, dict) else {}
                 if layer and pending is not None and slot_text:
-                    args = fill_slot(args, slot_text)  # the director wrote «TEXT» where the user's long text goes
+                    args = fill_slot(args, slot_text)  # the director wrote Â«TEXTÂ» where the user's long text goes
                 if layer and name == "Click" and not args.get("loc") and (args.get("label") or args.get("text") or args.get("name") or args.get("target")):
                     # Click by a control's name is click(target) (one letter's case apart, small models mix them up)
                     args = {"target": str(args.get("label") or args.get("text") or args.get("name") or args.get("target")),
@@ -3864,6 +3947,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 if layer and not why and not task_allows(name) and name in actions.REGISTRY:
                     why = (f"error:BLOCKED: {name} isn't available in this task" +
                            (f" (a loop locked on '{focus}' only acts in that window)" if loop and focus else " (turned off in IO's settings)"))
+                if not why and name == "Process" and args.get("mode") == "kill" and args.get("name") and not args.get("pid"):
+                    why = await asyncio.to_thread(kill_by_name_problem, str(args["name"]))
                 if not why and name == "Shortcut" and re.sub(r"\s+", "", str(args.get("shortcut", "")).lower()) == "alt+space":
                     why = "error:BLOCKED: alt+space (the window menu) grabs the mouse pointer | try: window_state(window, state)"
                 if why or not options["confirm_risky"]:
@@ -3925,6 +4010,19 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     except (TypeError, ValueError, IndexError):
                         point = None
                 blocked = why
+                if not loop and not blocked and name in ("Click", "Type", "hold", "Drag") and args.get("loc"):
+                    # a screen point has to come from a tool that reports screen points: the brain's screenshots are
+                    # scaled pictures of one window, and it clicked pixel positions read off one, which landed on IO's
+                    # own window instead of the web page in Chrome
+                    try:
+                        pt = (int(float(args["loc"][0])), int(float(args["loc"][1])))
+                    except (TypeError, ValueError, IndexError, KeyError):
+                        pt = None
+                    if pt and not any(abs(pt[0] - x) <= 40 and abs(pt[1] - y) <= 40 for x, y in screen_points + found_points):
+                        blocked = (f"error: nothing was done: ({pt[0]}, {pt[1]}) isn't a screen point any tool reported. The screenshots "
+                                   "you see are scaled pictures of one window, so positions in them aren't screen coordinates. Use "
+                                   "click(target) or type_into(field) with the control's label, list_controls for controls with their "
+                                   "screen points, or find_on_screen(description). For a web page in IO's tab: web_click and web_fill.")
                 if point and not blocked:
                     area = await asyncio.to_thread(content_rect, focus)
                     if area and not (area[0] <= point[0] < area[2] and area[1] <= point[1] < area[3]):
@@ -4150,9 +4248,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result += (f" That's {DEAD_TAPS_NUDGE} taps in a row with no effect: stop tapping and ask_model a strong "
                                        "planner with look=true what this screen needs, or research it.")
                 if in_batch:
-                    if last_error:
-                        batch_stop[in_batch[0]] = f"step {in_batch[1] + 1} failed"
+                    if last_error and not (in_batch[0].startswith("reply:") and name in READ_ONLY):
+                        batch_stop[in_batch[0]] = (f"step {in_batch[1] + 1} failed" if not in_batch[0].startswith("reply:") else
+                                                   f"{name} (call {in_batch[1] + 1} of this reply) failed, and these may depend on it")
                     result += in_batch[2]
+                if not last_error and name not in ("Click", "Type", "hold", "Drag"):
+                    found_now = [tuple(int(v) for v in m.groups() if v) for m in SCREEN_POINT.finditer(result)]
+                    screen_points[:] = (screen_points + [p for p in found_now if len(p) == 2])[-600:]
                 if not loop and not last_error and last_call.get("key") == key and last_call.get("result") == result:
                     # nothing in "(no output)" says the browser opened, so a run opened the same page nine times
                     result += " (The same call gave the same result last step: it has already done this.)"

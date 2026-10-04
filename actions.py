@@ -246,6 +246,7 @@ class Ctx:
     game_cache: dict = field(default_factory=dict)
     allowed: Callable | None = None                 # (name) -> bool: what this task may run (toggles, a loop's window lock)
     page_chars: int = 6000                          # read_page's length: boss raises it to fit a large-context brain
+    written: set = field(default_factory=set)       # files this task created (lowercase paths): its own to overwrite
 
 
 # what models write for an enum value -> the value (each wrong spelling cost the director a whole round)
@@ -3649,10 +3650,10 @@ def _file_text_sync(p: Path) -> str:
         params="""
         path s the file's path
         find s? only the lines about these words
-        max i? most characters (4000)
+        max i? most characters (default: all that fits)
         """, cost=0.1, star=True, top="path,find?", fallback='FileSystem(mode="read", path)',
         limits="no PDFs; up to 5 MB; never opens an editor")
-async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 4000, **_) -> str:
+async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, **_) -> str:
     p = _path(path)
     if _private(p):
         raise Fail("BLOCKED", "that is IO's own data (keys and history), never read for a task", "ask_user")
@@ -3661,7 +3662,9 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 4000, **_) -
     if p.is_dir():
         raise Fail("BAD_ARGS", f"{p} is a folder", f'list_files("{p}")')
     text = await asyncio.to_thread(_file_text_sync, p)
-    budget = builtins_max(200, min(int(max or 4000), 20000))
+    # as much as the brain's context allows (a large-context brain reads a whole source file in one call, not 4K at a time)
+    room = builtins_max(4000, ctx.page_chars or 4000)
+    budget = builtins_max(200, min(int(max or room), builtins_max(20000, room)))
     if find:
         body = _h().find_in_text(text, find, budget=budget)
     else:
@@ -3675,7 +3678,10 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 4000, **_) -
         text s what to write
         mode s? new|append|overwrite
         """, cost=0.1, star=True, top="path,text", bang=True, fallback='FileSystem(mode="write", path, content)',
-        risky=lambda a, c: f"overwrite the file {a.get('path')}" if a.get("mode") == "overwrite" and _path(str(a.get("path", ""))).exists() else "",
+        # a file this task wrote itself is its own work in progress (a test file being fixed asked twice in one run,
+        # and an unattended run would wait on that forever); anything else that exists is the user's and asks first
+        risky=lambda a, c: f"overwrite the file {a.get('path')}" if a.get("mode") == "overwrite" and _path(str(a.get("path", ""))).exists()
+        and str(_path(str(a.get("path", "")))).lower() not in c.written else "",
         limits="only under the user's folders or %TEMP%; new never replaces a file")
 async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> str:
     p = _path(path)
@@ -3700,7 +3706,66 @@ async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> 
         raise Fail("BLOCKED", f"{p} is in use or read-only", "close the app using it, or another path")
     if text not in back:
         raise Fail("NO_CHANGE", f"wrote {p} but reading it back doesn't show the text", f'read_file("{p}")')
+    if mode != "append":  # created here, or a rewrite the user allowed: later rewrites and edits of it don't ask again
+        ctx.written.add(str(p).lower())
     return ok(f"{'appended to' if mode == 'append' else 'wrote'} {p} ({_size(p)})")
+
+
+@action("edit_file", group="FILE", summary="change part of a text file: replace exact old text with new (fix code without rewriting it)",
+        params="""
+        path s the file's path
+        old s the exact text to replace, copied with its spaces
+        new s what goes there instead
+        all b? replace every match (default: old must match once)
+        """, cost=0.1, star=True, top="path,old,new", bang=True, fallback='write_file(path, text, mode="overwrite")',
+        risky=lambda a, c: "" if str(_path(str(a.get("path", "")))).lower() in c.written else f"edit the file {a.get('path')}",
+        limits="text files; old must be in the file exactly; a file this task made or was allowed to change doesn't ask")
+async def edit_file(ctx: Ctx, path: str, old: str, new: str, all: bool = False, **_) -> str:
+    """Claude Code's Edit: whole-file rewrites to fix one line were slow (every character generated again) and each one
+    risked new slips (a stray line, a mangled date) in the parts that were fine."""
+    p = _path(path)
+    writable(ctx, p)
+    if not p.is_file():
+        raise Fail("NOT_FOUND", f"{p} isn't a file", f'find_file("{p.name}")')
+    if not old:
+        raise Fail("BAD_ARGS", "old is empty", 'write_file(path, text, mode="append") to add to the end')
+
+    def edit() -> tuple[int, str]:
+        with open(p, encoding="utf-8", newline="") as f:  # newline="": keep the file's own line endings
+            text = f.read()
+        crlf = "\r\n" in text
+        o, n_ = (old.replace("\r\n", "\n").replace("\n", "\r\n"), new.replace("\r\n", "\n").replace("\n", "\r\n")) if crlf else (old, new)
+        count = text.count(o)
+        if count == 0:
+            return 0, text
+        if count > 1 and not all:
+            return -count, text
+        at = text.index(o)
+        text = text.replace(o, n_) if all else text.replace(o, n_, 1)
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        line = text.count("\n", 0, at) + 1
+        lines = text.splitlines()
+        span = n_.count("\n") + 1
+        lo, hi = builtins_max(0, line - 3), min(len(lines), line + span + 2)
+        return count if all else 1, "\n".join(f"{i + 1:>4}  {lines[i]}" for i in range(lo, hi))
+
+    try:
+        count, shown = await asyncio.to_thread(edit)
+    except UnicodeDecodeError:
+        raise Fail("UNSUPPORTED", f"{p} isn't UTF-8 text", "read_file(path) to see it")
+    except PermissionError:
+        raise Fail("BLOCKED", f"{p} is in use or read-only", "close the app using it")
+    if count == 0:
+        text = await asyncio.to_thread(_file_text_sync, p)
+        first = old.strip().splitlines()[0].strip() if old.strip() else ""
+        near = difflib.get_close_matches(first, [ln.strip() for ln in text.splitlines()], n=1, cutoff=0.5) if first else []
+        raise Fail("NOT_FOUND", "old isn't in the file exactly (spaces and line breaks count)" + (f"; closest line: {near[0][:160]!r}" if near else ""),
+                   f'read_file("{p}", find="{first[:40]}")')
+    if count < 0:
+        raise Fail("AMBIGUOUS", f"old is in the file {-count} times", "include a few surrounding lines in old, or all=true")
+    ctx.written.add(str(p).lower())
+    return ok(f"edited {p}: {count} replacement{'s' if count > 1 else ''}; around it now:\n{shown}")
 
 
 def _tree_size(p: Path) -> tuple[int, int]:
@@ -5756,7 +5821,7 @@ ROUTES = {
     "images": Route("images", ["done"], [], "local", None, "no"),
     "loop": Route("loop", LOOP_MENU, ["GAME", "SEE"], "director", 0, "as_today"),
     "chat": Route("chat", ["done"], [], "local", None, "no"),
-    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "file_op", "open_path", "open_file", "start_app", "PowerShell", "ask_user", "done"],
+    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "edit_file", "file_op", "open_path", "open_file", "start_app", "PowerShell", "ask_user", "done"],
                    ["FILE"], "local", 2, "no"),
     "screen": Route("screen", ["look_at_screen", "list_windows", "read_window", "check_screen", "done"], ["SEE", "READ"], "local", 1, "no"),
     "settings": Route("settings", ["change_setting", "open_settings", "set_control", "find_control", "read_window", "scroll_until", "click", "list_controls", "done"],
