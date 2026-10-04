@@ -5585,8 +5585,59 @@ external("research", group="END", summary="look something up on the web without 
          params="question s what to find out", cost=20.0, tier="web", star=True, top="question")
 external("ask_gemini", group="END", summary="ask a stronger model when stuck after research",
          params="question s what you're stuck on", cost=30.0, tier="llm", modes=frozenset({"loop", "local"}))
+external("ask_model", group="END", summary="ask another AI model a question; pick it by what it's good at (the model list says)",
+         params="""
+         model s which model, by its name in the list
+         question s what you want to know, specifically
+         look b? also show it the window you're working in
+         """, cost=10.0, tier="llm", modes=frozenset({"single", "loop", "local", "director"}), top="model,question")
 external("done", group="END", summary="finish: summary = the answer for the user (in a loop: a progress note)",
          params="summary s the answer, or what blocked it", cost=0.0, star=True, top="summary")
+external("steps", group="END", summary="do several actions in one turn, in order; stops early if one fails or the screen changes a lot",
+         params="""
+         steps a actions in order (tool + args), at most 8
+         """, cost=0.0, star=True, top="steps", modes=frozenset({"single", "loop", "local", "director"}),
+         limits="no done, ask_user or steps inside; each step gets its own result")
+REGISTRY["steps"].params["steps"]["items"] = {
+    "type": "object", "properties": {"tool": {"type": "string"}, "args": {"type": "object"}}, "required": ["tool"]}
+STEPS_MAX = 8
+STEPS_BANNED = {"steps", "done", "ask_user", "tools"}
+
+
+def expand_steps(raw) -> tuple[list[tuple[str, dict]], str]:
+    """steps(...)'s list -> ([(tool, args)], note), or ([], the problem). Each step may be {"tool", "args"},
+    {"name", "arguments"}, or the text form small models write: 'click_on({"description": "the ore"})'."""
+    if isinstance(raw, str):
+        raw = _loose(raw)
+    if not isinstance(raw, list) or not raw:
+        return [], 'steps needs a list like [{"tool": "click_on", "args": {"description": "..."}}]'
+    out = []
+    for s in raw[:STEPS_MAX]:
+        if isinstance(s, str):
+            m = re.match(r"\s*([A-Za-z_]\w*)\s*\((.*)\)\s*$", s, re.S)
+            s = {"tool": m.group(1), "args": _loose(m.group(2)) or {}} if m else {"tool": s.strip()}
+        if not isinstance(s, dict):
+            continue
+        tool = str(s.get("tool") or s.get("name") or s.get("action") or "").strip()
+        args = s.get("args", s.get("arguments", {k: v for k, v in s.items() if k not in ("tool", "name", "action")}))
+        if isinstance(args, str):
+            args = _loose(args) or {}
+        if tool:
+            out.append((tool, args if isinstance(args, dict) else {}))
+    banned = [t for t, _ in out if t in STEPS_BANNED]
+    if banned:
+        return [], f"{', '.join(dict.fromkeys(banned))} can't go inside steps; call it on its own"
+    if not out:
+        return [], 'no usable steps; each needs a tool name, like {"tool": "click_on", "args": {"description": "..."}}'
+    extra = f" (only the first {STEPS_MAX} of {len(raw)} were run)" if len(raw) > STEPS_MAX else ""
+    return out, extra
+
+
+def _loose(text: str):
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return None
 
 
 # ======================================================================================================================
@@ -5634,8 +5685,8 @@ R_APP = re.compile(r"\b(open|launch|start|close|switch to|maximi[sz]e|minimi[sz]
 R_KNOWLEDGE = re.compile(r"^(what|who|when|where|why|how|which|is|are|does|do|can|define|explain)\b", re.I)
 R_PERSONAL = re.compile(r"\b(my|this pc|computer|window|screen|file|folder|" + APP_WORDS + r")\b", re.I)
 
-LOOP_MENU = ["click_on", "hold_on", "look_at_screen", "wait", "game_state", "tap_repeatedly", "hold_until", "swipe", "close_popups",
-             "check_screen", "Scroll", "Shortcut", "type_text", "research", "done"]
+LOOP_MENU = ["steps", "click_on", "hold_on", "look_at_screen", "wait", "game_state", "tap_repeatedly", "hold_until", "swipe", "close_popups",
+             "check_screen", "Scroll", "Shortcut", "type_text", "research", "ask_model", "done"]
 ROUTES = {
     "images": Route("images", ["done"], [], "local", None, "no"),
     "loop": Route("loop", LOOP_MENU, ["GAME", "SEE"], "director", 0, "as_today"),

@@ -34,6 +34,12 @@ ONE_IMAGE = {"meta/llama-3.2-90b-vision-instruct"}  # takes one picture per requ
 BRAIN_LABELS = {"z-ai/glm-5.3-flash": "GLM-5.3 Flash", "deepseek-ai/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
                 "moonshotai/kimi-k3": "Kimi K3", "meta/llama-3.2-90b-vision-instruct": "Llama 3.2 90B Vision",
                 "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "Nemotron 3 Nano Omni"}
+# what each is good at, for ask_model's menu (the brain picks a helper by these, not by a hardcoded rule)
+STRENGTHS = {"moonshotai/kimi-k3": "strongest planner of the fast ones; best for 'what should I do next' and game strategy",
+             "z-ai/glm-5.3-flash": "good all-rounder; reads screenshots well",
+             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "quickest; fine for simple yes/no questions about the screen",
+             "meta/llama-3.2-90b-vision-instruct": "older but quick; describes screenshots plainly",
+             "deepseek-ai/deepseek-v4.1-flash": "deep reasoning on text, but queues for minutes: only when time doesn't matter"}
 NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
 NO_REQUIRED_TOOLS = {"deepseek-ai/deepseek-v4.1-flash"}  # its queue never answered a tool_choice="required" request
 # Ultracode: never more than this many requests to NVIDIA in flight at once, from all of IO (sub-agents, the main brain,

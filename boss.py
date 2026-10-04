@@ -356,6 +356,15 @@ EXTRA_TOOLS = [
         },
     },
 ]
+STEPS_TOOL = {"type": "function", "function": {
+    "name": "steps",
+    "description": ("Do several actions in one turn, in order, e.g. tap three ores then wait: "
+                    '[{"tool": "click_on", "args": {"description": "the silver ore at the top"}}, '
+                    '{"tool": "click_on", "args": {"description": "the copper ore"}}, {"tool": "wait", "args": {"seconds": 2}}]. '
+                    f"At most {actions.STEPS_MAX}. Each step gets its own result; the rest are skipped if one fails or the screen "
+                    "changes a lot (a popup or new menu). Use it whenever you already know the next few actions."),
+    "parameters": actions.tool_schema("steps")["function"]["parameters"]}}
+EXTRA_TOOLS.append(STEPS_TOOL)
 
 # UI-TARS-1.5's single-point grounding prompt; on taskbar icons it lands within a few pixels,
 # where the multi-step agent prompt was off by hundreds
@@ -569,14 +578,15 @@ def hold_mouse(x: int, y: int, seconds: float) -> str:
 
 
 def quick_click(x: int, y: int) -> str:
-    """A click that borrows the pointer for ~40 ms and puts it back where you had it, so working alongside IO is bearable."""
+    """A click that borrows the pointer for ~130 ms and puts it back where you had it, so working alongside IO is bearable.
+    The button stays down for 80 ms: emulators (BlueStacks) poll touch input and drop a 20 ms press."""
     user32 = ctypes.windll.user32
     home = wt.POINT()
     user32.GetCursorPos(ctypes.byref(home))
     user32.SetCursorPos(int(x), int(y))
-    time.sleep(0.02)
+    time.sleep(0.03)
     user32.mouse_event(0x0002, 0, 0, 0, 0)
-    time.sleep(0.02)
+    time.sleep(0.08)
     user32.mouse_event(0x0004, 0, 0, 0, 0)
     time.sleep(0.01)
     user32.SetCursorPos(home.x, home.y)
@@ -1444,6 +1454,31 @@ def loose_json(text: str) -> dict | None:
     return _salvage_actions(escaped) or _salvage_actions(_escape_paths(text[start:]))
 
 
+def split_steps(calls: list) -> tuple[list, dict]:
+    """A steps(...) call becomes its actions, as if the model had made them as parallel tool calls: each gets its own
+    result message (the chat format needs one per call id) and goes through every check a single call does.
+    Returns (calls, batch_of): batch_of maps each new call id to (the steps call's id, its position, a note for its result).
+    A steps call that can't be read stays as it is, and its result says why."""
+    out, batch_of = [], {}
+    for c in calls:
+        if c.function.name != "steps":
+            out.append(c)
+            continue
+        try:
+            args = json.loads(c.function.arguments or "{}")
+        except ValueError:
+            args = loose_json(c.function.arguments or "")
+        got, note = actions.expand_steps(args.get("steps") if isinstance(args, dict) else None)
+        if not got:
+            out.append(c)
+            continue
+        for i, (tool, a) in enumerate(got):
+            cid = f"{c.id}-{i}"
+            out.append(SimpleNamespace(id=cid, function=SimpleNamespace(name=tool, arguments=json.dumps(a, ensure_ascii=False))))
+            batch_of[cid] = (c.id, i, note if i == 0 else "")
+    return out, batch_of
+
+
 def director_plan_of(text: str, code: str = "") -> str:
     """The long-term plan the director keeps in its replies ('' if none)."""
     data = (loose_json(code) if code else None) or loose_json(text) or {}
@@ -2284,7 +2319,11 @@ LOOP_COMPACT_AT = 8000
 # what a director sees and may use on single tasks: the full list would overflow Duck.ai's 4,500-character messages
 DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortcut", "Scroll", "PowerShell", "wait", "look_at_screen",
                   "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
-LOOP_TOOLS = {"click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
+HELPER_SYSTEM = ("An AI agent working on a Windows PC asks you for advice. Its goal: {goal}\nAnswer its question directly in at most "
+                 "150 words: what to do next and why, naming buttons and places as they appear on screen. Don't ask questions back.")
+DEAD_TAPS_NUDGE = 3  # taps in a row with no visible effect before the result suggests asking a stronger model
+TAP_ACTIONS = {"click_on", "hold_on", "Click", "hold", "click", "swipe"}  # checked for an effect in a loop's window
+LOOP_TOOLS = {"steps","click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
 # (those two sets are the rollback lists; with the action layer the loop set is actions.LOOP_MENU plus these window actions:
 # a covered or minimised game window is brought back with focus_window, not with guessed clicks)
 LOOP_WINDOW_ACTIONS = ["focus_window"]
@@ -2296,7 +2335,7 @@ LOOP_LOCK_EXTRA = {"find_on_screen", "find_all", "read_region", "Click", "hold",
 REMEMBER_REQUEST = re.compile(r"\bremember\b|\bnote (that|this|down)\b|\bfrom now on\b|\bnext time\b", re.I)
 INFO_GROUPS = {"READ", "PC", "FILE", "WEB", "DO"}  # native results that answer something: the fallback when a summary says nothing
 GLOW_NEUTRAL = {"PowerShell", "Clipboard", "Process", "FileSystem", "Scrape", "Snapshot", "remember", "wait", "research", "ask_user",
-                "ask_gemini", "tools", "use"}  # tools that work in no window: the focus glow stays where it is
+                "ask_gemini", "ask_model", "steps", "tools", "use"}  # tools that work in no window: the focus glow stays where it is
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25
 LOOP_RESEARCH_EVERY = 20  # steps without research before a loop looks up whatever it's working on now  # the same call this many times in a row is a rut, even in a game
@@ -2304,6 +2343,9 @@ LOOP_NOTE = """LOOP MODE (the user approved it): this goal has no end. Keep work
 user presses Stop. You are never finished, so never stop to ask the user anything: decide for yourself.
 - Things change while you work: look again (look_at_screen / find_on_screen) before acting on old information.
 - Act with click_on and hold_on (they find and act in one step). Never guess coordinates.
+- Do more per turn: when you can already see the next few actions (several ores to tap, a menu and then its button, tap
+  then wait), send them together in one steps call. It stops by itself if a step fails or a popup appears, and each step's
+  result says whether the screen changed.
 - Use wait when something needs time (a timer, an animation, resources building up), with the seconds you think it needs.
 - Stuck, or don't know how something works? Call research with a question (it reads guides without leaving the app).
 - Calling done only records a short progress note (what you did, what changed, what you'll do next); then you carry on.
@@ -2614,6 +2656,55 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                          temperature=0.2, max_tokens=max_tokens, purpose=purpose)
         return re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
 
+    def helper_roster() -> dict[str, tuple]:
+        """The models ask_model can consult: short name -> (client, model id, sees screenshots, one-line card). The card
+        is what the brain chooses by: what each is good at and how long it has been taking, measured this session."""
+        out = {"local": (boss, BOSS_MODEL, eyes.mode == "smart",
+                         "the local Qwen on this PC: free, private, no rate limit" + (", sees screenshots" if eyes.mode == "smart" else ", text only"))}
+        for m in brain_models:
+            secs = nim._health.get(m, {}).get("avg") or (nim.tests().get(m) or {}).get("secs")
+            sees = nim.is_vision(m)
+            out[re.sub(r"[^a-z0-9.]+", "-", nim.label(m).lower()).strip("-")] = (
+                nim_client, m, sees, f"{nim.label(m)}: {nim.STRENGTHS.get(m, 'general model')}; {'sees screenshots' if sees else 'text only'}"
+                + (f"; ~{secs:.0f}s per answer lately" if secs else ""))
+        return out
+
+    def ask_model_tool() -> dict:
+        """ask_model's definition with this task's models and their cards in it."""
+        roster = helper_roster()
+        d = actions.tool_schema("ask_model")
+        d["function"]["description"] = ("Ask another AI model one question and get its answer (it doesn't act, it advises). Pick by what "
+                                        "it's good at: a quick one for a simple check, a strong planner when you're stuck or deciding "
+                                        "strategy. Models:\n" + "\n".join(f"- {k}: {v[3]}" for k, v in roster.items()))
+        d["function"]["parameters"]["properties"]["model"]["enum"] = list(roster)
+        return d
+
+    def ask_helper(name: str, question: str, look: bool, window: str) -> str:
+        roster = helper_roster()
+        if name not in roster:
+            return f"error: no model named {name!r}; pick one of: {', '.join(roster)}"
+        client, model, sees, _card = roster[name]
+        content: list = [{"type": "text", "text": question.strip() or "What should I do next?"}]
+        shot = brain_view(window, bool(loop and eyes.content)) if look and sees and window else ""
+        if shot:
+            content.insert(0, {"type": "image_url", "image_url": {"url": shot}})
+        messages = [{"role": "system", "content": HELPER_SYSTEM.format(goal=task[:600])}, {"role": "user", "content": content}]
+        t0 = time.time()
+        try:
+            if client is boss:
+                r = local_create(boss, BOSS_MODEL, _purpose=f"ask_model ({name})", messages=messages, temperature=0.2, max_tokens=700)
+            else:
+                r = nim.create(client, _purpose=f"ask_model ({name})", model=model, messages=messages, temperature=0.2, max_tokens=700,
+                               timeout=240 if model in nim.SLOW_QUEUE else 90)
+                nim.note(model, time.time() - t0, True)
+        except Exception as e:
+            if client is not boss:
+                nim.note(model, time.time() - t0, False)
+            return f"error: {name} didn't answer ({type(e).__name__}); ask another model"
+        answer = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
+        seen = " (it saw the window)" if shot else (" (it can't see screenshots)" if look and not sees else "")
+        return f"{name} answered in {time.time() - t0:.0f}s{seen}: {answer or '(nothing)'}"
+
     windows_tools = MCP_TOOLS.split(",")
     if not options["allow_powershell"]:
         windows_tools.remove("PowerShell")
@@ -2749,6 +2840,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 return bool(options["browser"])  # a hidden researcher (a browser of its own) starts on first use
             if n == "ask_gemini":
                 return advisor_tool
+            if n == "ask_model":
+                return True  # the local model at least; NVIDIA's with a key
             return n in defs
 
         def task_allows(n: str) -> bool:
@@ -2771,7 +2864,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         def apply_menu(names: list) -> None:
             """The local model's tools (compact registry schemas, plus the plugins) and the SYSTEM that matches them."""
             menu_names[:] = [n for n in dict.fromkeys(names) if executable(n)]
-            tools[:] = actions.openai_tools(menu_names) + [plugin_defs[a] for a in plugin_names]
+            tools[:] = [ask_model_tool() if t["function"]["name"] == "ask_model" else t
+                        for t in actions.openai_tools(menu_names)] + [plugin_defs[a] for a in plugin_names]
             if messages:
                 messages[0]["content"] = layer_system(menu_names, browser_where)
 
@@ -2806,6 +2900,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         last_error, refused_done = "", False
         refused_kinds: dict[str, str] = {}  # kinds of risky action the user said no to in this task -> what was asked
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
+        dead_taps = 0  # taps in a row that changed nothing visible in a loop's window
         said_more = False
         route_failures = vision_misses = 0  # errors and unsure results this task (escalation to the director); NOT_FOUND/UNSUPPORTED
         director_saw = ""  # the director's last thoughts: evidence for the work check, which sees no screenshot
@@ -3546,7 +3641,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     raise RuntimeError("this step needs more memory than the local model has, even after trimming; try a narrower request, "
                                        "or turn off some plugins or skills")
             msg = response.choices[0].message
-            calls = msg.tool_calls or []
+            calls, batch_of = split_steps(msg.tool_calls or [])
             messages.append(
                 {
                     "role": "assistant",
@@ -3587,8 +3682,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 continue
             plain_replies = 0
 
+            batch_stop: dict[str, str] = {}  # a steps() batch's id -> why the rest of it was skipped
             for c in calls:
                 name = c.function.name
+                in_batch = batch_of.get(c.id)  # (batch id, position, note) for an action that came from steps()
+                if in_batch and in_batch[0] in batch_stop:
+                    result = f"skipped: {batch_stop[in_batch[0]]}"
+                    log("tool", step=step, name=name, result=result)
+                    messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                    continue
                 try:
                     args = json.loads(c.function.arguments or "{}")
                 except json.JSONDecodeError:
@@ -3628,8 +3730,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                     continue
                 if loop and name != "done":
-                    # games and dashboards repeat on purpose: only a long run of the exact same call is a rut
-                    repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
+                    # games and dashboards repeat on purpose: only a long run of the exact same call is a rut (a batch's
+                    # repeats count once: tapping one ore three times in a steps() call is the plan, not a rut)
+                    if not (in_batch and in_batch[1]):
+                        repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
                     repeat["key"] = key
                     if repeat["n"] >= LOOP_REPEAT_LIMIT:
                         repeat["n"] = 0
@@ -3649,7 +3753,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     log("tool", step=step, name=name, args=args, result=result)
                     messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                     continue
-                if not loop:
+                if not loop and not (in_batch and in_batch[1]):
                     repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
                     repeat["key"] = key
                 if not loop and name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
@@ -3714,6 +3818,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                         action_lines.append(f"{name} -> refused by user")
                         steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> refused by the user: {reason}")
+                        if in_batch:
+                            batch_stop[in_batch[0]] = f"the user refused step {in_batch[1] + 1}"
                         if director:
                             director_queue.clear()  # its plan assumed this would run
                         continue
@@ -3757,8 +3863,19 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                                    "Get the point from find_on_screen.")
                     elif name in ("Click", "hold") and not any(abs(point[0] - x) <= 40 and abs(point[1] - y) <= 40 for x, y in found_points):
                         blocked = "error: nothing was clicked. Don't guess coordinates: call find_on_screen for what you want, then use its x, y."
+                # a tap in a loop's window is checked against the window before and after: "Clicked" only says the mouse
+                # moved, not that the game took the tap (noise = what the window changes by on its own in 0.15 s)
+                watch = await asyncio.to_thread(content_rect, focus) if loop and focus and name in TAP_ACTIONS and not blocked else None
+                if watch:
+                    sig0 = await actions.sig_of(watch)
+                    await asyncio.sleep(0.15)
+                    before = await actions.sig_of(watch)
+                    noise = actions.sig_diff(sig0, before)
                 if blocked:
                     result = blocked
+                elif name == "steps":
+                    got, problem = actions.expand_steps(args.get("steps"))
+                    result = f"error: {problem}" if not got else "error: call steps directly, not through use()"
                 elif native:
                     result = await actions.call(name, args, ctx)
                 elif layer and name == "click_on" and not loop and (args.get("window") or focus_hint):
@@ -3822,6 +3939,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "ask_model":
+                    result = await asyncio.to_thread(ask_helper, str(args.get("model") or ""), str(args.get("question") or ""),
+                                                     bool(args.get("look")), focus or focus_hint)
                 elif name == "ask_gemini" and loop and gemini:
                     result = await consult(str(args.get("question") or "What should I do next?"))
                 elif name == "research" and (loop or director or layer):
@@ -3936,6 +4056,25 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     result = f"error: there is no tool named {name}"
                 result = result[:tool_cap] or "ok"
                 last_error = result if re.match(r"(error|\d+ validation error)", result, re.I) or "Error calling tool" in result else ""
+                if watch and not last_error:
+                    await asyncio.sleep(0.3)  # the game draws the tap's effect
+                    mean, frac = actions.sig_diff(before, await actions.sig_of(watch))
+                    dead = frac <= max(0.004, 1.5 * noise[1]) and mean <= max(1.0, 1.5 * noise[0])
+                    dead_taps = dead_taps + 1 if dead else 0
+                    if frac > max(0.08, 3 * noise[1]) and mean > max(3.0, 3 * noise[0]):
+                        result += " The screen changed a lot (a popup or a new menu?): look before the next tap."
+                        if in_batch:
+                            batch_stop[in_batch[0]] = f"the screen changed a lot after step {in_batch[1] + 1}; look again before acting"
+                    elif dead:
+                        result += " Nothing visible changed: the tap may not have registered, or that spot does nothing."
+                        if dead_taps >= DEAD_TAPS_NUDGE and "ask_model" in menu_names:
+                            dead_taps = 0
+                            result += (f" That's {DEAD_TAPS_NUDGE} taps in a row with no effect: stop tapping and ask_model a strong "
+                                       "planner with look=true what this screen needs, or research it.")
+                if in_batch:
+                    if last_error:
+                        batch_stop[in_batch[0]] = f"step {in_batch[1] + 1} failed"
+                    result += in_batch[2]
                 if not last_error:
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
