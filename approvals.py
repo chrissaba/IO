@@ -8,7 +8,9 @@ as changes; what it does elsewhere (other folders, the network, other programs) 
 need your OK to run for real, and why applying a sandbox run copies its files over instead of running it again."""
 import hashlib
 import os
+import re
 import shutil
+import sys
 import subprocess
 import time
 import uuid
@@ -48,6 +50,29 @@ def _size(root: Path) -> int:
     return total
 
 
+PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"'|&<>;]*")
+# programs a command may name by full path (an interpreter, a tool): reading them changes nothing in the folder
+PROGRAM_DIRS = ("c:\\windows", "c:\\program files", "c:\\program files (x86)", "c:\\python", os.path.dirname(sys.executable).lower(),
+                os.path.expanduser("~\\.python").lower(), os.path.expanduser("~\\appdata\\local\\programs").lower())
+
+
+def _confine(command: str, src: Path, work: Path) -> tuple[str, list[str]]:
+    """The command with every reference to the folder pointed at its copy, and the paths it still names outside it."""
+    cmd = re.sub(r"%(\w+)%", lambda m: os.environ.get(m.group(1), m.group(0)), command)
+    cmd = re.sub(r"(?i)\$env:(\w+)", lambda m: os.environ.get(m.group(1), m.group(0)), cmd)
+    for form in sorted({str(src), str(src).replace("\\", "/"), str(src.resolve())}, key=len, reverse=True):
+        cmd = re.sub(re.escape(form), lambda _m: str(work), cmd, flags=re.I)
+    outside = []
+    for p in PATH_RE.findall(cmd):
+        low = p.lower().replace("/", "\\")
+        if low.startswith(str(work).lower()) or low.startswith(PROGRAM_DIRS) or (low.endswith(".exe") and os.path.isfile(p)):
+            continue
+        outside.append(p)
+    # out of the copy by climbing (..\) or over the network (\\server\share): the copy can't stand in for those either
+    outside += re.findall(r"\.\.[\\/][^\s\"']*", cmd) + re.findall(r"(?<![\w:])\\\\[^\s\"']+", cmd)
+    return cmd, outside
+
+
 def sandbox_run(command: str, folder: str, timeout: int = 120) -> dict:
     """Runs a command line (cmd.exe) on a copy of folder. Returns what happened: output, exit code, and the files it
     added, changed or deleted in the copy. 'error' is set when the folder couldn't be copied (too big, missing)."""
@@ -58,6 +83,11 @@ def sandbox_run(command: str, folder: str, timeout: int = 120) -> dict:
         return {"error": f"{src} is over {MAX_COPY_BYTES // (1024 * 1024)} MB, too big to copy into a sandbox"}
     sid = uuid.uuid4().hex[:8]
     work = SANDBOXES / sid / src.name
+    command, outside = _confine(command, src, work)
+    if outside:
+        # a path the copy can't stand in for: running it "in the sandbox" would touch the real thing (a del with the
+        # folder's full path deleted the real files in the first test), so it isn't run at all
+        return {"error": f"it names paths outside {src} ({', '.join(outside[:3])}), so it can't be tried on a copy"}
     shutil.copytree(src, work, ignore=shutil.ignore_patterns(*SKIP_DIRS), symlinks=True)
     before = _fingerprints(work)
     env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
