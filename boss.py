@@ -199,6 +199,8 @@ FRONTIER_STYLE = """WORKING STYLE
 - Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
   calls at once, or one steps call (they run in order; a failure stops the rest). Each reply costs a slow round trip.
 - Change code with edit_file (exact old text -> new); rewrite a whole file only when most of it changes.
+- Run programs and test suites with run_command(command, folder): the whole output in order and the real exit code
+  (save output to a file with cmd syntax: > out.txt 2>&1). Use PowerShell only for PowerShell's own cmdlets.
 - Check your work the way the user will use it before calling done: run the tests and read their output, request the
   server's page and its API, look at the result. A command's "Status Code" is the last program's exit code: not 0 means it failed.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).

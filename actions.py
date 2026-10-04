@@ -65,7 +65,7 @@ def _h():
 # ======================================================================================================================
 
 CODES = {"NOT_FOUND", "AMBIGUOUS", "NO_CHANGE", "COVERED", "NOT_FOCUSED", "DISABLED", "TIMEOUT", "ELEVATED",
-         "UNSUPPORTED", "BLOCKED", "REFUSED", "BAD_ARGS", "NEEDS"}
+         "UNSUPPORTED", "BLOCKED", "REFUSED", "BAD_ARGS", "NEEDS", "FAILED"}  # FAILED: a program ran and exited non-zero
 RESULT = re.compile(r"^(ok: |unsure: |error:(" + "|".join(sorted(CODES)) + r"): )", re.S)
 
 
@@ -3919,6 +3919,61 @@ def _app_exe_path(app: str) -> str:
     return ""
 
 
+@action("run_command", group="PC", summary="run a command line (python, git, npm, a test run) in a folder: its whole output and exit code",
+        params="""
+        command s the command line, e.g. python -m unittest -v
+        folder s? where to run it
+        timeout i? seconds it may take (120, at most 600)
+        """, cost=1.0, star=True, top="command,folder?", fallback="PowerShell(command)", timeout=620,
+        risky=lambda a, c: _h().risky_reason("PowerShell", {"command": a.get("command", "")}, c.request),
+        limits="cmd.exe syntax (2>&1, >, &&); for a server or anything that keeps running use start_app")
+async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, **_) -> str:
+    """Programs the way a terminal runs them: stdout and stderr merged in order, the real exit code, no PowerShell
+    wrapping (Windows PowerShell 5.1 turns each stderr line into an error record, so a run that redirected its test
+    output to a file got "python : ... At line:2 char:40" noise in it and spent three test runs trying to get it clean)."""
+    where = _path(folder) if folder else known_folder("home")
+    if not where.is_dir():
+        raise Fail("NOT_FOUND", f"{where} isn't a folder", f'file_op(op="mkdir", src="{where}")')
+    limit = builtins_max(5, min(int(timeout or 120), 600))
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+    def go() -> tuple[int | None, str]:
+        flags = 0x08000000  # CREATE_NO_WINDOW
+        # one string, not a list: Python would escape the command's own quotes with backslashes, which cmd.exe doesn't
+        # read (python -c "print(1)" lost its output); /s strips just the outer pair added here
+        args = f'cmd.exe /d /s /c "{command}"'
+        try:
+            p = subprocess.Popen(args, cwd=str(where), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, creationflags=flags | 0x01000000)  # CREATE_BREAKAWAY_FROM_JOB
+        except OSError:
+            p = subprocess.Popen(args, cwd=str(where), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, creationflags=flags)
+        try:
+            out, _e = p.communicate(timeout=limit)
+            code = p.returncode
+        except subprocess.TimeoutExpired:
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, creationflags=flags)
+            out, _e = p.communicate()
+            code = None
+        try:
+            text = out.decode("utf-8")
+        except UnicodeDecodeError:
+            text = out.decode("mbcs", errors="replace")  # an old tool writing in the ANSI code page
+        return code, text.replace("\r\n", "\n").rstrip()
+
+    code, text = await asyncio.to_thread(go)
+    budget = builtins_max(4000, ctx.page_chars or 4000)
+    if len(text) > budget:  # the end of a run (the summary, the traceback) matters most
+        text = text[:budget // 4] + f"\n[... {len(text) - budget} characters cut ...]\n" + text[-(budget * 3 // 4):]
+    body = text or "(no output)"
+    if code is None:
+        raise Fail("TIMEOUT", f"still running after {limit}s, so it was stopped. Output so far:\n{body}",
+                   "start_app for something that keeps running, or a larger timeout")
+    if code != 0:
+        raise Fail("FAILED", f"exit code {code} in {where}:\n{body}", "read the output above, fix the cause, run it again")
+    return ok(f"exit code 0 in {where}:\n{body}")
+
+
 @action("start_app", group="PC", summary="start something that keeps running after the task (a web server, a script); waits for its port",
         params="""
         command s what to run, e.g. python -m http.server 8123
@@ -5823,7 +5878,7 @@ ROUTES = {
     "images": Route("images", ["done"], [], "local", None, "no"),
     "loop": Route("loop", LOOP_MENU, ["GAME", "SEE"], "director", 0, "as_today"),
     "chat": Route("chat", ["done"], [], "local", None, "no"),
-    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "edit_file", "file_op", "open_path", "open_file", "start_app", "PowerShell", "ask_user", "done"],
+    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "edit_file", "file_op", "open_path", "open_file", "run_command", "start_app", "PowerShell", "ask_user", "done"],
                    ["FILE"], "local", 2, "no"),
     "screen": Route("screen", ["look_at_screen", "list_windows", "read_window", "check_screen", "done"], ["SEE", "READ"], "local", 1, "no"),
     "settings": Route("settings", ["change_setting", "open_settings", "set_control", "find_control", "read_window", "scroll_until", "click", "list_controls", "done"],
