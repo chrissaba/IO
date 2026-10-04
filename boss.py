@@ -1542,7 +1542,7 @@ def split_steps(calls: list) -> tuple[list, dict]:
 # calls that only look (a failed one doesn't stop the other calls in its reply)
 READ_ONLY = {"web_search", "web_answer", "read_page", "read_file", "list_files", "find_file", "look_at_screen", "Snapshot",
              "list_windows", "list_controls", "find_control", "read_window", "check_screen", "find_on_screen", "browser_snapshot",
-             "browser_read", "research", "ask_model", "wait", "pc_info", "app_info", "game_state"}
+             "browser_read", "research", "ask_model", "wait", "pc_info", "app_info", "game_state", "todo", "notes"}
 
 
 def director_plan_of(text: str, code: str = "") -> str:
@@ -2459,7 +2459,7 @@ LOOP_LOCK_EXTRA = {"find_on_screen", "find_all", "read_region", "Click", "hold",
 REMEMBER_REQUEST = re.compile(r"\bremember\b|\bnote (that|this|down)\b|\bfrom now on\b|\bnext time\b", re.I)
 INFO_GROUPS = {"READ", "PC", "FILE", "WEB", "DO"}  # native results that answer something: the fallback when a summary says nothing
 GLOW_NEUTRAL = {"PowerShell", "Clipboard", "Process", "FileSystem", "Scrape", "Snapshot", "remember", "wait", "research", "ask_user",
-                "ask_gemini", "ask_model", "steps", "tools", "use"}  # tools that work in no window: the focus glow stays where it is
+                "ask_gemini", "ask_model", "steps", "todo", "notes", "tools", "use"}  # tools that work in no window: the focus glow stays where it is
 LOOP_KEEP_RECENT = 6
 LOOP_REPEAT_LIMIT = 25
 LOOP_RESEARCH_EVERY = 20  # steps without research before a loop looks up whatever it's working on now  # the same call this many times in a row is a rut, even in a game
