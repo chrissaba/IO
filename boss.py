@@ -196,6 +196,8 @@ LAYER_JOBS = [
 
 
 FRONTIER_STYLE = """WORKING STYLE
+- Something ongoing ("keep an eye on", "every morning", "until it's fixed", "whenever X happens"): make it a standing goal
+  with add_goal(objective, every_minutes) instead of trying to finish it now; IO then checks on it by itself.
 - A task with several parts: start with todo(items) listing them, and call it again (in the same reply as your next action)
   each time a part is done; the user watches that list. Skip it for one-step tasks.
 - Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
@@ -2988,7 +2990,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 return bool(options["browser"])  # a hidden researcher (a browser of its own) starts on first use
             if n == "ask_gemini":
                 return advisor_tool
-            if n in ("ask_model", "notes", "todo"):
+            if n in ("ask_model", "notes", "todo", "add_goal"):
                 return True  # ask_model: the local model at least, NVIDIA's with a key; notes: IO's own playbooks
             return n in defs
 
@@ -3980,6 +3982,19 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     reason = plugin_risky(name, plugin_meta[name], args)
                 else:
                     reason = (actions.risky(name, args, ctx) if layer else "") or risky_reason(name, args, ctx.request if layer else task)
+                if reason and reason in (options.get("preapproved") or []):
+                    reason = ""  # you approved exactly this in Approvals; this task exists to carry it out
+                if reason and options.get("unattended") and callable(options.get("approve_later")):
+                    # nobody is watching (a goal, a schedule, a trigger): the step waits in Approvals instead of stopping
+                    # the run; a risky command runs on a copy of its folder and the brain gets what it did there
+                    result = await options["approve_later"](name, args, reason)
+                    log("tool", step=step, name=name, args=args, result=result[:300])
+                    messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
+                    action_lines.append(f"{name} -> queued for approval")
+                    steps_log.append(f"{name}({json.dumps(args, ensure_ascii=False)[:200]}) -> {result[:600]}")
+                    if in_batch:
+                        batch_stop[in_batch[0]] = f"step {in_batch[1] + 1} waits for the user's approval"
+                    continue
                 if reason:
                     kind = risk_kind(reason)
                     if kind in refused_kinds:  # the user already said no to this kind of thing: don't ask again
@@ -4141,6 +4156,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         log("todo", step=step, items=items)  # the panel shows the latest list as the task's checklist
                         n_done = sum(1 for i in items if str(i.get("status", "")).lower() == "done")
                         result = f"ok: todo list updated ({n_done} of {len(items)} done)"
+                elif name == "add_goal":
+                    if not callable(options.get("add_goal")):
+                        result = "error: goals need the IO app (this run has no goal list)"
+                    elif not str(args.get("objective") or "").strip():
+                        result = "error: add_goal needs the objective"
+                    else:
+                        g = options["add_goal"](str(args["objective"]), int(args.get("every_minutes") or 30), str(args.get("title") or ""))
+                        result = (f"ok: goal '{g['title']}' is set: IO checks on it every {g['every_minutes']} minutes by itself, in its own "
+                                  f"chat 'Goal: {g['title']}' (the first check-in starts now). Tell the user that.")
                 elif name == "notes":
                     result = learned.get(str(args.get("name") or "")) or (
                         f"error: no notes named {args.get('name')!r}; the names are: " + ", ".join(s["name"] for s in learned.load()))

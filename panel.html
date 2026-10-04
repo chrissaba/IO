@@ -471,7 +471,7 @@
     </div>
     <nav class="nav">
       <template x-for="v in views" :key="v.id">
-        <button class="navbtn" :class="view === v.id && 'on'" @click="go(v.id)"><span class="ic" x-html="ic(v.icon)"></span><span x-text="v.label"></span><span class="count" x-show="v.id === 'history' && background.length" x-text="background.length"></span></button>
+        <button class="navbtn" :class="view === v.id && 'on'" @click="go(v.id)"><span class="ic" x-html="ic(v.icon)"></span><span x-text="v.label"></span><span class="count" x-show="navCount(v.id)" x-text="navCount(v.id)"></span></button>
       </template>
     </nav>
 
@@ -777,6 +777,66 @@
         </div>
       </template>
       <div class="empty" x-show="!s.schedules.length">No schedules yet</div>
+    </div>
+
+    <!-- ===== goals ===== -->
+    <div class="page" x-show="view === 'goals'">
+      <div class="pagehead"><h1>Goals</h1><p>Things to keep working toward. I check in on each one by myself, in its own chat, and keep notes on how it's going. You can also just ask in a chat ("keep an eye on…").</p></div>
+      <div class="card">
+        <div class="field"><label>Goal</label><textarea rows="2" x-model="goalDraft.objective" placeholder="e.g. keep my Downloads folder sorted into subfolders by file type"></textarea></div>
+        <div class="grid2">
+          <div class="field"><label>Name</label><input type="text" x-model="goalDraft.title" placeholder="optional"></div>
+          <div class="field"><label>Check in every</label>
+            <div style="display:flex; gap:6px; align-items:center"><input type="number" min="5" x-model.number="goalDraft.every_minutes" style="width:80px"><span class="note">minutes</span></div></div>
+        </div>
+        <button class="btn primary" @click="saveGoal()">Add goal</button>
+      </div>
+      <template x-for="g in (s.goals || [])" :key="g.id">
+        <div class="card item">
+          <label class="switch" :title="g.status === 'done' ? 'Achieved' : g.status === 'active' ? 'Checking in' : 'Paused'">
+            <input type="checkbox" :checked="g.status === 'active'" :disabled="g.status === 'done'" @change="setGoal(g, { status: $event.target.checked ? 'active' : 'paused' })"><span></span></label>
+          <div class="txt">
+            <div class="t"><span x-text="g.title"></span> <span class="badge" x-show="g.status === 'done'">achieved</span></div>
+            <div class="s" x-text="goalLine(g)"></div>
+            <div class="s" x-show="g.progress" x-text="short(g.progress, 220)"></div>
+          </div>
+          <button class="btn sm" @click="openGoalChat(g)">Open chat</button>
+          <button class="btn sm" @click="checkGoal(g)" :disabled="g.status === 'done'">Check now</button>
+          <button class="iconbtn stop" @click="deleteGoal(g)" title="Delete"><span class="ic" x-html="ic('trash-2')"></span></button>
+        </div>
+      </template>
+      <div class="empty" x-show="!(s.goals || []).length">No goals yet</div>
+    </div>
+
+    <!-- ===== approvals ===== -->
+    <div class="page" x-show="view === 'approvals'">
+      <div class="pagehead"><h1>Approvals</h1><p>Steps an unattended run (a goal, schedule or trigger) needed your OK for. It didn't stop to wait: a risky command ran on a copy of its folder, and its changes wait here; anything else waits here without having run.</p></div>
+      <template x-for="a in (s.approvals || [])" :key="a.id">
+        <div class="card" :style="a.status !== 'pending' ? 'opacity:.6' : ''">
+          <div style="display:flex; gap:10px; align-items:flex-start">
+            <div class="txt" style="flex:1">
+              <div class="t"><span x-text="a.reason"></span> <span class="badge" x-text="a.status"></span></div>
+              <div class="s" x-text="(a.source || '') + ' · ' + new Date(a.created * 1000).toLocaleString()"></div>
+              <template x-if="a.sandbox">
+                <div class="s">
+                  <div x-text="'Ran on a copy of ' + a.sandbox.folder + ' (' + (a.sandbox.code === null ? 'timed out' : 'exit code ' + a.sandbox.code) + '). In the copy it ' + (a.sandbox.changes.length ? 'changed ' + a.sandbox.changes.length + ' file(s):' : 'changed no files.')"></div>
+                  <div style="font-family:'Geist Mono',monospace; font-size:11.5px; margin:4px 0" x-text="a.sandbox.changes.slice(0, 15).map(c => c.kind + '  ' + c.path).join('\n')"></div>
+                  <details><summary>Output</summary><pre style="white-space:pre-wrap; font-size:11.5px; max-height:240px; overflow:auto" x-text="a.sandbox.output || '(no output)'"></pre></details>
+                </div>
+              </template>
+              <div class="s" x-show="!a.sandbox" x-text="a.name + ' ' + JSON.stringify(a.args).slice(0, 300)"></div>
+              <div class="s" x-show="a.result" x-text="a.result"></div>
+            </div>
+            <template x-if="a.status === 'pending'">
+              <div style="display:flex; gap:6px">
+                <button class="btn primary sm" @click="decide(a, 'approve')" x-text="a.sandbox ? 'Apply changes' : 'Approve'"></button>
+                <button class="btn sm" @click="decide(a, 'reject')">Reject</button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div class="empty" x-show="!(s.approvals || []).length">Nothing waiting for you</div>
     </div>
 
     <!-- ===== triggers ===== -->
@@ -1110,6 +1170,8 @@ function agent() {
   return {
     views: [
       { id: "customize", label: "Customize", icon: "blocks" },
+      { id: "goals", label: "Goals", icon: "target" },
+      { id: "approvals", label: "Approvals", icon: "shield-check" },
       { id: "schedules", label: "Schedules", icon: "calendar-clock" },
       { id: "triggers", label: "Triggers", icon: "zap" },
       { id: "memory", label: "Memory", icon: "brain" },
@@ -1129,6 +1191,35 @@ function agent() {
     // unread tracking: replies that finish after dividerAt get the "New" line; it stops moving while you're away
     dividerAt: 0, dividerLocked: false, seenPending: false, watchedId: "", lastInput: Date.now(), ready: false,
     sched: { kind: "every", minutes: 60, at: "09:00", text: "", name: "" },
+    // ----- goals & approvals -----
+    goalDraft: { objective: "", title: "", every_minutes: 30 },
+    navCount(id) {
+      if (id === "history") return this.background.length;
+      if (id === "approvals") return (this.s.approvals || []).filter((a) => a.status === "pending").length;
+      if (id === "goals") return (this.s.goals || []).filter((g) => g.status === "active").length;
+      return 0;
+    },
+    async saveGoal() {
+      if (!this.goalDraft.objective.trim()) return;
+      await post("/api/goals", this.goalDraft);
+      this.goalDraft = { objective: "", title: "", every_minutes: 30 };
+      this.refresh();
+    },
+    setGoal(g, change) { post("/api/goals", { id: g.id, ...change }).then(() => this.refresh()); },
+    checkGoal(g) { post(`/api/goals/${g.id}/check`, {}).then(() => this.refresh()); },
+    async deleteGoal(g) {
+      if (await this.askUser({ title: "Delete this goal?", text: "Its chat stays; I just stop checking in.", ok: "Delete", danger: true }))
+        post(`/api/goals/${g.id}/delete`, {}).then(() => this.refresh());
+    },
+    openGoalChat(g) { if (g.chat_id) this.openChat(g.chat_id); },
+    goalLine(g) {
+      const when = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const parts = [`every ${g.every_minutes} min`, plural(g.runs || 0, "check-in")];
+      if (g.status === "active" && g.next_check) parts.push(g.next_check * 1000 <= Date.now() ? "checking in now" : "next at " + when(g.next_check));
+      if (g.status === "paused") parts.push("paused");
+      return parts.join(" · ");
+    },
+    decide(a, decision) { post(`/api/approvals/${a.id}`, { decision }).then(() => this.refresh()); },
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],

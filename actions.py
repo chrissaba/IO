@@ -5799,6 +5799,12 @@ external("todo", group="END", summary="write or update your todo list for a task
 REGISTRY["todo"].params["items"]["items"] = {
     "type": "object", "properties": {"text": {"type": "string"}, "status": {"type": "string", "enum": ["done", "in_progress", "todo"]}},
     "required": ["text", "status"]}
+external("add_goal", group="END", summary="make an ongoing ask a standing goal IO checks on by itself every N minutes, in its own chat",
+         params="""
+         objective s the goal in full: what to watch or keep doing, and when it counts as done
+         every_minutes i? how often to check in (30)
+         title s? a short name
+         """, cost=0.0, top="objective", modes=frozenset({"single", "local", "director"}))
 external("notes", group="END", summary="read the notes you saved from earlier runs of a task, by the name listed with the request",
          params="name s the notes' name", cost=0.0, top="name", modes=frozenset({"single", "loop", "local", "director"}))
 external("ask_model", group="END", summary="ask another AI model a question; pick it by what it's good at (the model list says)",

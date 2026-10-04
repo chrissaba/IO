@@ -33,6 +33,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+import approvals
 import boss
 import learned
 import nim
@@ -60,7 +61,7 @@ MAX_EVENTS_PER_TASK = 1500  # an Ultracode task logs for up to 5 helpers at once
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
-    "confirm_risky": True, "browser": True, "files": True, "watchdog": True, 
+    "confirm_risky": True, "browser": True, "files": True, "watchdog": True, "keep_awake": True,
     "browser_mode": "edge", "model_mode": "fast", "focus_glow": True, "theme": "system",
     # the brain: ask_gemini on = the NVIDIA brain (GLM-5.3 Flash, DeepSeek V4.1 Flash, Kimi K3) runs tasks once a key is
     # saved; off = the local models alone. (The name is from when the remote AI was Gemini; boss.py and the bench read it.)
@@ -74,7 +75,8 @@ DEFAULT_SETTINGS = {
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
-state: dict = {"tasks": [], "schedules": [], "templates": [], "triggers": [], "chats": [], "settings": dict(DEFAULT_SETTINGS)}
+state: dict = {"tasks": [], "schedules": [], "templates": [], "triggers": [], "chats": [], "goals": [], "approvals": [],
+               "settings": dict(DEFAULT_SETTINGS)}
 MAX_CHATS = 100
 CHAT_CONTEXT_TURNS = 10  # earlier messages given to the agent with each new one
 queue: asyncio.Queue = asyncio.Queue()
@@ -433,6 +435,11 @@ async def worker() -> None:
         options["helper_model"] = state["settings"].get("helper_model", "")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         options["learn"] = task.get("learn", True)  # the benchmark sends learn=false: its runs teach IO nothing
+        # nobody watches a goal's, schedule's or trigger's run: its risky steps wait in Approvals instead of stopping it
+        options["unattended"] = bool(re.match(r"(schedule|trigger|webhook|goal): ", str(task.get("source", ""))))
+        options["approve_later"] = approve_later_for(task)
+        options["preapproved"] = list(task.get("preapproved") or [])
+        options["add_goal"] = add_goal  # "keep an eye on X": the brain turns ongoing asks into goals
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -453,6 +460,8 @@ async def worker() -> None:
         except Exception as e:
             task["status"], task["summary"] = "error", error_text(e)
         task["finished"] = time.time()
+        if task.get("goal"):
+            goal_ran(task)
         current.update(task=None, job=None)
         overlay.hide()
         save_state()
@@ -531,6 +540,212 @@ async def fire_webhook(request: Request) -> JSONResponse:
     return JSONResponse({"id": new_task(triggers.fill(t["template"], values), source=f"webhook: {t['name']}")["id"]})
 
 
+# ---------- goals: standing objectives IO checks on by itself ----------
+# A goal is something to keep working toward ("keep my downloads folder sorted", "watch this repo and fix failing
+# tests"), not a one-off task. Each has its own chat, so every check-in sees what the earlier ones did and found; a
+# heartbeat queues the next check-in every few minutes; each run's answer becomes the goal's progress and a note; and the
+# brain ends a goal by saying GOAL COMPLETE.
+
+GOAL_PROMPT = """You are working on a standing goal, one check-in at a time: {objective}
+
+Progress so far: {progress}
+Recent notes:
+{notes}
+
+This is check-in #{n}. Look at where things stand now and do the next useful piece of work toward the goal (if nothing
+needs doing, say so briefly). End with done: what you did or found, and what the next check-in should do. If the goal is
+fully achieved and needs no more check-ins, start your done summary with GOAL COMPLETE."""
+
+
+def goal_chat(goal: dict) -> dict:
+    chat = next((c for c in state["chats"] if c["id"] == goal.get("chat_id")), None)
+    if chat is None:
+        chat = {"id": uuid.uuid4().hex[:8], "title": "Goal: " + goal["title"], "created": time.time(), "seen_at": time.time(),
+                "messages": [], "pinned": True}
+        state["chats"].append(chat)
+        goal["chat_id"] = chat["id"]
+    return chat
+
+
+def check_goal(goal: dict, extra: str = "") -> dict:
+    """Queues one check-in for a goal, in its chat."""
+    notes = "\n".join(f"- {datetime.fromtimestamp(n['t']).strftime('%b %d %H:%M')}: {n['text'][:300]}" for n in goal.get("notes", [])[-8:])
+    text = GOAL_PROMPT.format(objective=goal["objective"], progress=goal.get("progress") or "(first check-in)",
+                              notes=notes or "(none yet)", n=goal.get("runs", 0) + 1) + (f"\n\nWhat prompted this check-in: {extra}" if extra else "")
+    chat = goal_chat(goal)
+    task = new_task(text, source=f"goal: {goal['title']}", chat_id=chat["id"])
+    task["goal"] = goal["id"]
+    chat["messages"].append({"task_id": task["id"], "at": time.time()})
+    chat["updated"] = time.time()
+    goal["next_check"] = time.time() + max(5, int(goal.get("every_minutes") or 30)) * 60
+    save_state()
+    return task
+
+
+def goal_ran(task: dict) -> None:
+    goal = next((g for g in state["goals"] if g["id"] == task["goal"]), None)
+    if goal is None:
+        return
+    summary = boss.clean_summary(task.get("summary") or "") or task["status"]
+    goal["runs"] = goal.get("runs", 0) + 1
+    goal["last_run"] = time.time()
+    goal.setdefault("notes", []).append({"t": time.time(), "text": summary[:1200], "status": task["status"]})
+    goal["notes"] = goal["notes"][-40:]
+    if task["status"] == "done":
+        goal["progress"] = summary[:2000]
+        if re.match(r"\s*GOAL COMPLETE", summary, re.I):
+            goal["status"] = "done"
+    goal["next_check"] = time.time() + max(5, int(goal.get("every_minutes") or 30)) * 60
+
+
+async def goal_loop() -> None:
+    """The heartbeat: each active goal gets a check-in when it's due (never two at once for the same goal)."""
+    await asyncio.sleep(20)
+    while True:
+        now = time.time()
+        for g in state["goals"]:
+            if g.get("status", "active") != "active" or (g.get("next_check") or 0) > now:
+                continue
+            if any(t["status"] in ("queued", "running", "waiting") and t.get("goal") == g["id"] for t in state["tasks"]):
+                continue
+            check_goal(g)
+        await asyncio.sleep(20)
+
+
+def add_goal(objective: str, every_minutes: int = 30, title: str = "") -> dict:
+    goal = {"id": uuid.uuid4().hex[:8], "title": (title or objective)[:60], "objective": objective.strip(),
+            "every_minutes": max(5, int(every_minutes or 30)), "status": "active", "created": time.time(),
+            "next_check": time.time(), "runs": 0, "progress": "", "notes": []}
+    state["goals"].append(goal)
+    goal_chat(goal)
+    save_state()
+    return goal
+
+
+async def save_goal(request: Request) -> JSONResponse:
+    body = await request.json()
+    if body.get("id"):
+        goal = next((g for g in state["goals"] if g["id"] == body["id"]), None)
+        if goal is None:
+            return JSONResponse({"error": "no such goal"}, status_code=404)
+        for k in ("title", "objective", "every_minutes", "status"):
+            if k in body:
+                goal[k] = body[k]
+        if body.get("status") == "active" and not goal.get("next_check"):
+            goal["next_check"] = time.time()
+        save_state()
+        return JSONResponse(goal)
+    if not str(body.get("objective", "")).strip():
+        return JSONResponse({"error": "objective is required"}, status_code=400)
+    return JSONResponse(add_goal(body["objective"], body.get("every_minutes", 30), body.get("title", "")))
+
+
+async def goal_action(request: Request) -> JSONResponse:
+    """check (a check-in now, optionally with what prompted it) or delete."""
+    goal = next((g for g in state["goals"] if g["id"] == request.path_params["id"]), None)
+    if goal is None:
+        return JSONResponse({"error": "no such goal"}, status_code=404)
+    action = request.path_params["action"]
+    if action == "delete":
+        state["goals"] = [g for g in state["goals"] if g["id"] != goal["id"]]
+        save_state()
+        return JSONResponse({"ok": True})
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    return JSONResponse({"task_id": check_goal(goal, str(body.get("event") or body.get("payload") or "")[:2000])["id"]})
+
+
+# ---------- approvals that don't stop the work ----------
+
+def approve_later_for(task: dict):
+    """The callback boss uses for a risky step in an unattended run: the step waits in Approvals (a risky command runs on
+    a sandbox copy of its folder first) and the brain is told so, then carries on."""
+
+    async def approve_later(name: str, args: dict, reason: str) -> str:
+        item = {"id": uuid.uuid4().hex[:6], "created": time.time(), "task_id": task["id"], "goal": task.get("goal", ""),
+                "source": task.get("source", ""), "name": name, "args": args, "reason": reason, "status": "pending"}
+        text = (f"Not done yet: this needs the user's OK ({reason}), and nobody is watching this run. It waits in Approvals as "
+                f"#{item['id']}. Carry on with whatever doesn't depend on it, and mention it in done.")
+        if name == "run_command" and args.get("command"):
+            folder = str(args.get("folder") or os.path.expanduser("~"))
+            run = await asyncio.to_thread(approvals.sandbox_run, str(args["command"]), folder, int(args.get("timeout") or 120))
+            if "error" not in run:
+                item["sandbox"] = run
+                text = (f"Not run for real yet: this needs the user's OK ({reason}). Instead it {approvals.summary(run)}\n"
+                        f"Those changes wait in Approvals as #{item['id']}; carry on with the rest and mention it in done.")
+            else:
+                item["sandbox_error"] = run["error"]
+        state["approvals"].append(item)
+        state["approvals"] = state["approvals"][-200:]
+        save_state()
+        for listener in question_listeners:  # the desktop app's notification: something waits for you
+            try:
+                listener({**task, "question": f"Approval needed: {reason}"})
+            except Exception as e:
+                print("question listener failed:", e)
+        return text
+
+    return approve_later
+
+
+async def decide_approval(request: Request) -> JSONResponse:
+    """approve: a sandbox run's changes are copied into the real folder; any other step runs as a new task, in the same
+    chat, allowed to do exactly that one thing. reject: discarded."""
+    item = next((a for a in state["approvals"] if a["id"] == request.path_params["id"]), None)
+    if item is None or item["status"] != "pending":
+        return JSONResponse({"error": "no pending approval with that id"}, status_code=404)
+    decision = (await request.json()).get("decision")
+    item["decided"] = time.time()
+    if decision == "reject":
+        item["status"] = "rejected"
+        if item.get("sandbox"):
+            await asyncio.to_thread(approvals.discard, item["sandbox"])
+    elif decision == "approve":
+        if item.get("sandbox"):
+            try:
+                item["result"] = await asyncio.to_thread(approvals.apply, item["sandbox"])
+                item["status"] = "applied"
+            except OSError as e:
+                item["status"], item["result"] = "failed", str(e)
+        else:
+            origin = next((t for t in state["tasks"] if t["id"] == item["task_id"]), {})
+            text = (f"Earlier, while working on this, you wanted to {item['reason']} ({item['name']} with "
+                    f"{json.dumps(item['args'], ensure_ascii=False)[:600]}), and the user has now approved it. Do exactly that, "
+                    "check it worked, and say so in done.")
+            t = new_task(text, source="approval", chat_id=origin.get("chat_id", ""))
+            t["preapproved"] = [item["reason"]]
+            chat = next((c for c in state["chats"] if c["id"] == origin.get("chat_id")), None)
+            if chat:
+                chat["messages"].append({"task_id": t["id"], "at": time.time()})
+            item["status"], item["result"] = "approved", f"running as task {t['id']}"
+    else:
+        return JSONResponse({"error": "decision must be approve or reject"}, status_code=400)
+    save_state()
+    return JSONResponse(item)
+
+
+# ---------- keep awake while there is work ----------
+
+async def keep_awake() -> None:
+    """While anything is queued, running or waiting, or a goal's check-in is due within 10 minutes, Windows isn't allowed
+    to sleep from idleness (the PC sleeping paused a long benchmark twice). The screen may still turn off; closing the
+    lid or choosing Sleep still sleeps."""
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    held = False
+    while True:
+        now = time.time()
+        busy = any(t["status"] in ("queued", "running", "waiting") for t in state["tasks"]) or any(
+            g.get("status", "active") == "active" and (g.get("next_check") or 0) - now < 600 for g in state["goals"])
+        want = busy and state["settings"].get("keep_awake", True)
+        if want != held:
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if want else 0))
+            held = want
+        await asyncio.sleep(30)
+
+
 # ---------- watchdog ----------
 
 async def watchdog() -> None:
@@ -566,6 +781,8 @@ async def lifespan(_app):
     asyncio.create_task(scheduler())
     asyncio.create_task(trigger_loop())
     asyncio.create_task(watchdog())
+    asyncio.create_task(goal_loop())
+    asyncio.create_task(keep_awake())
     yield
     overlay.stop()
     save_state()
@@ -595,6 +812,9 @@ async def get_state(_request: Request) -> JSONResponse:
             "tasks": visible_tasks(),
             "chats": sorted(state["chats"], key=lambda c: c.get("updated", c["created"]), reverse=True),
             "schedules": state["schedules"],
+            "goals": state["goals"],
+            # what waits for you, then the latest decided ones (a sandbox run's output and its list of changed files)
+            "approvals": [a for a in state["approvals"] if a["status"] == "pending"] + [a for a in state["approvals"] if a["status"] != "pending"][-20:],
             "templates": state["templates"],
             "triggers": [public_trigger(t) for t in state["triggers"]],
             "settings": state["settings"],
@@ -1141,6 +1361,9 @@ app = Starlette(
         Route("/api/skills/{id}", remove_skill, methods=["DELETE"]),
         Route("/api/tasks/{id}/answer", answer_task, methods=["POST"]),
         Route("/api/open", open_target, methods=["POST"]),
+        Route("/api/goals", save_goal, methods=["POST"]),
+        Route("/api/goals/{id}/{action}", goal_action, methods=["POST"]),
+        Route("/api/approvals/{id}", decide_approval, methods=["POST"]),
         Route("/api/paths", existing_paths, methods=["POST"]),
         Route("/api/memory", get_memory, methods=["GET"]),
         Route("/api/memory", add_memory, methods=["POST"]),
