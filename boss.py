@@ -3335,13 +3335,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         # what fits: the model's context (16K for Qwen 3.6, 32K for the others) less the fixed prompt, the tool list and the
         # reply, at ~2.5 characters a token (UI trees and JSON tokenize worse than prose)
         fixed = len(json.dumps(tools)) + sum(len(str(m.get("content") or "")) for m in messages[:head])
-        ctx_tokens = 200000 if remote_brain else await asyncio.to_thread(model_context)  # NVIDIA's models take 1M; keep rounds quick
+        # the NVIDIA brain uses all the context it has: the smallest window among the models it may send a step to (a race
+        # sends the same conversation to several), less the reply. Everything it has read stays word for word until the
+        # run fills ~3/4 of that; only then are the oldest steps folded into a summary
+        ctx_tokens = (min(nim.context_tokens(m) for m in brain_models) - 4096) if remote_brain else await asyncio.to_thread(model_context)
         room = max(6000, int((ctx_tokens - 1400) * 2.5) - fixed)
         compact_at = min(compact_at, int(room * 0.6))
-        if remote_brain:  # a 1M-token model: keep ~60K tokens of the run word for word (loops too), the newest 30 messages always
-            compact_at, keep_recent = 150000, 30
+        if remote_brain:
+            compact_at, keep_recent = int(room * 0.75), 30
         snaps_kept = KEEP_FULL_SNAPSHOTS if room > 40000 else 1
-        tool_cap = min(MAX_TOOL_TEXT, room // 3)
+        tool_cap = min(room // 6, 60000) if remote_brain else min(MAX_TOOL_TEXT, room // 3)
+        ctx.page_chars = min(tool_cap - 500, 40000) if remote_brain else 6000  # read_page: how much of a page comes back
+        keep_full = 10 ** 6 if remote_brain else 2  # tool results kept whole (the rest are trimmed) until the summary
         progress_notes = 0
         if not loop:
             focus = ""
@@ -3612,7 +3617,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     try:
                         response = await asyncio.to_thread(
                             brain_create,
-                            messages=seen(compact(messages, keep=8, trim=4000, snaps_kept=2, cap=tool_cap) if remote_brain else
+                            messages=seen(compact(messages, keep=keep_full, trim=4000, snaps_kept=2, cap=tool_cap) if remote_brain else
                                           compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap)), tools=tools,
                             temperature=0.3, max_tokens=2048 if remote_brain else 1024,
                         )
@@ -3631,7 +3636,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # compact_at folds the oldest into a summary). Trimming them to their first 1,500 characters
                     # cut what it had read off pages whose menus come first (python.org's release dates), so it
                     # read the same pages again and again
-                    messages=seen(compact(messages, keep=keep_recent if remote_brain else 2, snaps_kept=snaps_kept,
+                    messages=seen(compact(messages, keep=keep_full, snaps_kept=snaps_kept,
                                           cap=tool_cap if remote_brain else 0)), tools=tools, temperature=0.2,
                     max_tokens=2048 if remote_brain else 1024,
                 )

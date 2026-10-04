@@ -40,6 +40,17 @@ STRENGTHS = {"moonshotai/kimi-k3": "strongest planner of the fast ones; best for
              "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "quickest; fine for simple yes/no questions about the screen",
              "meta/llama-3.2-90b-vision-instruct": "older but quick; describes screenshots plainly",
              "deepseek-ai/deepseek-v4.1-flash": "deep reasoning on text, but queues for minutes: only when time doesn't matter"}
+# context windows in tokens, where known; anything else is assumed to take CONTEXT_DEFAULT. A race sends the same
+# conversation to several models, so the brain's budget is the smallest window among them
+CONTEXT = {"meta/llama-3.2-90b-vision-instruct": 131072}
+CONTEXT_DEFAULT = 131072
+
+
+def context_tokens(model: str) -> int:
+    t = tests().get(model) or {}
+    return int(t.get("context") or CONTEXT.get(model) or CONTEXT_DEFAULT)
+
+
 NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
 NO_REQUIRED_TOOLS = {"deepseek-ai/deepseek-v4.1-flash"}  # its queue never answered a tool_choice="required" request
 # Ultracode: never more than this many requests to NVIDIA in flight at once, from all of IO (sub-agents, the main brain,

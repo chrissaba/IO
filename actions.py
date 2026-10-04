@@ -245,6 +245,7 @@ class Ctx:
     last_key: str = ""
     game_cache: dict = field(default_factory=dict)
     allowed: Callable | None = None                 # (name) -> bool: what this task may run (toggles, a loop's window lock)
+    page_chars: int = 6000                          # read_page's length: boss raises it to fit a large-context brain
 
 
 # what models write for an enum value -> the value (each wrong spelling cost the director a whole round)
@@ -3890,7 +3891,7 @@ async def start_app(ctx: Ctx, command: str, folder: str = "", port: int = 0, ope
             raise Fail("UNSUPPORTED", f"it exited (code {proc.returncode}) before port {port} answered", "PowerShell(command) to see its error")
         await asyncio.sleep(0.5)
     else:
-        return unsure(f"started (pid {proc.pid}) but port {port} didn't answer within 20 s", f"check its window, or wait_until then open_path")
+        return unsure(f"started (pid {proc.pid}) but port {port} didn't answer within 20 s", "check its window, or wait_until then open_path")
     url = f"http://localhost:{port}"
     if open:
         await asyncio.to_thread(os.startfile, url)
@@ -4697,7 +4698,8 @@ async def read_page(ctx: Ctx, url: str = "", find: str = "", what: str = "text",
     text = await beval(ctx, MAIN_TEXT_JS if not find else "() => document.body ? document.body.innerText : ''", 20)
     if not text.strip():
         return unsure(f"{head} has no readable text (still loading, or all images)", 'wait_until("screen_still") then read_page()')
-    body = h.find_in_text(text, find) if find else text[:6000] + ("\n[page continues; use find= to look for something]" if len(text) > 6000 else "")
+    n = ctx.page_chars or 6000
+    body = h.find_in_text(text, find) if find else text[:n] + ("\n[page continues; use find= to look for something]" if len(text) > n else "")
     hint = await h.meanings_hint(ctx.browser, text, ctx.request or find)
     return ok(f"{head}\n{hint or body}")
 
