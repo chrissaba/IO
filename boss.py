@@ -21,6 +21,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -2062,6 +2063,28 @@ def ps_wrap(cmd: str) -> str:
     return PS_WRAP.format(cmd=cmd)
 
 
+LAUNCHES = re.compile(r"(?i)\bStart-Process\b|\bsaps\b|(^|[;&|]\s*)start\s+(?!-)")  # commands that start something else
+
+
+def ps_here(wrapped: str, timeout: float = 30) -> str:
+    """A PowerShell command run by IO itself (not inside Windows-MCP's job), answered in Windows-MCP's format so
+    ps_unwrap reads it the same way. What it starts outlives the task."""
+    encoded = base64.b64encode(wrapped.encode("utf-16le")).decode("ascii")
+    args = ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
+    flags = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        try:
+            r = subprocess.run(args, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, cwd=os.path.expanduser("~"),
+                               creationflags=flags | 0x01000000)  # CREATE_BREAKAWAY_FROM_JOB, in case IO itself is in one
+        except OSError:
+            r = subprocess.run(args, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL, cwd=os.path.expanduser("~"),
+                               creationflags=flags)
+    except subprocess.TimeoutExpired:
+        return "Response: Command execution timed out\n\nStatus Code: 1"
+    out = (r.stdout or r.stderr or b"").decode("utf-8", errors="replace")
+    return f"Response: {out}\n\nStatus Code: {r.returncode}"
+
+
 def ps_unwrap(result: str) -> str:
     m = re.search(r"IO64:([A-Za-z0-9+/=]*)", result)
     if not m:
@@ -4062,7 +4085,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         # a plugin that stops answering mustn't hang the task (and the queue behind it)
                         timeout = {"read_timeout_seconds": PLUGIN_CALL_TIMEOUT} if name in aliases else {}
                         call_args = {**args, "command": ps_wrap(args["command"])} if name == "PowerShell" and args.get("command") else args
-                        result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
+                        if name == "PowerShell" and LAUNCHES.search(str(args.get("command") or "")):
+                            # run here, not in Windows-MCP: the MCP client keeps that server in a job it kills, with
+                            # everything started inside, when the task ends (three graded runs' web servers died so)
+                            result = await asyncio.to_thread(ps_here, call_args["command"])
+                        else:
+                            result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
                         if name == "PowerShell":
                             result = ps_unwrap(result)
                             if "Command execution timed out" in result:
