@@ -2346,6 +2346,7 @@ DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortc
                   "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
 HELPER_SYSTEM = ("An AI agent working on a Windows PC asks you for advice. Its goal: {goal}\nAnswer its question directly in at most "
                  "150 words: what to do next and why, naming buttons and places as they appear on screen. Don't ask questions back.")
+RACE_TALK_GRACE = 8.0  # seconds a race waits, after a reply without a tool call, for one that has a tool call
 REFLECT_NOTE = ("Your last steps didn't work. Take stock before acting: in a few lines, write what you already know for certain "
                 "(facts found, folders and files made, what is running or open), then what is left of the task. Don't redo "
                 "anything already done. Then, in this same reply, call the tool for the next thing that's left.")
@@ -2568,13 +2569,14 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
 
         def usable(r, kw: dict) -> bool:
             m = r.choices[0].message
-            tools_offered = bool(kw.get("tools"))
             words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
-            if m.tool_calls:
-                return True
-            # a reply that only says what it will do next isn't a step: in a race it beat the models that did the step
-            # (and was taken as the final answer)
-            return bool(re.search(r"[^\W\d_]{3}", words)) and not (tools_offered and MORE_TO_DO.search(intent_text(words)))
+            return bool(m.tool_calls or re.search(r"[^\W\d_]{3}", words))  # not empty, not token junk ("<|close|>!!!!")
+
+        def acts(r, kw: dict) -> bool:
+            """Whether a reply does something (a tool call), or tools weren't offered. A race takes the first reply that
+            acts; one that only talks waits RACE_TALK_GRACE for an acting one ("Next, I will create the folder..." once
+            won by being first and ended the task; rejecting talk outright instead threw away a good final answer)."""
+            return bool(r.choices[0].message.tool_calls) or not kw.get("tools")
 
         def race(kw: dict, purpose: str, width: int):
             """The same step sent to up to `width` models at once (healthy, quick-queue ones, in order); the first usable
@@ -2602,9 +2604,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     if usable(r, kw):
                         nim.note(model, time.time() - t, True)
                         with lock:
-                            if "r" not in box:
+                            if "r" not in box and acts(r, kw):
                                 box.update(r=r, i=i, secs=round(time.time() - t, 1))
                                 finished.set()
+                            elif "talk" not in box:
+                                box["talk"] = (r, i, round(time.time() - t, 1), time.time())
                     elif not finished.is_set():
                         nim.note(model, time.time() - t, False)
                 except Exception as e:
@@ -2621,12 +2625,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             while not finished.wait(0.5):
                 if stop is not None and stop.is_set():
                     break
+                if "talk" in box and time.time() - box["talk"][3] > RACE_TALK_GRACE:
+                    break  # nobody acted in time: the talking reply is the answer (often the task's last word)
+            finished.set()  # the ones cut off below lost; they didn't fail
             with lock:
                 for c in clients:  # cut off the others: their requests end, their slots free up
                     try:
                         c.close()
                     except Exception:
                         pass
+                if "r" not in box and "talk" in box:
+                    r, i, secs, _at = box["talk"]
+                    box.update(r=r, i=i, secs=secs)
             if "r" not in box:
                 log("warning", text=f"race: none of {len(entrants)} models answered in {time.time() - t0:.0f}s; trying them in turn")
                 return None
