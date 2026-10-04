@@ -67,31 +67,60 @@ def match(text: str) -> dict | None:
     return None
 
 
+def summary(skill: dict) -> str:
+    """A playbook's first line: what kind of task it is for."""
+    first = next((ln.strip() for ln in str(skill.get("playbook") or "").splitlines() if ln.strip()), "")
+    return first[:160]
+
+
 def recall(text: str) -> str:
-    """The text handed to a task: the playbooks that fit it, best first, within RECALL_BUDGET."""
+    """The text handed to a task. A playbook whose name the request names (Idle Obelisk Miner) comes in full; one that only
+    shares some words comes as its name and one line, and the brain reads it with notes(name) if it is the same kind of
+    task. Word overlap can't tell the same task from a coincidence ("three" and "python" pulled a static-page recipe into
+    an expense-tracker build, which then served the folder instead of its own server), the brain can."""
     words = _words(text)
-    picked, used = [], 0
+    full, index, used = [], [], 0
     for s in sorted(load(), key=lambda s: -_score(s, words)):
         name_words = _words(s.get("name", ""))
-        if not (_score(s, words) >= 2 or (name_words and name_words <= words)):
+        named = bool(name_words) and name_words <= words
+        if not (named or _score(s, words) >= 2):
+            continue
+        if not named:
+            index.append(f"- {s['name']}: {summary(s)}")
             continue
         block = f"## {s['name']} (learned from {s.get('runs', 1)} earlier run{'s' if s.get('runs', 1) != 1 else ''})\n{s['playbook']}"
-        if picked and used + len(block) > RECALL_BUDGET:
-            break
-        picked.append(block)
+        if full and used + len(block) > RECALL_BUDGET:
+            index.append(f"- {s['name']}: {summary(s)}")
+            continue
+        full.append(block)
         used += len(block)
-        with _lock:  # count the use
-            skills = load()
-            for k in skills:
-                if k["name"] == s["name"]:
-                    k["uses"] = k.get("uses", 0) + 1
-            _save(skills)
-    if not picked:
+        _count_use(s["name"])
+    out = []
+    if full:
+        out.append("Notes you wrote yourself on earlier runs of this task. Use what fits; the request always comes first: where "
+                   "it asks for something different, do what it asks. Facts in them can be out of date.\n" + "\n\n".join(full))
+    if index:
+        out.append("Notes from earlier runs of other tasks that share some words with this one. Read one with notes(name) only "
+                   "if it is really the same kind of task:\n" + "\n".join(index))
+    return "\n\n".join(out)
+
+
+def get(name: str) -> str:
+    """One playbook in full, for notes(name) ('' if there is none by that name)."""
+    s = next((k for k in load() if k["name"].lower() == name.strip().lower()), None)
+    if s is None:
         return ""
-    # notes, not orders: "follow them" made a run copy a static-page recipe into an app build that needed its own server
-    return ("Notes you wrote yourself on earlier runs of similar-looking tasks. Use what fits; the request always comes first: "
-            "where it asks for something different (another app, server, folder, file or order of steps), do what it asks, "
-            "not what these notes did. Facts in them can be out of date.\n" + "\n\n".join(picked))
+    _count_use(s["name"])
+    return f"## {s['name']} (learned from {s.get('runs', 1)} earlier runs; the request comes first, facts can be out of date)\n{s['playbook']}"
+
+
+def _count_use(name: str) -> None:
+    with _lock:
+        skills = load()
+        for k in skills:
+            if k["name"] == name:
+                k["uses"] = k.get("uses", 0) + 1
+        _save(skills)
 
 
 def learn(ask, request: str, steps: list[str], outcome: str, window: str = "") -> str:

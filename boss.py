@@ -2965,8 +2965,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 return bool(options["browser"])  # a hidden researcher (a browser of its own) starts on first use
             if n == "ask_gemini":
                 return advisor_tool
-            if n == "ask_model":
-                return True  # the local model at least; NVIDIA's with a key
+            if n in ("ask_model", "notes"):
+                return True  # ask_model: the local model at least, NVIDIA's with a key; notes: IO's own playbooks
             return n in defs
 
         def task_allows(n: str) -> bool:
@@ -4106,6 +4106,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "notes":
+                    result = learned.get(str(args.get("name") or "")) or (
+                        f"error: no notes named {args.get('name')!r}; the names are: " + ", ".join(s["name"] for s in learned.load()))
                 elif name == "ask_model":
                     result = await asyncio.to_thread(ask_helper, str(args.get("model") or ""), str(args.get("question") or ""),
                                                      bool(args.get("look")), focus or focus_hint)

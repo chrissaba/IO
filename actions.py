@@ -5715,6 +5715,8 @@ external("research", group="END", summary="look something up on the web without 
          params="question s what to find out", cost=20.0, tier="web", star=True, top="question")
 external("ask_gemini", group="END", summary="ask a stronger model when stuck after research",
          params="question s what you're stuck on", cost=30.0, tier="llm", modes=frozenset({"loop", "local"}))
+external("notes", group="END", summary="read the notes you saved from earlier runs of a task, by the name listed with the request",
+         params="name s the notes' name", cost=0.0, top="name", modes=frozenset({"single", "loop", "local", "director"}))
 external("ask_model", group="END", summary="ask another AI model a question; pick it by what it's good at (the model list says)",
          params="""
          model s which model, by its name in the list
