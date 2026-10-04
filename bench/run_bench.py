@@ -63,10 +63,10 @@ CHECK_TYPES = {
     "answer_nonempty", "answer_regex", "no_answer_regex", "answer_gt", "answer_gt_bool", "answer_time_near",
     "answer_number_near", "answer_mentions_any", "tool_used", "no_tool", "max_tools", "tool_count", "event_present",
     "max_director_rounds", "director_parse_ok", "director_parse_rate", "max_secs", "asked", "status", "window",
-    "no_new_window", "file", "no_process", "tools_chars_max",
+    "no_new_window", "file", "no_process", "tools_chars_max", "verify", "http",
 }
 POLICY_CHECKS = {"max_tools", "max_director_rounds", "tools_chars_max"}
-SETUP_OPS = {"sandbox", "write", "files", "bigfiles", "open", "maximize", "clip"}
+SETUP_OPS = {"sandbox", "write", "files", "bigfiles", "open", "maximize", "clip", "python"}
 # windows that come and go on their own: never a leftover, never "your window disappeared"
 IGNORE_TITLES = re.compile(r"^(Program Manager|Windows Input Experience|NVIDIA GeForce Overlay|Task Switching|Start|Search|"
                            r"Notification Center|Default IME|MSCTFIME UI)$")
@@ -730,6 +730,37 @@ def check(c: dict, run: dict, ctx: dict) -> tuple[bool, str]:
     if t == "no_process":
         new = {pid: n for pid, n in procs(c["pattern"]).items() if pid not in ctx["pre_pids"]}
         return not new, f"new: {sorted(set(new.values()))}" if new else "none started"
+    if t == "verify":
+        # the general checker for work products: a Python script run in the sandbox (BENCH and ANSWER in its environment)
+        # that exits 0 when the work is right; whatever it prints is what was observed
+        import subprocess
+        code = c["code"] if isinstance(c["code"], str) else "\n".join(c["code"])
+        env = {**os.environ, "BENCH": str(SANDBOX), "ANSWER": answer, "PYTHONIOENCODING": "utf-8"}
+        try:
+            r = subprocess.run([sys.executable, "-c", code], cwd=str(SANDBOX), env=env, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=c.get("timeout", 120))
+        except subprocess.TimeoutExpired:
+            return False, "the checker timed out"
+        out = (r.stdout + r.stderr).strip().replace("\n", " | ")
+        return r.returncode == 0, (out[-300:] or f"exit {r.returncode}")
+    if t == "http":
+        url = expand(c["url"])
+        for attempt in range(c.get("tries", 3)):
+            try:
+                body = c.get("body")
+                req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
+                                             method=c.get("method", "GET"), headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    status, text = resp.status, resp.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as e:
+                status, text = e.code, e.read().decode("utf-8", "replace")
+            except Exception as e:
+                status, text = 0, f"{type(e).__name__}: {e}"
+            if status:
+                break
+            time.sleep(2)
+        ok = status == c.get("status", 200) and (not c.get("contains") or bool(re.search(c["contains"], text, re.I)))
+        return ok, f"{status} {text[:150]!r}"
     if t == "tools_chars_max":
         start = next((e for e in events if e.get("event") == "start"), {})
         if "tools_chars" not in start:
@@ -743,6 +774,9 @@ def check(c: dict, run: dict, ctx: dict) -> tuple[bool, str]:
 def load_tasks() -> list[dict]:
     data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
     tasks = data["tasks"]
+    hard = HERE / "tasks_hard.json"  # written by bench/hard_tasks.py: coding, data, files, web and multi-step work
+    if hard.exists():
+        tasks = tasks + json.loads(hard.read_text(encoding="utf-8"))["tasks"]
     problems, ids = [], set()
     for t in tasks:
         tid = t.get("id", "?")
@@ -774,6 +808,8 @@ def load_tasks() -> list[dict]:
             if app not in APPS:
                 problems.append(f"{tid}: unknown app {app} in requires")
         for td in t.get("teardown", []):
+            if isinstance(td, dict) and "port" in td:
+                continue
             app = td if isinstance(td, str) else td.get("app")
             if app not in APPS:
                 problems.append(f"{tid}: unknown teardown app {app}")
@@ -795,7 +831,7 @@ def pick(tasks: list[dict], suite: str, only: str) -> list[dict]:
         if unknown:
             raise SystemExit(f"no task or category named: {', '.join(sorted(unknown))}")
         return chosen
-    return [t for t in tasks if suite in t["suites"]]
+    return [t for t in tasks if suite == "all" or suite in t["suites"]]
 
 
 def skip_reason(task: dict) -> str:
@@ -910,6 +946,13 @@ def do_setup(task: dict, ctx: dict) -> str:
                 time.sleep(0.5)
             elif op == "clip":
                 clip_write(s["text"])
+            elif op == "python":  # fixtures too big or structured for "write": a buggy project, a data file
+                import subprocess
+                code = s["code"] if isinstance(s["code"], str) else "\n".join(s["code"])
+                r = subprocess.run([sys.executable, "-c", code], cwd=str(SANDBOX), capture_output=True, text=True,
+                                   env={**os.environ, "BENCH": str(SANDBOX)}, timeout=120)
+                if r.returncode:
+                    return f"setup python failed: {(r.stdout + r.stderr).strip()[-300:]}"
         except Exception as e:
             return f"setup {op} failed: {type(e).__name__}: {e}"
     return ""
@@ -919,6 +962,9 @@ def do_teardown(task: dict, ctx: dict) -> list[str]:
     """Closes windows created during the task (or by its setup) that the task's teardown names. Returns problems."""
     problems = []
     for td in task.get("teardown", []):
+        if isinstance(td, dict) and "port" in td:
+            problems += stop_port(int(td["port"]), ctx)
+            continue
         spec = {"app": td} if isinstance(td, str) else td
         for w in windows():
             if w["hwnd"] in ctx["pre_hwnds"] or not app_match(w, spec["app"], spec.get("title")):
@@ -929,6 +975,33 @@ def do_teardown(task: dict, ctx: dict) -> list[str]:
                     problems.append(err)
             elif not wm_close(w["hwnd"]):
                 problems.append(f"couldn't close {w['title']!r}")
+    return problems
+
+
+def stop_port(port: int, ctx: dict) -> list[str]:
+    """Stops a server a task started on this port (and the console it runs in), never one that was there before the task."""
+    problems = []
+    for conn in psutil.net_connections("tcp"):
+        if conn.status != psutil.CONN_LISTEN or not conn.laddr or conn.laddr.port != port or not conn.pid:
+            continue
+        try:
+            p = psutil.Process(conn.pid)
+            if p.create_time() < ctx["t0"] - 1:
+                problems.append(f"port {port} belongs to {p.name()} started before the task; left alone")
+                continue
+            chain = [p]
+            parent = p.parent()
+            while parent and parent.create_time() >= ctx["t0"] - 1 and parent.name().lower() in ("powershell.exe", "pwsh.exe", "cmd.exe", "conhost.exe"):
+                chain.append(parent)
+                parent = parent.parent()
+            for q in reversed(chain):
+                for child in q.children(recursive=True):
+                    with contextlib.suppress(psutil.Error):
+                        child.kill()
+                with contextlib.suppress(psutil.Error):
+                    q.kill()
+        except psutil.Error as e:
+            problems.append(f"couldn't stop port {port}: {e}")
     return problems
 
 
@@ -1004,7 +1077,8 @@ def base_options(cell: dict, task: dict, boss) -> dict:
     except (OSError, ValueError, KeyError):
         settings = {}
     defaults = {"allow_powershell": True, "confirm_risky": True, "browser": True, "files": True, "browser_mode": "edge"}
-    options = {k: settings.get(k, v) for k, v in defaults.items()}
+    # every saved setting (brain models, race width, vision model...), so a run measures IO as you use it
+    options = {**defaults, **{k: v for k, v in settings.items() if k not in ("theme", "debug", "notify", "hotkeys", "focus_glow")}}
     options["chrome_token"] = chrome_token()
     options["max_steps"] = settings.get("max_steps", 30)  # what app.worker gives a task (run_direct takes it out again)
     options["model_mode"] = cell["mode"]
@@ -1512,7 +1586,7 @@ async def main_async(args) -> int:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="IO regression benchmark (bench/tasks.json)")
-    p.add_argument("--suite", choices=["smoke", "full"], default="smoke")
+    p.add_argument("--suite", choices=["smoke", "full", "hard", "all"], default="smoke")
     p.add_argument("--only", "--tasks", dest="only", default="", help="comma list of task ids and/or categories (overrides --suite)")
     p.add_argument("--driver", choices=["direct", "http"], default="direct")
     p.add_argument("--mode", default="", help="fast|balanced|smart|current: one model mode (IO is switched to it and back)")

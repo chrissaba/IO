@@ -1,0 +1,1035 @@
+{
+ "version": 1,
+ "tasks": [
+  {
+   "id": "H01",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "In %TEMP%\\io-bench\\H01, write fizzbuzz.py that prints FizzBuzz from 1 to N, where N is its first command-line argument (Fizz for multiples of 3, Buzz for 5, FizzBuzz for both). Run it with 15 and tell me the last line it prints.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H01')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H01'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nr = run(sys.executable, 'fizzbuzz.py', '30')\nwant = ['FizzBuzz' if i % 15 == 0 else 'Fizz' if i % 3 == 0 else 'Buzz' if i % 5 == 0 else str(i) for i in range(1, 31)]\ngot = [l.strip() for l in r.stdout.splitlines() if l.strip()]\nif got != want: fail(f'output for 30: {got[:8]}...')\nif 'fizzbuzz' not in A.lower(): fail('answer lacks the last line FizzBuzz')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H02",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "The tests in %TEMP%\\io-bench\\H02 are failing. Find the bug in calc.py and fix it so all the tests pass. Don't change test_calc.py.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H02')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('calc.py', 'def add(a, b):\\n    return a + b\\n\\ndef average(xs):\\n    return sum(xs) / len(xs) + 1\\n\\ndef clamp(x, lo, hi):\\n    return max(lo, min(x, hi))\\n')\nput('test_calc.py', 'import unittest\\nfrom calc import add, average, clamp\\n\\nclass T(unittest.TestCase):\\n    def test_add(self): self.assertEqual(add(2, 3), 5)\\n    def test_average(self): self.assertEqual(average([2, 4, 6]), 4)\\n    def test_clamp(self): self.assertEqual(clamp(15, 0, 10), 10)\\n\\nif __name__ == \"__main__\": unittest.main()\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H02'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = read('test_calc.py')\nif 'average([2, 4, 6]), 4' not in t: fail('test_calc.py was changed')\nr = run(sys.executable, '-m', 'unittest', '-q', 'test_calc')\nif r.returncode: fail('tests fail: ' + r.stderr[-200:])\nif '+ 1' in read('calc.py'): fail('the bug is still in calc.py')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H03",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Write unittest tests for slugify.py in %TEMP%\\io-bench\\H03 as test_slugify.py: at least 5 test methods covering its behaviour (spaces, punctuation, case, repeated dashes, leading/trailing junk). Run them and make sure they pass.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H03')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('slugify.py', 'import re\\n\\ndef slugify(text):\\n    s = re.sub(r\"[^a-z0-9]+\", \"-\", text.lower())\\n    return s.strip(\"-\")\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H03'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = read('test_slugify.py')\nn = len(re.findall(r'def test_', t))\nif n < 5: fail(f'only {n} test methods')\nr = run(sys.executable, '-m', 'unittest', '-q', 'test_slugify')\nif r.returncode: fail('tests fail: ' + r.stderr[-200:])\norig = read('slugify.py')\nopen(os.path.join(B, 'slugify.py'), 'w').write('def slugify(text):\\n    return text.lower().replace(\" \", \"-\")\\n')\nr2 = run(sys.executable, '-m', 'unittest', '-q', 'test_slugify')\nopen(os.path.join(B, 'slugify.py'), 'w').write(orig)\nif r2.returncode == 0: fail('the tests also pass on a broken slugify: they check too little')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H04",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "In the project in %TEMP%\\io-bench\\H04, rename the function get_usr to get_user everywhere (definition and every use), and keep the tests passing.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H04')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('users.py', 'def get_usr(uid):\\n    return {\"id\": uid, \"name\": f\"user{uid}\"}\\n')\nput('service.py', 'from users import get_usr\\n\\ndef display(uid):\\n    return get_usr(uid)[\"name\"].title()\\n')\nput('api/handlers.py', 'import sys, os\\nsys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))\\nfrom users import get_usr\\n\\ndef handle(uid):\\n    u = get_usr(uid)\\n    return {\"ok\": True, \"user\": u}\\n')\nput('test_all.py', 'import unittest\\nfrom service import display\\nfrom api.handlers import handle\\n\\nclass T(unittest.TestCase):\\n    def test_display(self): self.assertEqual(display(3), \"User3\")\\n    def test_handle(self): self.assertTrue(handle(1)[\"ok\"])\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H04'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nleft = []\nfor d, _, fs in os.walk(B):\n    for f in fs:\n        if f.endswith('.py') and 'get_usr' in open(os.path.join(d, f), encoding='utf-8').read(): left.append(f)\nif left: fail(f'get_usr still in {left}')\nif 'def get_user' not in read('users.py'): fail('no def get_user')\nr = run(sys.executable, '-m', 'unittest', '-q', 'test_all')\nif r.returncode: fail('tests fail: ' + r.stderr[-200:])\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H05",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Write wc.py in %TEMP%\\io-bench\\H05: it prints the number of lines, words and characters of the file named by its first argument. Run it on sample.txt and tell me the three numbers.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H05')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('sample.txt', 'The quick brown fox\\njumps over\\nthe lazy dog.\\n\\nEnd of sample text here\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H05'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\ns = read('sample.txt')\nlines, words, chars = s.count('\\n'), len(s.split()), len(s)\nr = run(sys.executable, 'wc.py', 'sample.txt')\nnums = [int(x) for x in re.findall(r'\\d+', r.stdout)]\nif not {lines, words} <= set(nums): fail(f'wc.py printed {r.stdout.strip()!r}; want {lines} lines, {words} words')\nif not all(re.search(rf'\\b{n}\\b', A) for n in (lines, words)): fail('answer lacks the counts')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H06",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "In %TEMP%\\io-bench\\H06, write a tiny web server with Python's standard library that answers GET /health with the JSON {\"status\": \"ok\"} and GET /time with the current time as JSON. Start it on port 8151 so it keeps running after you finish.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H06')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "http",
+     "url": "http://127.0.0.1:8151/health",
+     "contains": "\"status\"\\s*:\\s*\"ok\""
+    },
+    {
+     "type": "http",
+     "url": "http://127.0.0.1:8151/time",
+     "contains": "\\d{1,2}:\\d{2}"
+    }
+   ],
+   "teardown": [
+    {
+     "port": 8151
+    }
+   ]
+  },
+  {
+   "id": "H07",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "In %TEMP%\\io-bench\\H07, make todo.py, a command-line to-do list that stores its items in todo.json, with the commands add <text>, list and done <number>. Use it to add 'buy milk' and 'call mom', mark the first one done, and show me the list.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H07')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H07'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nd = json.loads(read('todo.json'))\nitems = d if isinstance(d, list) else d.get('items') or d.get('todos') or list(d.values())[0]\ntxt = json.dumps(items).lower()\nif 'buy milk' not in txt or 'call mom' not in txt: fail(f'todo.json: {txt[:150]}')\nmilk = next(i for i in items if 'buy milk' in json.dumps(i).lower())\nif not re.search(r'(done|completed|finished)\"?\\s*:\\s*true', json.dumps(milk).lower()): fail(f'buy milk not done: {milk}')\nr = run(sys.executable, 'todo.py', 'list')\nif 'call mom' not in r.stdout.lower(): fail('list shows ' + r.stdout[:120])\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H08",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "report.py in %TEMP%\\io-bench\\H08 crashes when I run it. Fix it so it prints the total sales per region from data.csv.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H08')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('data.csv', 'region,amount\\nNorth,120.5\\nSouth,80\\nNorth,30\\nEast,55.25\\nSouth,20\\nWest,\\nEast,10\\n')\nput('report.py', 'import csv\\n\\ntotals = {}\\nfor row in csv.DictReader(open(\"data.csv\")):\\n    totals[row[\"Region\"]] = totals.get(row[\"Region\"], 0) + float(row[\"amount\"])\\nfor region, total in sorted(totals.items()):\\n    print(f\"{region}: {total:.2f}\")\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H08'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nr = run(sys.executable, 'report.py')\nif r.returncode: fail('still crashes: ' + r.stderr[-200:])\nwant = {'North': 150.5, 'South': 100.0, 'East': 65.25}\nfor k, v in want.items():\n    if not re.search(rf'{k}\\D*{v:.2f}', r.stdout) and not re.search(rf'{k}\\D*{v:g}\\b', r.stdout): fail(f'{k} wrong in {r.stdout!r}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H09",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "slow.py in %TEMP%\\io-bench\\H09 takes far too long. Make it finish in under 2 seconds while printing exactly the same output.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H09')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('slow.py', 'def is_prime(n):\\n    if n < 2:\\n        return False\\n    for d in range(2, n):\\n        if n % d == 0:\\n            return False\\n    return True\\n\\nprimes = [n for n in range(2, 60000) if is_prime(n)]\\nprint(len(primes), sum(primes), primes[-1])\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H09'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = time.time(); r = run(sys.executable, 'slow.py', timeout=30); secs = time.time() - t\nif r.stdout.strip() != '6057 171848738 59999': fail(f'output {r.stdout.strip()!r}')\nif secs > 2: fail(f'took {secs:.1f}s')\nprint(f'ok in {secs:.2f}s')"
+    }
+   ]
+  },
+  {
+   "id": "H10",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Extract every email address from emails.txt in %TEMP%\\io-bench\\H10 into emails_out.txt: unique, lowercase, sorted, one per line.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H10')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('emails.txt', 'Contact Ana <ana@example.com> or BOB@Example.org.\\nOld: ana@example.com, x@y\\nSupport: help-desk@corp.co.uk; sales+eu@corp.co.uk\\nNot emails: @nope, user@, a@b\\nRepeat: Bob@example.org\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H10'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\ngot = [l.strip() for l in read('emails_out.txt').splitlines() if l.strip()]\nwant = sorted({'ana@example.com', 'bob@example.org', 'help-desk@corp.co.uk', 'sales+eu@corp.co.uk'})\nif got != want: fail(f'got {got}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H11",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "In %TEMP%\\io-bench\\H11, make a git repository, commit the files that are there with the message 'initial', then create a branch called feature and on it commit a new file NOTES.md containing hello. Tell me how many commits feature has.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H11')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('main.py', 'print(\"hi\")\\n'); put('README.md', '# demo\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H11'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nr = run('git', 'log', 'feature', '--format=%s')\nif r.returncode: fail('no feature branch: ' + r.stderr[-150:])\nsubs = r.stdout.split('\\n')\nif 'initial' not in subs or len([s for s in subs if s]) != 2: fail(f'feature log: {subs}')\nf = run('git', 'show', 'feature:NOTES.md')\nif 'hello' not in f.stdout.lower(): fail('NOTES.md not committed on feature')\nif not re.search(r'\\b2\\b|\\btwo\\b', A.lower()): fail('answer lacks 2')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H12",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Turn data.json in %TEMP%\\io-bench\\H12 into report.html: a table with one row per item (name, quantity, price, line total) and a final row with the grand total.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H12')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('data.json', json.dumps([{'name': 'Widget', 'qty': 3, 'price': 4.5}, {'name': 'Gadget', 'qty': 1, 'price': 19.99}, {'name': 'Doohickey', 'qty': 10, 'price': 0.75}]))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H12'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nh = read('report.html').replace(',', '')\nfor s in ('Widget', 'Gadget', 'Doohickey', '13.5', '19.99', '7.5', '40.99'):\n    if s not in h: fail(f'{s} missing from report.html')\nif h.lower().count('<tr') < 5: fail('fewer than 5 table rows')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H13",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Write convert.py in %TEMP%\\io-bench\\H13 with functions c_to_f and f_to_c, plus unittest tests in test_convert.py. Run the tests.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H13')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H13'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nsys.path.insert(0, B)\nimport convert\nfor c, f in ((0, 32), (100, 212), (-40, -40), (37, 98.6)):\n    if abs(convert.c_to_f(c) - f) > 0.01 or abs(convert.f_to_c(f) - c) > 0.01: fail(f'wrong at {c}C/{f}F')\nr = run(sys.executable, '-m', 'unittest', '-q', 'test_convert')\nif r.returncode or 'Ran 0' in r.stderr: fail('tests: ' + r.stderr[-150:])\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H14",
+   "cat": "code",
+   "suites": [
+    "hard"
+   ],
+   "text": "Write fetch_title.py in %TEMP%\\io-bench\\H14 that downloads https://example.com and saves the page's <title> to title.txt. Run it.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H14')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H14'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = read('title.txt')\nif 'example domain' not in t.lower(): fail(f'title.txt: {t[:80]!r}')\nif 'urllib' not in read('fetch_title.py') and 'requests' not in read('fetch_title.py'): fail('the script does not download')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H15",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "Using sales.csv in %TEMP%\\io-bench\\H15 (revenue = units x unit_price), write summary.csv with the total revenue per category, sorted from highest to lowest, and tell me the top category.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H15')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n\nrandom.seed(7)\ncats = ['Hardware', 'Software', 'Services', 'Training']\nrows = [['date', 'product', 'category', 'units', 'unit_price']]\nfor i in range(240):\n    m = 1 + i % 12\n    rows.append([f'2026-{m:02d}-{1 + (i * 7) % 28:02d}', f'P{i % 17}', cats[(i * 5 + m) % 4], random.randint(1, 20), round(random.uniform(5, 300), 2)])\nwith open(os.path.join(B, 'sales.csv'), 'w', newline='') as f:\n    csv.writer(f).writerows(rows)\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H15'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\n\nrows = list(csv.DictReader(open(os.path.join(B, 'sales.csv'))))\nrev = {}\nfor r in rows:\n    rev[r['category']] = rev.get(r['category'], 0) + int(r['units']) * float(r['unit_price'])\ngot = list(csv.reader(open(os.path.join(B, 'summary.csv'))))\nbody = [r for r in got if r and r[0] in rev]\norder = sorted(rev, key=rev.get, reverse=True)\nif [r[0] for r in body] != order: fail(f'order {[r[0] for r in body]} want {order}')\nfor r in body:\n    if abs(float(r[1].replace(',', '')) - rev[r[0]]) > 0.05: fail(f'{r} want {rev[r[0]]:.2f}')\nif order[0].lower() not in A.lower(): fail('answer lacks the top category')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H16",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "From users.json in %TEMP%\\io-bench\\H16, write active_emails.txt with the emails of active users older than 30, one per line, in alphabetical order.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H16')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nrandom.seed(3)\nus = [{'name': f'u{i}', 'email': f'user{i:02d}@mail.test', 'age': random.randint(18, 60), 'active': random.random() > 0.4} for i in range(40)]\nput('users.json', json.dumps({'users': us}, indent=1))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H16'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nus = json.loads(read('users.json'))['users']\nwant = sorted(u['email'] for u in us if u['active'] and u['age'] > 30)\ngot = [l.strip() for l in read('active_emails.txt').splitlines() if l.strip()]\nif got != want: fail(f'got {len(got)} lines, want {len(want)}: {got[:3]}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H17",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "Look at server.log in %TEMP%\\io-bench\\H17: how many requests returned status 500, and which URL path had the most 500s? Answer with both.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H17')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nrandom.seed(11)\npaths = ['/api/login', '/api/orders', '/api/cart', '/home', '/api/search']\nlines = []\nfor i in range(800):\n    p = random.choice(paths); s = random.choice([200] * 12 + [404, 500, 500 if p == '/api/orders' else 200])\n    lines.append(f'10.0.0.{i % 50} - - [04/Oct/2026:10:{i % 60:02d}:00] \"GET {p} HTTP/1.1\" {s} {random.randint(100, 9000)}')\nput('server.log', '\\n'.join(lines) + '\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H17'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nc = {}\nn = 0\nfor l in read('server.log').splitlines():\n    m = re.search(r'\"GET (\\S+) [^\"]*\" (\\d+)', l)\n    if m and m.group(2) == '500': n += 1; c[m.group(1)] = c.get(m.group(1), 0) + 1\ntop = max(c, key=c.get)\nif not re.search(rf'\\b{n}\\b', A): fail(f'answer lacks {n}')\nif top not in A: fail(f'answer lacks {top}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H18",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "Join customers.csv and orders.csv in %TEMP%\\io-bench\\H18 on customer_id into merged.csv with the columns order_id, customer_id, name, city, total \u00e2\u20ac\u201d one row per order.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H18')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('customers.csv', 'customer_id,name,city\\n1,Ana,Lisbon\\n2,Ben,Oslo\\n3,Cai,Lima\\n')\nput('orders.csv', 'order_id,customer_id,total\\n101,2,19.5\\n102,1,7\\n103,2,42\\n104,3,3.25\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H18'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nrows = list(csv.DictReader(open(os.path.join(B, 'merged.csv'), encoding='utf-8-sig')))\nif len(rows) != 4: fail(f'{len(rows)} rows')\nby = {r['order_id']: r for r in rows}\nif by['103']['name'] != 'Ben' or by['104']['city'] != 'Lima' or float(by['101']['total']) != 19.5: fail(f'rows: {rows}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H19",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "contacts.csv in %TEMP%\\io-bench\\H19 has duplicate people (same email, ignoring case). Write contacts_clean.csv keeping only the first row for each email, same columns and order.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H19')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('contacts.csv', 'name,email,phone\\nAna,ana@x.com,1\\nBen,ben@x.com,2\\nAna B,ANA@x.com,3\\nCai,cai@x.com,4\\nBen,Ben@X.com,5\\nDee,dee@x.com,6\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H19'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nrows = list(csv.reader(open(os.path.join(B, 'contacts_clean.csv'), encoding='utf-8-sig')))\nif rows[0] != ['name', 'email', 'phone']: fail(f'header {rows[0]}')\nif [r[2] for r in rows[1:]] != ['1', '2', '4', '6']: fail(f'kept phones {[r[2] for r in rows[1:]]}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H20",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "For the numbers in numbers.txt in %TEMP%\\io-bench\\H20, what are the mean, the median and the population standard deviation, each to 2 decimal places?",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H20')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nrandom.seed(5)\nput('numbers.txt', '\\n'.join(str(random.randint(1, 500)) for _ in range(101)) + '\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H20'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nxs = [float(l) for l in read('numbers.txt').split()]\nfor v in (statistics.mean(xs), statistics.median(xs), statistics.pstdev(xs)):\n    if f'{v:.2f}' not in A.replace(',', ''): fail(f'answer lacks {v:.2f}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H21",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "How many weekdays (Monday to Friday) are there from 2026-01-01 to 2026-03-31, counting both days? Work it out exactly (write code if you like) and tell me the number.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H21')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H21'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nimport datetime\nd0 = datetime.date(2026, 1, 1)\nn = sum(1 for i in range(90) if (d0 + datetime.timedelta(i)).weekday() < 5)\nif not re.search(rf'\\b{n}\\b', A): fail(f'answer lacks {n}')\nprint('ok', n)"
+    }
+   ]
+  },
+  {
+   "id": "H22",
+   "cat": "data",
+   "suites": [
+    "hard"
+   ],
+   "text": "Make scores.md in %TEMP%\\io-bench\\H22: a Markdown table of scores.csv (name and score columns), highest score first.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H22')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('scores.csv', 'name,score\\nZed,71\\nAmy,93\\nBo,88\\nCy,93\\nDi,59\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H22'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nmd = read('scores.md')\nrows = [l for l in md.splitlines() if l.strip().startswith('|')]\nif len(rows) < 7: fail(f'{len(rows)} table lines (want header, separator and 5 rows)')\nnames = [re.findall(r'\\|\\s*([A-Za-z]+)\\s*\\|', r)[0] for r in rows[2:7]]\nif names[2:] != ['Bo', 'Zed', 'Di'] or set(names[:2]) != {'Amy', 'Cy'}: fail(f'order {names}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H23",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Organize the files in %TEMP%\\io-bench\\H23 into subfolders by file extension (txt files into a txt folder, csv into csv, and so on).",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H23')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nfor n in ['a.txt', 'b.txt', 'c.csv', 'd.png', 'e.csv', 'f.md', 'g.txt']: put(n, n)\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H23'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nwant = {'a.txt': 'txt', 'b.txt': 'txt', 'g.txt': 'txt', 'c.csv': 'csv', 'e.csv': 'csv', 'd.png': 'png', 'f.md': 'md'}\nfor f, sub in want.items():\n    if not os.path.isfile(os.path.join(B, sub, f)): fail(f'{f} not in {sub}/')\nleft = [f for f in os.listdir(B) if os.path.isfile(os.path.join(B, f))]\nif left: fail(f'still loose: {left}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H24",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Rename the photos in %TEMP%\\io-bench\\H24 from IMG_001.jpg ... IMG_010.jpg to vacation_01.jpg ... vacation_10.jpg (same order).",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H24')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nfor i in range(1, 11): put(f'IMG_{i:03d}.jpg', f'photo {i}')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H24'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nfor i in range(1, 11):\n    p = os.path.join(B, f'vacation_{i:02d}.jpg')\n    if not os.path.isfile(p) or open(p).read() != f'photo {i}': fail(f'vacation_{i:02d}.jpg wrong or missing')\nif any(f.startswith('IMG_') for f in os.listdir(B)): fail('IMG_ files left')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H25",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Some files in %TEMP%\\io-bench\\H25 are exact duplicates of each other (same content). Delete the extra copies, keeping the alphabetically first name of each set, and tell me which you deleted.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H25')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('alpha.txt', 'same A'); put('beta.txt', 'same A'); put('gamma.txt', 'unique'); put('delta.txt', 'same B'); put('epsilon.txt', 'same B'); put('zeta.txt', 'same A')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H25'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nhave = sorted(os.listdir(B))\nif have != ['alpha.txt', 'delta.txt', 'gamma.txt']: fail(f'left: {have}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H26",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Zip the folder %TEMP%\\io-bench\\H26\\project into %TEMP%\\io-bench\\H26\\project.zip, leaving out the .log files.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H26')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('project/app.py', 'x=1'); put('project/lib/util.py', 'y=2'); put('project/debug.log', 'noise'); put('project/lib/old.log', 'noise'); put('project/README.md', 'r')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H26'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nnames = [n.replace('\\\\', '/') for n in zipfile.ZipFile(os.path.join(B, 'project.zip')).namelist() if not n.endswith('/')]\nif any(n.endswith('.log') for n in names): fail(f'logs inside: {names}')\nif not all(any(n.endswith(x) for n in names) for x in ('app.py', 'lib/util.py', 'README.md')): fail(f'missing files: {names}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H27",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Extract archive.zip in %TEMP%\\io-bench\\H27 and tell me how many lines all the .txt files inside have in total.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H27')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nz = zipfile.ZipFile(os.path.join(B, 'archive.zip'), 'w')\nfor i in range(1, 6): z.writestr(f'docs/part{i}.txt', '\\n'.join(f'line {j}' for j in range(i * 7)) + '\\n')\nz.writestr('docs/skip.csv', 'a\\nb\\n'); z.close()\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H27'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nn = sum(i * 7 for i in range(1, 6))\nif not re.search(rf'\\b{n}\\b', A): fail(f'answer lacks {n}')\nif not any(f.endswith('.txt') for _, _, fs in os.walk(B) for f in fs): fail('nothing extracted')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H28",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Which files under %TEMP%\\io-bench\\H28 mention invoice 4471? Give me their names.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H28')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nrandom.seed(2)\nhits = ['mail/re_payment.txt', 'notes/q3.md', 'archive/2025/old_thread.txt']\nfor i in range(30): put(f'misc/file{i}.txt', f'invoice {4400 + i} paid\\n')\nfor h in hits: put(h, 'About Invoice 4471: overdue.\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H28'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nfor n in ('re_payment', 'q3', 'old_thread'):\n    if n not in A: fail(f'answer lacks {n}')\nif re.search(r'file\\d+\\.txt', A): fail('answer lists files that do not mention it')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H29",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "What are the 3 largest files under %TEMP%\\io-bench\\H29, and how big is each?",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H29')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nsizes = {'logs/huge.log': 900000, 'img/photo.raw': 650000, 'db/data.bin': 420000, 'db/index.bin': 90000, 'a.txt': 10}\nfor n, s in sizes.items():\n    p = os.path.join(B, n); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, 'wb').write(b'x' * s)\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H29'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nfor n in ('huge.log', 'photo.raw', 'data.bin'):\n    if n not in A: fail(f'answer lacks {n}')\nif 'index.bin' in A: fail('index.bin is not in the top 3')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H30",
+   "cat": "files",
+   "suites": [
+    "hard"
+   ],
+   "text": "Copy only the files in %TEMP%\\io-bench\\H30\\src that were changed in the last 7 days into %TEMP%\\io-bench\\H30\\backup.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H30')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('src/new1.txt', 'n1'); put('src/new2.txt', 'n2', 2); put('src/old1.txt', 'o1', 30); put('src/old2.txt', 'o2', 12)\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H30'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nhave = sorted(os.listdir(os.path.join(B, 'backup')))\nif have != ['new1.txt', 'new2.txt']: fail(f'backup has {have}')\nif sorted(os.listdir(os.path.join(B, 'src'))) != ['new1.txt', 'new2.txt', 'old1.txt', 'old2.txt']: fail('src was changed')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H31",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "What is the latest stable Python 3 release on python.org right now? Give me the exact version number.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H31')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H31'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nimport urllib.request\nrel = json.load(urllib.request.urlopen('https://www.python.org/api/v2/downloads/release/?is_published=true&pre_release=false', timeout=30))\nvs = []\nfor r in rel:\n    m = re.fullmatch(r'Python (3\\.\\d+\\.\\d+)', r['name'])\n    if m: vs.append(tuple(int(x) for x in m.group(1).split('.')))\ntop = '.'.join(map(str, max(vs)))\nif top not in A: fail(f'answer lacks {top}')\nprint('ok', top)"
+    }
+   ]
+  },
+  {
+   "id": "H32",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "Read https://example.com and save the text of its main paragraph to %TEMP%\\io-bench\\H32\\example.txt.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H32')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H32'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = read('example.txt')\nif 'domain' not in t.lower() or 'example' not in t.lower(): fail(f'example.txt: {t[:100]!r}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H33",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "What is the default branch of the GitHub repository chrissaba/IO, and when was it last pushed to (date)?",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H33')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "answer_regex",
+     "pattern": "\\bmain\\b"
+    },
+    {
+     "type": "answer_regex",
+     "pattern": "2026"
+    }
+   ]
+  },
+  {
+   "id": "H34",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "Which RFC number defines HTTP Semantics (the 2022 edition that obsoletes RFC 7231)?",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H34')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "answer_regex",
+     "pattern": "\\b9110\\b"
+    }
+   ]
+  },
+  {
+   "id": "H35",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "On Wikipedia, in what year was the Hubble Space Telescope launched, and on which Space Shuttle?",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H35')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "answer_regex",
+     "pattern": "1990"
+    },
+    {
+     "type": "answer_regex",
+     "pattern": "discovery"
+    }
+   ]
+  },
+  {
+   "id": "H36",
+   "cat": "web",
+   "suites": [
+    "hard"
+   ],
+   "text": "Find the ISO 4217 currency codes for the Swiss franc, the South African rand and the Indian rupee, and save them to %TEMP%\\io-bench\\H36\\codes.txt as lines like 'Swiss franc: CHF'.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H36')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H36'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nt = read('codes.txt').upper()\nfor c in ('CHF', 'ZAR', 'INR'):\n    if c not in t: fail(f'{c} missing: {t[:120]!r}')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H37",
+   "cat": "multi",
+   "suites": [
+    "hard"
+   ],
+   "text": "In %TEMP%\\io-bench\\H37, write fib.py that writes the first 20 Fibonacci numbers (starting 0, 1) to fib.txt, comma separated, and run it.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H37')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H37'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\nwant = [0, 1]\nwhile len(want) < 20: want.append(want[-1] + want[-2])\ngot = [int(x) for x in re.findall(r'\\d+', read('fib.txt'))]\nif got != want: fail(f'fib.txt {got[:6]}...')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H38",
+   "cat": "multi",
+   "suites": [
+    "hard"
+   ],
+   "text": "Make a two-page static site in %TEMP%\\io-bench\\H38: index.html and about.html, each linking to the other. Serve it on port 8152 so it keeps running after you finish.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H38')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "http",
+     "url": "http://127.0.0.1:8152/",
+     "contains": "about\\.html"
+    },
+    {
+     "type": "http",
+     "url": "http://127.0.0.1:8152/about.html",
+     "contains": "index\\.html|href=\"/\""
+    }
+   ],
+   "teardown": [
+    {
+     "port": 8152
+    }
+   ]
+  },
+  {
+   "id": "H39",
+   "cat": "multi",
+   "suites": [
+    "hard"
+   ],
+   "text": "Draw a bar chart of monthly.csv in %TEMP%\\io-bench\\H39 as chart.svg (write the SVG yourself, one bar per month, with the month names as labels).",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H39')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\nput('monthly.csv', 'month,sales\\n' + '\\n'.join(f'{m},{100 + i * 13}' for i, m in enumerate(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])) + '\\n')\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H39'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\ns = read('chart.svg')\nif '<svg' not in s: fail('not an SVG')\nbars = len(re.findall(r'<rect', s))\nif bars < 12: fail(f'{bars} rects')\nfor m in ('Jan', 'Jun', 'Dec'):\n    if m not in s: fail(f'label {m} missing')\nprint('ok')"
+    }
+   ]
+  },
+  {
+   "id": "H40",
+   "cat": "multi",
+   "suites": [
+    "hard"
+   ],
+   "text": "Analyze sales.csv in %TEMP%\\io-bench\\H40 (revenue = units x unit_price) and write report.md with the total revenue, the best month by revenue, and a table of revenue per category.",
+   "timeout": 900,
+   "max_steps": 60,
+   "setup": [
+    {
+     "op": "sandbox"
+    },
+    {
+     "op": "python",
+     "code": "import os, shutil, json, random, csv, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H40')\ndef _rm(f, p, e):\n    os.chmod(p, 0o700); f(p)\nshutil.rmtree(B, onexc=_rm) if os.path.exists(B) else None; os.makedirs(B)\ndef put(name, text, ago_days=0):\n    p = os.path.join(B, name); os.makedirs(os.path.dirname(p), exist_ok=True)\n    open(p, 'w', encoding='utf-8', newline='\\n').write(text)\n    if ago_days: t = time.time() - ago_days * 86400; os.utime(p, (t, t))\n\nrandom.seed(7)\ncats = ['Hardware', 'Software', 'Services', 'Training']\nrows = [['date', 'product', 'category', 'units', 'unit_price']]\nfor i in range(240):\n    m = 1 + i % 12\n    rows.append([f'2026-{m:02d}-{1 + (i * 7) % 28:02d}', f'P{i % 17}', cats[(i * 5 + m) % 4], random.randint(1, 20), round(random.uniform(5, 300), 2)])\nwith open(os.path.join(B, 'sales.csv'), 'w', newline='') as f:\n    csv.writer(f).writerows(rows)\n"
+    }
+   ],
+   "checks": [
+    {
+     "type": "verify",
+     "code": "import os, sys, json, subprocess, re, csv, hashlib, statistics, zipfile, time\nB = os.path.join(os.environ['BENCH'], 'H40'); A = os.environ['ANSWER']\ndef run(*a, timeout=60):\n    return subprocess.run(list(a), cwd=B, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')\ndef fail(m):\n    print(m); sys.exit(1)\ndef read(name):\n    p = os.path.join(B, name)\n    return open(p, encoding='utf-8-sig').read() if os.path.exists(p) else fail(f'{name} is missing')\n\nrows = list(csv.DictReader(open(os.path.join(B, 'sales.csv'))))\nrev = {}\nfor r in rows:\n    rev[r['category']] = rev.get(r['category'], 0) + int(r['units']) * float(r['unit_price'])\nmd = read('report.md').replace(',', '')\ntotal = sum(rev.values())\nif f'{total:.2f}' not in md and f'{round(total)}' not in md: fail(f'total {total:.2f} missing')\nbym = {}\nfor r in rows: bym[r['date'][5:7]] = bym.get(r['date'][5:7], 0) + int(r['units']) * float(r['unit_price'])\nbest = max(bym, key=bym.get)\nnames = ['January','February','March','April','May','June','July','August','September','October','November','December']\nif names[int(best) - 1] not in md and names[int(best) - 1][:3] not in md and f'2026-{best}' not in md: fail(f'best month {best} missing')\nfor c in rev:\n    if c not in md: fail(f'category {c} missing')\nprint('ok')"
+    }
+   ]
+  }
+ ]
+}
