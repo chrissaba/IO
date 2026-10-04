@@ -2323,6 +2323,9 @@ DIRECTOR_TOOLS = {"App", "Snapshot", "click_on", "hold_on", "type_text", "Shortc
                   "close_windows", "browser_open", "browser_read", "research", "remember", "done"}
 HELPER_SYSTEM = ("An AI agent working on a Windows PC asks you for advice. Its goal: {goal}\nAnswer its question directly in at most "
                  "150 words: what to do next and why, naming buttons and places as they appear on screen. Don't ask questions back.")
+REFLECT_NOTE = ("Your last steps didn't work. Take stock before acting: in a few lines, write what you already know for certain "
+                "(facts found, folders and files made, what is running or open), then what is left of the task. Don't redo "
+                "anything already done. Then, in this same reply, call the tool for the next thing that's left.")
 DEAD_TAPS_NUDGE = 3  # taps in a row with no visible effect before the result suggests asking a stronger model
 TAP_ACTIONS = {"click_on", "hold_on", "Click", "hold", "click", "swipe"}  # checked for an effect in a loop's window
 LOOP_TOOLS = {"steps","click_on", "hold_on", "look_at_screen", "wait", "Scroll", "Shortcut", "type_text", "App", "research", "done"}
@@ -2908,6 +2911,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         refused_kinds: dict[str, str] = {}  # kinds of risky action the user said no to in this task -> what was asked
         repeat = {"key": "", "n": 0}  # the same call over and over with nothing in between is a loop
         dead_taps = 0  # taps in a row that changed nothing visible in a loop's window
+        last_call: dict = {}  # the previous call and its result: the same again is said out loud, not silently re-run
         said_more = False
         route_failures = vision_misses = 0  # errors and unsure results this task (escalation to the director); NOT_FOUND/UNSUPPORTED
         director_saw = ""  # the director's last thoughts: evidence for the work check, which sees no screenshot
@@ -3549,7 +3553,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     and replans < MAX_REPLANS
             if stuck:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
-                await get_plan("\n".join(s[:700] for s in steps_log[-12:]))
+                if remote_brain:
+                    # the frontier brain re-plans better than the small local planner, which kept starting over from the
+                    # first web search even when shown the results: it takes stock of what it already has instead
+                    messages.append({"role": "user", "content": REFLECT_NOTE})
+                    log("plan", source="brain", plan="(asked the brain to take stock)", secs=0, reason="failing steps")
+                else:
+                    await get_plan("\n".join(s[:700] for s in steps_log[-12:]))
             if sum(len(str(m.get("content") or "")) for m in messages[head:]) > compact_at:
                 cut = len(messages) - keep_recent
                 while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
@@ -3773,8 +3783,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     repeat["n"] = repeat["n"] + 1 if key == repeat["key"] else 1
                     repeat["key"] = key
                 if not loop and name != "done" and repeat["n"] >= (3 if name in LOOP_PRONE else 10):
-                    result = (f"You have made this exact call {repeat['n'] - 1} times in a row. Use what you have, try another way "
-                              "(for a fact on a long web page, browser_read with find), or call done.")
+                    # the hint fits what is being repeated: a web-reading tip after nine identical "open the page in the
+                    # browser" calls sent a run back to re-reading python.org for facts it already had
+                    web = name in LOOP_PRONE and name not in DESKTOP_READS or name in ("read_page", "web_search", "web_answer")
+                    result = (f"You have made this exact call {repeat['n'] - 1} times in a row. " +
+                              ("Use what you have, try another way (for a fact on a long web page, read_page with find), or call done."
+                               if web else "It already ran each time; doing it again changes nothing. Go on to the next part of "
+                               "the task (or check its effect another way), or call done."))
                     log("tool", step=step, name=name, args=args, result=result)
                     messages.append({"role": "tool", "tool_call_id": c.id, "content": result})
                     last_error = result  # a done right after this is challenged once
@@ -4045,10 +4060,6 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
                         if name == "PowerShell":
                             result = ps_unwrap(result)
-                            if re.search(r"(?i)\bStart-Process\b|\bStart-Job\b|\bstart\s+\"?\w", str(args.get("command", ""))) and "start_app" in actions.REGISTRY:
-                                # Windows-MCP runs in a job the MCP client closes when the task ends, taking these with it
-                                result += ("\nNote: anything started from PowerShell stops when this task ends. For a server or app "
-                                           "that must keep running, use start_app instead.")
                         if name == "App" and args.get("mode") == "switch" and "error" in result.lower() and args.get("name"):
                             # Windows-MCP matches app names exactly; fall back to any window title containing the name
                             if title := await asyncio.to_thread(focus_window, args["name"]):
@@ -4095,6 +4106,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     if last_error:
                         batch_stop[in_batch[0]] = f"step {in_batch[1] + 1} failed"
                     result += in_batch[2]
+                if not loop and not last_error and last_call.get("key") == key and last_call.get("result") == result:
+                    # nothing in "(no output)" says the browser opened, so a run opened the same page nine times
+                    result += " (The same call gave the same result last step: it has already done this.)"
+                last_call.update(key=key, result=result.split(" (The same call")[0])
                 if not last_error:
                     refused_done = False
                 error_streak = error_streak + 1 if last_error else 0
