@@ -91,7 +91,9 @@ def intent_text(t: str) -> str:
     return OFFER.sub("", (t or "").replace("\u2019", "'")).lower()
 
 
-MORE_TO_DO = re.compile(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|search|look|check|read|scroll|open)\b")
+# work it says is still ahead: any verb, not a list ("Next, I will create a folder..." ended a task with only its first
+# part done, because "create" wasn't on the old list); offers ("I can also...") are stripped by intent_text first
+MORE_TO_DO = re.compile(r"\b(i will|i'll|let me|i am going to|i'm going to|next,? i)\s+(now\s+|then\s+|also\s+)?[a-z]{3,}")
 # greetings and thanks: answered directly, without a plan
 SMALL_TALK = re.compile(r"^(hi|hello|hey|yo|hiya|howdy|sup|thanks|thank you|thx|ty|cheers|good (morning|afternoon|evening|night)|"
                         r"how are you|how's it going|what's up|who are you|what are you|what can you do|nice|cool|great|ok|okay)\b", re.I)
@@ -2538,10 +2540,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
             return kw2
 
-        def usable(r) -> bool:
+        def usable(r, kw: dict) -> bool:
             m = r.choices[0].message
+            tools_offered = bool(kw.get("tools"))
             words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
-            return bool(m.tool_calls or re.search(r"[^\W\d_]{3}", words))  # not empty, not token junk ("<|close|>!!!!")
+            if m.tool_calls:
+                return True
+            # a reply that only says what it will do next isn't a step: in a race it beat the models that did the step
+            # (and was taken as the final answer)
+            return bool(re.search(r"[^\W\d_]{3}", words)) and not (tools_offered and MORE_TO_DO.search(intent_text(words)))
 
         def race(kw: dict, purpose: str, width: int):
             """The same step sent to up to `width` models at once (healthy, quick-queue ones, in order); the first usable
@@ -2566,7 +2573,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     if finished.is_set():
                         return
                     r = nim.create(client, _purpose=purpose + " (race)", model=model, **prepare(model, kw))
-                    if usable(r):
+                    if usable(r, kw):
                         nim.note(model, time.time() - t, True)
                         with lock:
                             if "r" not in box:
@@ -2626,7 +2633,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 t_req = time.time()
                 try:
                     r = nim.create(client, _purpose=purpose, model=model, **prepare(model, kw))
-                    if not usable(r):  # nothing in it, or token junk: a failure, next model
+                    if not usable(r, kw):  # nothing in it, token junk, or only "I will...": a failure, next model
                         raise RuntimeError("empty answer")
                     nim.note(model, time.time() - t_req, True)
                     if at[0] != i:
@@ -3669,8 +3676,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 # also Gemma's leaked raw form: done{summary:<|"|>...<|"|>}
                 m = re.search(r"done\s*[({]\s*summary\s*[=:]\s*(<\|\"\|>|[\"'])(.*?)\1\s*[)}]", text, re.S)
                 low = intent_text(text)
-                announcing = re.match(r"(i will|i'll|let me|next,|now i|first,|i am going to|i'm going to)\b", low) or \
-                    re.search(r"\b(i will|i'll|let me|i am going to|i'm going to) (now )?(try|check|look|search|read|open|scroll)\b", low)
+                announcing = re.match(r"(i will|i'll|let me|next,|now i|first,|i am going to|i'm going to)\b", low) or MORE_TO_DO.search(low)
                 if loop and text:
                     # a plain reply in a loop is a progress note, not an ending
                     progress_notes += 1
