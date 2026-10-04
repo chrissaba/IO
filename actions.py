@@ -3924,10 +3924,11 @@ def _app_exe_path(app: str) -> str:
         command s the command line, e.g. python -m unittest -v
         folder s? where to run it
         timeout i? seconds it may take (120, at most 600)
+        save_to s? also save the output to this file
         """, cost=1.0, star=True, top="command,folder?", fallback="PowerShell(command)", timeout=620,
         risky=lambda a, c: _h().risky_reason("PowerShell", {"command": a.get("command", "")}, c.request),
         limits="cmd.exe syntax (2>&1, >, &&); for a server or anything that keeps running use start_app")
-async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, **_) -> str:
+async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, save_to: str = "", **_) -> str:
     """Programs the way a terminal runs them: stdout and stderr merged in order, the real exit code, no PowerShell
     wrapping (Windows PowerShell 5.1 turns each stderr line into an error record, so a run that redirected its test
     output to a file got "python : ... At line:2 char:40" noise in it and spent three test runs trying to get it clean)."""
@@ -3962,6 +3963,15 @@ async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 1
         return code, text.replace("\r\n", "\n").rstrip()
 
     code, text = await asyncio.to_thread(go)
+    saved = ""
+    if save_to:
+        # the whole output, with the command's own exit code still reported: "tests > out.txt 2>&1 & type out.txt"
+        # reported type's exit code (0) for a failing test run
+        dest = _path(save_to) if (Path(save_to).is_absolute() or save_to.startswith(("%", "$", "~"))) else where / save_to
+        writable(ctx, dest)
+        await asyncio.to_thread(dest.write_text, text + "\n", encoding="utf-8")
+        ctx.written.add(str(dest).lower())
+        saved = f" (output saved to {dest})"
     budget = builtins_max(4000, ctx.page_chars or 4000)
     if len(text) > budget:  # the end of a run (the summary, the traceback) matters most
         text = text[:budget // 4] + f"\n[... {len(text) - budget} characters cut ...]\n" + text[-(budget * 3 // 4):]
@@ -3970,8 +3980,8 @@ async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 1
         raise Fail("TIMEOUT", f"still running after {limit}s, so it was stopped. Output so far:\n{body}",
                    "start_app for something that keeps running, or a larger timeout")
     if code != 0:
-        raise Fail("FAILED", f"exit code {code} in {where}:\n{body}", "read the output above, fix the cause, run it again")
-    return ok(f"exit code 0 in {where}:\n{body}")
+        raise Fail("FAILED", f"exit code {code} in {where}{saved}:\n{body}", "read the output above, fix the cause, run it again")
+    return ok(f"exit code 0 in {where}{saved}:\n{body}")
 
 
 @action("start_app", group="PC", summary="start something that keeps running after the task (a web server, a script); waits for its port",

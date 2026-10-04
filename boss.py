@@ -199,8 +199,9 @@ FRONTIER_STYLE = """WORKING STYLE
 - Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
   calls at once, or one steps call (they run in order; a failure stops the rest). Each reply costs a slow round trip.
 - Change code with edit_file (exact old text -> new); rewrite a whole file only when most of it changes.
-- Run programs and test suites with run_command(command, folder): the whole output in order and the real exit code
-  (save output to a file with cmd syntax: > out.txt 2>&1). Use PowerShell only for PowerShell's own cmdlets.
+- Run programs and test suites with run_command(command, folder): the whole output in order and the real exit code.
+  To keep the output in a file, add save_to="out.txt" (redirecting and then typing the file reports type's exit code,
+  not the program's). Use PowerShell only for PowerShell's own cmdlets.
 - Check your work the way the user will use it before calling done: run the tests and read their output, request the
   server's page and its API, look at the result. A command's "Status Code" is the last program's exit code: not 0 means it failed.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
@@ -2083,6 +2084,22 @@ def fix_args(name: str, args: dict) -> dict:
         except (TypeError, ValueError):
             pass
     return args
+
+
+def match_schema(args: dict, tool_def: dict | None) -> dict:
+    """Arguments converted to the types the tool's schema asks for: a model typed 12.5 into browser_type's text and got a
+    validation error, costing a round trip, twice in one run."""
+    props = (((tool_def or {}).get("function") or {}).get("parameters") or {}).get("properties") or {}
+    out = dict(args)
+    for k, v in args.items():
+        want = (props.get(k) or {}).get("type")
+        if want == "string" and isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = str(v)
+        elif want in ("number", "integer") and isinstance(v, str) and re.fullmatch(r"\s*-?\d+(\.\d+)?\s*", v):
+            out[k] = int(float(v)) if want == "integer" else float(v)
+        elif want == "boolean" and isinstance(v, str) and v.strip().lower() in ("true", "false"):
+            out[k] = v.strip().lower() == "true"
+    return out
 
 
 def compact(messages: list[dict], keep: int = 2, trim: int = 1500, snaps_kept: int = KEEP_FULL_SNAPSHOTS, cap: int = 0) -> list[dict]:
@@ -4191,6 +4208,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         ctx.tab_open = True
                     if name not in aliases:
                         args = fix_args(name, args)
+                    args = match_schema(args, defs.get(name) or plugin_defs.get(name))
                     if name == "Snapshot":
                         # the boss is text-only; skip the screenshot image
                         args = {**args, "use_vision": False, "use_annotation": False}
