@@ -2480,13 +2480,98 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         helper has its own). `stop` ends a helper's retries once Stop is pressed (its thread outlives the task);
         `timeout` caps each request (helpers don't wait out DeepSeek's long queue)."""
 
+        def prepare(model: str, kw: dict) -> dict:
+            """The request as this model needs it."""
+            kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
+            if not nim.is_vision(model):
+                kw2["messages"] = text_only(kw2["messages"])
+            elif model in nim.ONE_IMAGE:
+                kw2["messages"] = one_image(kw2["messages"])
+            if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
+                kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
+            if model in nim.NO_REQUIRED_TOOLS and kw2.get("tool_choice") == "required":
+                kw2.pop("tool_choice")
+            # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the slow
+            # text-only one, gets longer)
+            kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
+            return kw2
+
+        def usable(r) -> bool:
+            m = r.choices[0].message
+            words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
+            return bool(m.tool_calls or re.search(r"[^\W\d_]{3}", words))  # not empty, not token junk ("<|close|>!!!!")
+
+        def race(kw: dict, purpose: str, width: int):
+            """The same step sent to up to `width` models at once (healthy, quick-queue ones, in order); the first usable
+            answer wins and the others' connections are closed, which frees their slots. None when fewer than two can
+            run or none answers (then the models are tried in turn as usual)."""
+            now = time.time()
+            entrants = [i for i in nim.brain_order(at[0], brain_models)
+                        if brain_models[i] not in nim.SLOW_QUEUE and now - nim._health.get(brain_models[i], {}).get("failed", 0) > 120][:width]
+            if len(entrants) < 2:
+                return None
+            box, lock, finished, clients = {}, threading.Lock(), threading.Event(), []
+            left = [len(entrants)]
+            t0 = time.time()
+
+            def run(i: int) -> None:
+                model = brain_models[i]
+                client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=90)
+                with lock:
+                    clients.append(client)
+                t = time.time()
+                try:
+                    if finished.is_set():
+                        return
+                    r = nim.create(client, _purpose=purpose + " (race)", model=model, **prepare(model, kw))
+                    if usable(r):
+                        nim.note(model, time.time() - t, True)
+                        with lock:
+                            if "r" not in box:
+                                box.update(r=r, i=i, secs=round(time.time() - t, 1))
+                                finished.set()
+                    elif not finished.is_set():
+                        nim.note(model, time.time() - t, False)
+                except Exception as e:
+                    if not finished.is_set():  # a loser cut off by the winner didn't fail
+                        nim.note(model, time.time() - t, False, gone=getattr(e, "status_code", 0) == 404)
+                finally:
+                    with lock:
+                        left[0] -= 1
+                        if left[0] == 0:
+                            finished.set()
+
+            for i in entrants:
+                threading.Thread(target=run, args=(i,), daemon=True).start()
+            while not finished.wait(0.5):
+                if stop is not None and stop.is_set():
+                    break
+            with lock:
+                for c in clients:  # cut off the others: their requests end, their slots free up
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
+            if "r" not in box:
+                log("warning", text=f"race: none of {len(entrants)} models answered in {time.time() - t0:.0f}s; trying them in turn")
+                return None
+            winner = brain_models[box["i"]]
+            log("race", winner=winner, secs=box["secs"], entrants=[brain_models[i] for i in entrants])
+            at[0] = box["i"]
+            return box["r"]
+
         def create(**kw):
-            """One step of the agent loop. With the NVIDIA brain it goes round GLM-5.3 Flash, DeepSeek V4.1 Flash and Kimi
-            K3 (starting from the one that answered last) until one answers, two full rounds; the local model is only the
-            main agent's very last resort. Without it, the local model as before."""
+            """One step of the agent loop. With the NVIDIA brain it goes round the brain's models in order (starting
+            from the one that answered last) until one answers, two full rounds, or races several at once (Settings);
+            the local model is only the main agent's very last resort. Without it, the local model as before."""
             purpose = kw.pop("purpose", role)
             if not remote_brain:
                 return local_create(boss, BOSS_MODEL, _purpose=purpose, **kw)
+            width = min(int(options.get("race_width") or 0), nim.MAX_PARALLEL)
+            if width >= 2 and role == "decide next step":  # the main agent's steps and questions; helpers go in turn
+                r = race(kw, purpose, width)
+                if r is not None:
+                    return r
             n, last = len(brain_models), None
             order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
             for attempt in range(2 * n):
@@ -2498,23 +2583,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 client, model = brain_chain[i]
                 t_req = time.time()
                 try:
-                    kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
-                    if not nim.is_vision(model):
-                        kw2["messages"] = text_only(kw2["messages"])
-                    elif model in nim.ONE_IMAGE:
-                        kw2["messages"] = one_image(kw2["messages"])
-                    if model in nim.NEEDS_REQUIRED_TOOLS and kw2.get("tools"):
-                        kw2["tool_choice"] = "required"  # IO's loop always ends in a tool call (done), so nothing is lost
-                    if model in nim.NO_REQUIRED_TOOLS and kw2.get("tool_choice") == "required":
-                        kw2.pop("tool_choice")
-                    # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the
-                    # slow text-only one, gets longer)
-                    kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
-                    r = nim.create(client, _purpose=purpose, model=model, **kw2)
-                    m = r.choices[0].message
-                    words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
-                    if not (m.tool_calls or re.search(r"[^\W\d_]{3}", words)):
-                        # nothing in it, or token junk ("<|close|>!!!!", seen from Kimi K3): a failure, next model
+                    r = nim.create(client, _purpose=purpose, model=model, **prepare(model, kw))
+                    if not usable(r):  # nothing in it, or token junk: a failure, next model
                         raise RuntimeError("empty answer")
                     nim.note(model, time.time() - t_req, True)
                     if at[0] != i:

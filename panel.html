@@ -884,6 +884,12 @@
           </div>
           <div class="note" style="flex-basis:100%" x-show="modelNote" x-text="modelNote"></div>
         </div>
+        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>How a model is chosen</div>
+            <div x-show="!(s.settings.race_width >= 2)">In turn: the model that answered last goes first; the next one only if it fails.</div>
+            <div x-show="s.settings.race_width >= 2">Race: each step goes to the first models above at once (skipping any that just failed, and DeepSeek's slow queue); the fastest good answer is used and the others are cut off. Uses more of NVIDIA's 40 requests a minute.</div></div>
+          <select :value="String(s.settings.race_width || 0)" @change="s.settings.race_width = +$event.target.value; saveSettings()">
+            <option value="0">In turn</option><option value="2">Race 2 at once</option><option value="3">Race 3 at once</option>
+            <option value="4">Race 4 at once</option><option value="5">Race 5 at once</option></select></div>
         <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Looks at the screen</div>
             <div>The model look_at_screen asks first, for close looks the brain asks for. A quick one (like Nemotron Omni) keeps those short.</div></div>
           <select x-model="s.settings.vision_model" @change="saveSettings()"><option value="">The brain's first model that sees</option>
@@ -1839,7 +1845,7 @@ function checklist(t) {
 
 // Debug timeline: every model call, screenshot and tool of a task, with timings, and a total per model
 function debugTimeline(t, open) {
-  const ev = (t.events || []).filter((e) => ["llm", "view", "tool", "warning", "plan", "agent_done", "compact", "research", "skills"].includes(e.event));
+  const ev = (t.events || []).filter((e) => ["llm", "view", "tool", "warning", "plan", "agent_done", "compact", "research", "skills", "race"].includes(e.event));
   if (!ev.length) return "";
   const t0 = (t.events[0] || {}).t || ev[0].t;
   const per = {};
@@ -1857,11 +1863,14 @@ function debugTimeline(t, open) {
   const row = (e) => {
     const at = "+" + (e.t - t0).toFixed(1) + "s";
     const who = e.agent ? `<span class="agent-chip">${esc(e.agent)}</span>` : "";
+    if (e.event === "llm" && !e.ok && /\(race\)$/.test(e.purpose || "") && /^APIConnectionError/.test(e.error || ""))
+      return `<tr class="note"><td>${at}</td><td>${who}model</td><td>${esc(e.model)}</td><td>${esc(e.purpose)}</td><td>${e.secs}s</td><td>lost the race, cut off</td></tr>`;
     if (e.event === "llm") {
       const size = `${Math.round((e.chars || 0) / 1000)}k chars${e.images ? `, ${e.images} image${e.images === 1 ? "" : "s"}` : ""}${e.in_tokens ? ` (${e.in_tokens} tok in` + (e.out_tokens ? `, ${e.out_tokens} out)` : ")") : ""}`;
       const out = e.ok ? ((e.calls || []).length ? "→ " + e.calls.join(", ") : (e.finish ? "→ " + e.finish : "")) : "✕ " + (e.error || "failed");
       return `<tr class="${e.ok ? "" : "bad"}"><td>${at}</td><td>${who}model</td><td>${esc(e.model)}</td><td>${esc(e.purpose || "")}</td><td>${e.wait ? e.wait + "s wait + " : ""}<b>${e.secs}s</b></td><td>${esc(size)} ${esc(out)}</td></tr>`;
     }
+    if (e.event === "race") return `<tr><td>${at}</td><td>${who}race</td><td colspan="2">won by <b>${esc(e.winner)}</b> of ${(e.entrants || []).length}</td><td><b>${e.secs}s</b></td><td>${esc((e.entrants || []).join(", "))}</td></tr>`;
     if (e.event === "view") return `<tr><td>${at}</td><td>${who}screenshot</td><td>${esc(e.window)}</td><td></td><td>${e.secs}s</td><td>${e.kb} KB</td></tr>`;
     if (e.event === "tool") return `<tr class="${/^error/.test(e.result || "") ? "bad" : ""}"><td>${at}</td><td>${who}tool</td><td>${esc(e.name)}</td><td>${esc(short(JSON.stringify(e.args || {}), 60))}</td><td><b>${e.secs ?? ""}${e.secs != null ? "s" : ""}</b></td><td>${esc(short(e.result, 90))}</td></tr>`;
     return `<tr class="note"><td>${at}</td><td>${who}${esc(e.event)}</td><td colspan="4">${esc(short(e.text || e.summary || e.plan || e.notes || "", 140))}</td></tr>`;

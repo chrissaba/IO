@@ -69,6 +69,7 @@ DEFAULT_SETTINGS = {
     "brain_models": list(nim.BRAIN_MODELS),  # the NVIDIA models the brain goes round, in order
     "vision_model": "",  # the one look_at_screen asks first ("" = the brain's first vision model)
     "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
+    "race_width": 0,  # 2-5: the brain's step goes to this many models at once and the fastest answer wins (0 = in turn)
     "debug": False,  # show each message's debug timeline: every model call, screenshot and tool, with timings
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
@@ -428,6 +429,7 @@ async def worker() -> None:
         options["ultracode"] = bool(task["ultracode"] if "ultracode" in task else state["settings"].get("ultracode"))
         options["brain_models"] = list(state["settings"].get("brain_models") or nim.BRAIN_MODELS)
         options["vision_model"] = state["settings"].get("vision_model", "")
+        options["race_width"] = int(state["settings"].get("race_width") or 0)
         options["helper_model"] = state["settings"].get("helper_model", "")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
         own = task.get("images") or []
@@ -802,6 +804,12 @@ async def save_settings(request: Request) -> JSONResponse:
     if isinstance(body.get("brain_models"), list):
         picked = [str(m).strip() for m in body["brain_models"] if str(m).strip()][:12]
         s["brain_models"] = list(dict.fromkeys(picked)) or list(nim.BRAIN_MODELS)
+    if "race_width" in body:
+        try:
+            w = int(body["race_width"] or 0)
+        except (TypeError, ValueError):
+            w = 0
+        s["race_width"] = 0 if w < 2 else min(w, nim.MAX_PARALLEL)
     for key in ("vision_model", "helper_model"):
         if key in body:
             s[key] = str(body[key] or "").strip()[:120]
