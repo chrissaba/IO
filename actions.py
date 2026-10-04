@@ -174,6 +174,10 @@ def action(name: str, *, level: int = 2, group: str, summary: str, params: str =
            **meta):
     """Registers an async fn(ctx, **args) -> str as a native action."""
     def deco(fn):
+        # a helper written between @action and its function would take the action's place (run_command once ran a
+        # string helper and failed every call): the names have to agree
+        if fn.__name__.rstrip("_") != name:
+            raise RuntimeError(f"@action({name!r}) decorates {fn.__name__}()")
         props, req = _params(params)
         REGISTRY[name] = Action(name, level, group, summary, props, req, fn, cost, tier, **meta)
         return fn
@@ -3919,6 +3923,13 @@ def _app_exe_path(app: str) -> str:
     return ""
 
 
+def _shell_part(command: str) -> str:
+    """The command line as the shell sees it, without quoted text or heredoc bodies: the risky-command words (del, rm,
+    format...) are about shell commands, and Python code passed in quotes (".format(") was asked about as if it deleted."""
+    s = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?^\s*\1\s*$", " ", str(command or ""), flags=re.S | re.M)
+    return re.sub(r"\"(?:[^\"\\]|\\.)*\"|'[^'\n]*'", " ", s)
+
+
 @action("run_command", group="PC", summary="run a command line (python, git, npm, a test run) in a folder: its whole output and exit code",
         params="""
         command s the command line, e.g. python -m unittest -v
@@ -3929,13 +3940,6 @@ def _app_exe_path(app: str) -> str:
         risky=lambda a, c: (f"run in {a.get('folder') or known_folder('home')}: {a.get('command', '')}"
                             if _h().risky_reason("PowerShell", {"command": _shell_part(a.get("command", ""))}, c.request) else ""),
         limits="cmd.exe syntax (2>&1, >, &&), not bash (no << heredocs); for a server or anything that keeps running use start_app")
-def _shell_part(command: str) -> str:
-    """The command line as the shell sees it, without quoted text or heredoc bodies: the risky-command words (del, rm,
-    format...) are about shell commands, and Python code passed in quotes (".format(") was asked about as if it deleted."""
-    s = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?^\s*\1\s*$", " ", str(command or ""), flags=re.S | re.M)
-    return re.sub(r"\"(?:[^\"\\]|\\.)*\"|'[^'\n]*'", " ", s)
-
-
 async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, save_to: str = "", **_) -> str:
     """Programs the way a terminal runs them: stdout and stderr merged in order, the real exit code, no PowerShell
     wrapping (Windows PowerShell 5.1 turns each stderr line into an error record, so a run that redirected its test
