@@ -229,8 +229,29 @@
   .ck .mark svg.lucide { width: 10px; height: 10px; stroke-width: 3.2; }
   .ck.done .mark { background: var(--text); border-color: var(--text); }
   .ck.fail .mark { background: var(--bad); border-color: var(--bad); color: #fff; }
-  .ck.now .mark { border-color: transparent; color: var(--accent-text); } .ck.now .mark svg.lucide { width: 16px; height: 16px; stroke-width: 2; }
+  /* Claude's marks: a filled check when done, a circle with three dots while running, a dashed circle not started yet */
+  .ck.now .mark, .ck.todo .mark { border-color: transparent; } .ck.now .mark svg.lucide, .ck.todo .mark svg.lucide { width: 16px; height: 16px; stroke-width: 1.8; }
+  .ck.now .mark { color: var(--accent-text); } .ck.todo .mark { color: var(--faint); }
+  .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   .ck.todo { color: var(--muted); } .ck.fail .cktext { color: var(--bad); }
+  /* links and paths in answers: they open on this PC */
+  .md a[data-open] { cursor: pointer; text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent-text) 35%, transparent); }
+  .md a[data-open]:hover { border-bottom-color: var(--accent-text); }
+  .md a.path, .md a.local { display: inline-flex; align-items: baseline; gap: 4px; color: var(--accent-text); }
+  .md a.path svg.lucide, .md a.local svg.lucide { width: 13px; height: 13px; align-self: center; flex: none; }
+  .md a.path code, .md a.local code { color: inherit; }
+  .md a.missing { color: var(--faint); border-bottom-style: dashed; cursor: default; }
+  .md .codewrap { position: relative; margin: 0 0 .8em; } .md .codewrap pre { margin: 0; }
+  .md .codecopy { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 7px; background: var(--surface);
+                  color: var(--faint); display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  .md .codewrap:hover .codecopy { opacity: 1; } .md .codecopy:hover { color: var(--text); } .md .codecopy svg.lucide { width: 14px; height: 14px; }
+  .md .tablewrap { overflow-x: auto; margin: .4em 0 .8em; } .md .tablewrap table { margin: 0; }
+  .md th { background: var(--raised); font-weight: 600; text-align: left; } .md tr:nth-child(even) td { background: color-mix(in srgb, var(--raised) 45%, transparent); }
+  .md blockquote { margin: 0 0 .8em; padding: 2px 12px; border-left: 3px solid var(--line-strong); color: var(--muted); }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+  .pcbadge { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+  .pcbadge svg.lucide { width: 13px; height: 13px; }
   .ckdetail { margin-top: 3px; font-size: 12px; color: var(--faint); white-space: pre-wrap; overflow-wrap: anywhere; }
   .ckdetail code { font: 11.5px "Geist Mono", ui-monospace, monospace; color: var(--muted); }
   .shimmer { background: linear-gradient(90deg, var(--muted) 0%, color-mix(in srgb, var(--accent-text) 45%, var(--text)) 40%, var(--muted) 80%); background-size: 200% 100%;
@@ -622,6 +643,8 @@
         </div>
         <div class="underbar">
           <span class="paused" x-show="s.status.paused">Paused. Messages wait until you resume.</span>
+          <span class="pcbadge" x-show="s.machine" :title="'IO works on this PC: its files, apps and browser, nothing in the cloud but the model calls'">
+            <span class="ic" x-html="ic('monitor', 'sm')"></span><span x-text="'On ' + s.machine"></span></span>
           <span class="status">
             <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
             <span :title="'Eyes: ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
@@ -965,7 +988,103 @@
 <script>
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json());
-const md = (text) => DOMPurify.sanitize(marked.parse(String(text ?? ""), { breaks: true }));
+const md = (text) => enrich(DOMPurify.sanitize(marked.parse(String(text ?? ""), { breaks: true })));
+
+// answers are about this PC: links open in your browser, paths open in File Explorer (checked against the disk first, since
+// paths can hold spaces), code blocks get a copy button, wide tables scroll, and localhost addresses say they're on this PC
+const PATH_CAND = /[A-Za-z]:\\[^\n<>"|*?]+/g;
+const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i;
+function enrich(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const root = tpl.content;
+  root.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.getAttribute("href");
+    if (!/^https?:/i.test(href)) return;
+    a.setAttribute("data-open", href);
+    a.removeAttribute("target");
+    a.classList.add(LOCAL_URL.test(href) ? "local" : "ext");
+    if (LOCAL_URL.test(href)) a.insertAdjacentHTML("afterbegin", ic("monitor", "sm"));
+  });
+  // a localhost address written as plain text or code is a link too
+  root.querySelectorAll("code").forEach((c) => {
+    if (c.closest("pre") || c.closest("a")) return;
+    const t = c.textContent.trim();
+    if (LOCAL_URL.test(t) && /^\S+$/.test(t)) {
+      c.outerHTML = `<a data-open="${esc(t)}" class="local">${ic("monitor", "sm")}<code>${esc(t)}</code></a>`;
+    } else if (/^[A-Za-z]:\\/.test(t)) {
+      c.outerHTML = `<span class="pathcand" data-cand="${esc(t)}"><code>${esc(t)}</code></span>`;
+    }
+  });
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const texts = [];
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    if (!(n.parentElement && n.parentElement.closest("a, pre, code, .pathcand")) && (PATH_CAND.test(n.nodeValue) || /https?:\/\/(localhost|127\.0\.0\.1)/i.test(n.nodeValue))) texts.push(n);
+    PATH_CAND.lastIndex = 0;
+  }
+  texts.forEach((n) => {
+    const html = esc(n.nodeValue)
+      .replace(/https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?[^\s<>"')]*/gi, (u) => `<a data-open="${u}" class="local">${ic("monitor", "sm")}${u}</a>`)
+      .replace(/(?<![\w"=>])[A-Za-z]:\\[^\n<>"|*?]+/g, (m) => `<span class="pathcand" data-cand="${m}">${m}</span>`);
+    const span = document.createElement("span");
+    span.innerHTML = html;
+    n.replaceWith(...span.childNodes);
+  });
+  root.querySelectorAll("pre").forEach((p) => {
+    const w = document.createElement("div");
+    w.className = "codewrap";
+    p.replaceWith(w);
+    w.append(p);
+    w.insertAdjacentHTML("beforeend", `<button class="codecopy" data-copy title="Copy">${ic("copy")}</button>`);
+  });
+  root.querySelectorAll("table").forEach((t) => {
+    const w = document.createElement("div");
+    w.className = "tablewrap";
+    t.replaceWith(w);
+    w.append(t);
+  });
+  return tpl.innerHTML;
+}
+
+const pathCache = {};
+async function resolvePaths(el) {
+  const spans = [...el.querySelectorAll(".pathcand[data-cand]")];
+  if (!spans.length) return;
+  const ask = [...new Set(spans.map((s) => s.dataset.cand))].filter((c) => !(c in pathCache));
+  if (ask.length) {
+    try { Object.assign(pathCache, await post("/api/paths", { candidates: ask })); } catch { return; }
+  }
+  spans.forEach((s) => {
+    const hit = pathCache[s.dataset.cand];
+    s.removeAttribute("data-cand");
+    if (!hit || !hit.path) return;
+    const code = s.querySelector("code");
+    const full = (code || s).textContent;
+    const rest = full.slice(hit.path.length);
+    const label = esc(hit.path);
+    const link = `<a data-open="${esc(hit.path)}" class="path" title="${hit.dir ? "Open in File Explorer" : "Open"}">${ic(hit.dir ? "folder-open" : "file-text", "sm")}${code ? `<code>${label}</code>` : label}</a>`;
+    s.innerHTML = link + esc(rest);
+  });
+}
+
+// one listener for every answer: links and paths go through IO (your browser, File Explorer), code blocks copy
+document.addEventListener("click", async (ev) => {
+  const open = ev.target.closest("[data-open]");
+  if (open) {
+    ev.preventDefault();
+    const r = await post("/api/open", { target: open.dataset.open, reveal: ev.shiftKey }).catch(() => ({ error: "IO didn't answer" }));
+    if (r && r.error) { open.classList.add("missing"); open.title = r.error; }
+    return;
+  }
+  const copy = ev.target.closest("[data-copy]");
+  if (copy) {
+    const text = copy.parentElement.querySelector("pre").innerText;
+    try { await navigator.clipboard.writeText(text); } catch { return; }
+    copy.innerHTML = ic("check");
+    setTimeout(() => { copy.innerHTML = ic("copy"); }, 1500);
+  }
+});
 // strip tool-call text a small model sometimes leaks into its answer, e.g. done{summary:<|"|>…<|"|>}
 const cleanAnswer = (s) => String(s ?? "").replace(/\s*done\s*[({]\s*summary\s*[=:]\s*(<\|"\|>|["'])([\s\S]*?)\1\s*[)}]\s*/g, "")
   .replace(/\s*\[actions taken:[\s\S]*?\]\s*$/, "").trim() || String(s ?? "");
@@ -1450,7 +1569,7 @@ function agent() {
       }));
     },
     // only replace a message's HTML when it changed, so a selection in one answer survives another one updating
-    setHtml(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } },
+    setHtml(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; resolvePaths(el); } },
     copied: "", copyTimer: 0,
     async copyAnswer(id) {
       const text = cleanAnswer(this.taskById(id)?.summary);
@@ -1474,7 +1593,7 @@ function agent() {
       const card = items.length
         ? `<div class="checklist">${items.map((it) => `
             <div class="ck ${it.state}${it.lane ? " lane" : ""}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}', event)"` : ""}>
-              <span class="mark">${it.state === "done" ? ic("check") : it.state === "fail" ? ic("x") : it.state === "now" ? ic("loader-circle", "spin") : ""}</span>
+              <span class="mark">${it.state === "done" ? ic("check") : it.state === "fail" ? ic("x") : it.state === "now" ? ic("circle-ellipsis", "pulse") : ic("circle-dashed")}</span>
               <div class="cktext">${it.lane ? `<span class="agent-chip">${esc(it.lane)}</span>` : ""}<span class="${it.state === "now" ? "shimmer" : ""}">${esc(it.text)}</span>
                 ${it.detail && this.open[t.id + ":" + it.key] ? `<div class="ckdetail">${it.detail}</div>` : ""}</div>
             </div>`).join("")}</div>`
@@ -1826,6 +1945,25 @@ function checklist(t) {
       return { key: "ag:" + id, state, lane: "Helper " + n, text: short(l.label, 70) + now, detail: (steps + found) || "<div>Waiting for a free slot</div>" };
     });
     items.splice(laneAt, 0, ...rows);
+  }
+  // the brain's own todo list (its todo tool), when it keeps one: that is the checklist, like Claude's; the actions behind the
+  // part in progress open under it, and all of them under the last row
+  const todo = [...events].reverse().find((e) => e.event === "todo" && Array.isArray(e.items) && e.items.length);
+  if (todo) {
+    const acts = items.filter((x) => !x.lane);
+    const actsHtml = (list) => list.map((x) => `<div class="ck ${x.state === "fail" ? "fail" : "done"}"><span class="mark">${x.state === "fail" ? ic("x") : ic("check")}</span><div class="cktext">${esc(x.text)}</div></div>`).join("");
+    const since = acts.filter((x) => Number(x.key) > events.indexOf(todo));
+    const out = todo.items.map((it, j) => {
+      const raw = String((it && (it.status || it.state)) || "").toLowerCase();
+      let state = /done|complete|finish/.test(raw) ? "done" : /progress|now|running|doing|active/.test(raw) ? "now" : "todo";
+      if (!busy && state === "now") state = t.status === "done" ? "done" : "fail";
+      const text = typeof it === "string" ? it : (it.text || it.content || it.task || JSON.stringify(it));
+      return { key: "td" + j, state, text, detail: state === "now" && since.length ? actsHtml(since.slice(-8)) : "" };
+    });
+    if (busy && t.status === "waiting") out.push({ key: "wait", state: "now", text: "Waiting for your answer" });
+    else if (busy && !out.some((x) => x.state === "now")) out.push({ key: "now", state: "now", text: "Thinking…" });
+    if (acts.length) out.push({ key: "acts", state: "done", text: plural(acts.length, "action") + (busy ? " so far" : ""), detail: actsHtml(acts) });
+    return [...items.filter((x) => x.lane), ...out];
   }
   if (busy) {
     const plan = [...events].reverse().find((e) => e.event === "plan" && e.plan);

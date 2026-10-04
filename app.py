@@ -606,8 +606,55 @@ async def get_state(_request: Request) -> JSONResponse:
             "learned": [{"name": k["name"], "runs": k.get("runs", 1), "uses": k.get("uses", 0), "playbook": k.get("playbook", ""),
                          "updated": k.get("updated", 0)} for k in sorted(learned.load(), key=lambda k: -k.get("updated", 0))],
             "user": os.environ.get("USERNAME", "").capitalize(),
+            "machine": os.environ.get("COMPUTERNAME", ""),
         }
     )
+
+
+# what a click in an answer may open with its own app; everything else is shown selected in File Explorer, so a click
+# never runs a program or script
+OPEN_SAFE = {".txt", ".md", ".csv", ".json", ".log", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".html", ".htm",
+             ".xml", ".yaml", ".yml", ".docx", ".xlsx", ".pptx", ".mp4", ".mp3", ".wav"}
+
+
+async def existing_paths(request: Request) -> JSONResponse:
+    """For path-looking text in an answer ("C:\\...\\io-bench3 and started the server"), the longest leading part that
+    exists on this PC, cut at a space: paths can contain spaces (old onedrive\\Documents), so only the disk can tell."""
+    out = {}
+    for cand in [str(c) for c in (await request.json()).get("candidates", [])][:60]:
+        words, found = cand.rstrip().split(" "), ""
+        for n in range(len(words), 0, -1):
+            p = " ".join(words[:n]).rstrip(".,;:)!?'\"`")
+            if len(p) > 3 and await asyncio.to_thread(os.path.exists, p):
+                found = p
+                break
+            if n < len(words) - 12:
+                break
+        out[cand] = {"path": found, "dir": bool(found) and os.path.isdir(found)}
+    return JSONResponse(out)
+
+
+async def open_target(request: Request) -> JSONResponse:
+    """A link or a path clicked in an answer: web addresses in the default browser, folders in File Explorer, documents in
+    their app, anything else (programs, scripts) shown selected in File Explorer instead of run."""
+    body = await request.json()
+    target = str(body.get("target", "")).strip().strip("\"'`")
+    if re.match(r"(?i)^https?://\S+$", target):
+        await asyncio.to_thread(os.startfile, target)
+        return JSONResponse({"ok": True, "how": "browser"})
+    p = Path(os.path.expandvars(target.rstrip(".,;:)")))
+    if not p.exists():
+        return JSONResponse({"error": f"{p} doesn't exist (any more)"}, status_code=404)
+    if p.is_dir():
+        await asyncio.to_thread(os.startfile, str(p))
+        how = "folder"
+    elif p.suffix.lower() in OPEN_SAFE and not body.get("reveal"):
+        await asyncio.to_thread(os.startfile, str(p))
+        how = "app"
+    else:
+        subprocess.Popen(["explorer.exe", f"/select,{p}"])
+        how = "explorer"
+    return JSONResponse({"ok": True, "how": how})
 
 
 async def new_chat(_request: Request) -> JSONResponse:
@@ -1090,6 +1137,8 @@ app = Starlette(
         Route("/api/skills", save_skill, methods=["POST"]),
         Route("/api/skills/{id}", remove_skill, methods=["DELETE"]),
         Route("/api/tasks/{id}/answer", answer_task, methods=["POST"]),
+        Route("/api/open", open_target, methods=["POST"]),
+        Route("/api/paths", existing_paths, methods=["POST"]),
         Route("/api/memory", get_memory, methods=["GET"]),
         Route("/api/memory", add_memory, methods=["POST"]),
         Route("/api/memory/{id}", delete_memory, methods=["DELETE"]),

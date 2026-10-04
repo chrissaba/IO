@@ -196,6 +196,8 @@ LAYER_JOBS = [
 
 
 FRONTIER_STYLE = """WORKING STYLE
+- A task with several parts: start with todo(items) listing them, and call it again (in the same reply as your next action)
+  each time a part is done; the user watches that list. Skip it for one-step tasks.
 - Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
   calls at once, or one steps call (they run in order; a failure stops the rest). Each reply costs a slow round trip.
 - Change code with edit_file (exact old text -> new); rewrite a whole file only when most of it changes.
@@ -2984,7 +2986,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 return bool(options["browser"])  # a hidden researcher (a browser of its own) starts on first use
             if n == "ask_gemini":
                 return advisor_tool
-            if n in ("ask_model", "notes"):
+            if n in ("ask_model", "notes", "todo"):
                 return True  # ask_model: the local model at least, NVIDIA's with a key; notes: IO's own playbooks
             return n in defs
 
@@ -4125,6 +4127,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             result = (await meanings_hint(sessions["browser_navigate"], result, task)) or result
                     except Exception as e:
                         result = f"error: {e}"
+                elif name == "todo":
+                    items = args.get("items")
+                    if isinstance(items, str):
+                        items = loose_json("{\"i\": " + items + "}") or {}
+                        items = items.get("i") if isinstance(items, dict) else None
+                    if not isinstance(items, list) or not items:
+                        result = 'error: todo needs items like [{"text": "Write the tests", "status": "in_progress"}]'
+                    else:
+                        items = [i if isinstance(i, dict) else {"text": str(i), "status": "todo"} for i in items][:30]
+                        log("todo", step=step, items=items)  # the panel shows the latest list as the task's checklist
+                        n_done = sum(1 for i in items if str(i.get("status", "")).lower() == "done")
+                        result = f"ok: todo list updated ({n_done} of {len(items)} done)"
                 elif name == "notes":
                     result = learned.get(str(args.get("name") or "")) or (
                         f"error: no notes named {args.get('name')!r}; the names are: " + ", ".join(s["name"] for s in learned.load()))
