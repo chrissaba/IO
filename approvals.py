@@ -73,6 +73,23 @@ def _confine(command: str, src: Path, work: Path) -> tuple[str, list[str]]:
     return cmd, outside
 
 
+def folder_of(command: str) -> str:
+    """The folder a command works in when it doesn't say: the deepest existing folder its paths share ('' if none).
+    A goal's check-in ran del <folder>\\*.tmp with no folder, and copying the whole user profile is out of the question."""
+    paths = []
+    for p in PATH_RE.findall(re.sub(r"%(\w+)%", lambda m: os.environ.get(m.group(1), m.group(0)), command)):
+        p = Path(re.split(r"[*?]", p)[0])
+        if p.suffix.lower() == ".exe" or str(p).lower().startswith(PROGRAM_DIRS):
+            continue
+        paths.append(p if p.is_dir() else p.parent)
+    if not paths:
+        return ""
+    common = Path(os.path.commonpath([str(p) for p in paths]))
+    while not common.is_dir() and common != common.parent:
+        common = common.parent
+    return str(common) if common.is_dir() and len(common.parts) > 2 else ""
+
+
 def sandbox_run(command: str, folder: str, timeout: int = 120) -> dict:
     """Runs a command line (cmd.exe) on a copy of folder. Returns what happened: output, exit code, and the files it
     added, changed or deleted in the copy. 'error' is set when the folder couldn't be copied (too big, missing)."""

@@ -669,7 +669,7 @@ def approve_later_for(task: dict):
         text = (f"Not done yet: this needs the user's OK ({reason}), and nobody is watching this run. It waits in Approvals as "
                 f"#{item['id']}. Carry on with whatever doesn't depend on it, and mention it in done.")
         if name == "run_command" and args.get("command"):
-            folder = str(args.get("folder") or os.path.expanduser("~"))
+            folder = str(args.get("folder") or approvals.folder_of(str(args["command"])) or os.path.expanduser("~"))
             run = await asyncio.to_thread(approvals.sandbox_run, str(args["command"]), folder, int(args.get("timeout") or 120))
             if "error" not in run:
                 item["sandbox"] = run
@@ -716,6 +716,8 @@ async def decide_approval(request: Request) -> JSONResponse:
                     "check it worked, and say so in done.")
             t = new_task(text, source="approval", chat_id=origin.get("chat_id", ""))
             t["preapproved"] = [item["reason"]]
+            if item.get("goal"):
+                t["goal"] = item["goal"]  # it's that goal's work: its answer updates the goal (and can complete it)
             chat = next((c for c in state["chats"] if c["id"] == origin.get("chat_id")), None)
             if chat:
                 chat["messages"].append({"task_id": t["id"], "at": time.time()})
