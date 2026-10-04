@@ -4060,6 +4060,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
                         if name == "PowerShell":
                             result = ps_unwrap(result)
+                            if "Command execution timed out" in result:
+                                # two runs started their web server here first and lost 30+ s to a bare "timed out"
+                                result += (" (PowerShell waits for a command to finish, so one that never ends, like a server or a "
+                                           "watcher, times out here and is stopped. Run those with start_app.)")
                         if name == "App" and args.get("mode") == "switch" and "error" in result.lower() and args.get("name"):
                             # Windows-MCP matches app names exactly; fall back to any window title containing the name
                             if title := await asyncio.to_thread(focus_window, args["name"]):
