@@ -710,8 +710,7 @@ class Eyes:
         url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
         prompt = QWEN_POINT_PROMPT if self.mode == "smart" else EYES_PROMPT
-        reply = self.client.chat.completions.create(
-            model=self.model,
+        reply = local_create(self.client, self.model, _purpose="find where to click",
             temperature=0,
             max_tokens=400 if self.mode == "smart" else 60,
             extra_body=NO_THINKING if self.mode == "smart" else None,
@@ -761,16 +760,21 @@ class Eyes:
         quick = [{"role": "user", "content": [messages[0]["content"][0], {"type": "text", "text": text + (
             " Answer the question directly in at most 120 words: what is open, the exact text of the buttons that matter "
             "and where they are. No full inventory unless asked.")}]}]
-        for client, model in getattr(self, "remote", None) or []:  # the NVIDIA brain's vision models, in turn
+        remote = getattr(self, "remote", None) or []
+        fresh = [r for r in remote if time.time() - nim._health.get(r[1], {}).get("failed", 0) > 120]  # just failed: last
+        for client, model in fresh + [r for r in remote if r not in fresh]:  # the NVIDIA brain's vision models, in turn
+            t_req = time.time()
             try:
-                reply = nim.create(client, model=model, temperature=0.2, max_tokens=700, messages=quick, timeout=90)
+                reply = nim.create(client, _purpose="look at the screen", model=model, temperature=0.2, max_tokens=700, messages=quick, timeout=90)
                 answer = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
                 if answer:
+                    nim.note(model, time.time() - t_req, True)
                     return answer
-            except Exception:
-                pass  # next vision model, then the local one
-        reply = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120).chat.completions.create(
-            model=BOSS_MODEL, temperature=0.2, max_tokens=160 if self.brief else 700,
+                nim.note(model, time.time() - t_req, False)
+            except Exception as e:  # next vision model, then the local one
+                nim.note(model, time.time() - t_req, False, gone=getattr(e, "status_code", 0) == 404)
+        reply = local_create(OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL,
+            _purpose="look at the screen", temperature=0.2, max_tokens=160 if self.brief else 700,
             extra_body=NO_THINKING if self.brief else None, messages=messages)
         return reply.choices[0].message.content or "(no answer)"
 
@@ -2088,6 +2092,23 @@ AGENT: contextvars.ContextVar = contextvars.ContextVar("agent", default=None)
 _log_lock = threading.Lock()  # sub-agents log at the same time, some from worker threads
 
 
+def local_create(client, model: str, _purpose: str = "", **kw):
+    """A local llama-server call, timed for the debug timeline like NVIDIA's (nim.create)."""
+    t0 = time.time()
+    chars, images = nim.size_of(kw.get("messages"))
+    rec = {"model": "local: " + str(model), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or []), "wait": 0}
+    try:
+        r = client.chat.completions.create(model=model, **kw)
+    except Exception as e:
+        nim.trace({**rec, "ok": False, "secs": round(time.time() - t0, 1), "error": f"{type(e).__name__}: {str(e)[:120]}"})
+        raise
+    u = getattr(r, "usage", None)
+    m = r.choices[0].message if r.choices else None
+    nim.trace({**rec, "ok": True, "secs": round(time.time() - t0, 1), "in_tokens": getattr(u, "prompt_tokens", None),
+               "out_tokens": getattr(u, "completion_tokens", None), "calls": [c.function.name for c in (m.tool_calls or [])] if m else []})
+    return r
+
+
 def log(event: str, **data) -> None:
     agent = AGENT.get()
     if agent and agent["stop"].is_set():
@@ -2103,6 +2124,9 @@ def log(event: str, **data) -> None:
             listener(record)
         with open(HERE / "logs" / "boss.jsonl", "a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+nim.listeners.append(lambda rec: log("llm", **rec))
 
 
 # ---------- memory: short notes that carry across tasks (data/memory.json) ----------
@@ -2293,8 +2317,9 @@ def loop_goal(task: str) -> str:
 
 def local_chat(system: str, user: str, max_tokens: int = 300, think: bool = True) -> str:
     client = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=1, timeout=90)
-    reply = client.chat.completions.create(model=BOSS_MODEL, temperature=0.1, max_tokens=max_tokens, extra_body=None if think else NO_THINKING,
-                                           messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
+    reply = local_create(client, BOSS_MODEL, _purpose="local helper (" + system.split(".")[0][:40] + ")", temperature=0.1,
+                         max_tokens=max_tokens, extra_body=None if think else NO_THINKING,
+                         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
 
@@ -2449,7 +2474,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             out.append(m)
         return list(reversed(out))
 
-    def make_brain(at: list, local_fallback: bool = True, stop: threading.Event | None = None, timeout: float | None = None):
+    def make_brain(at: list, local_fallback: bool = True, stop: threading.Event | None = None, timeout: float | None = None,
+                   role: str = "decide next step"):
         """A brain_create for one agent: `at` holds the index of the NVIDIA model that answered it last (each Ultracode
         helper has its own). `stop` ends a helper's retries once Stop is pressed (its thread outlives the task);
         `timeout` caps each request (helpers don't wait out DeepSeek's long queue)."""
@@ -2458,8 +2484,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """One step of the agent loop. With the NVIDIA brain it goes round GLM-5.3 Flash, DeepSeek V4.1 Flash and Kimi
             K3 (starting from the one that answered last) until one answers, two full rounds; the local model is only the
             main agent's very last resort. Without it, the local model as before."""
+            purpose = kw.pop("purpose", role)
             if not remote_brain:
-                return boss.chat.completions.create(model=BOSS_MODEL, **kw)
+                return local_create(boss, BOSS_MODEL, _purpose=purpose, **kw)
             n, last = len(brain_models), None
             order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
             for attempt in range(2 * n):
@@ -2483,7 +2510,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the
                     # slow text-only one, gets longer)
                     kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
-                    r = nim.create(client, model=model, **kw2)
+                    r = nim.create(client, _purpose=purpose, model=model, **kw2)
                     m = r.choices[0].message
                     words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
                     if not (m.tool_calls or re.search(r"[^\W\d_]{3}", words)):
@@ -2497,22 +2524,24 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
                     last = e
                     nim.note(model, time.time() - t_req, False)
+                    if getattr(e, "status_code", 0) == 404:  # not offered (any more): skip it for an hour, not 2 minutes
+                        nim.note(model, 0, False, gone=True)
                     log("warning", text=f"{nim.label(model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
                     if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):
                         raise RuntimeError("stopped")  # too many requests: a moment before the next model
             if not local_fallback:
                 raise last
             log("warning", text=f"no NVIDIA model answered ({type(last).__name__}); the local model takes this step")
-            return boss.chat.completions.create(model=BOSS_MODEL, **kw)
+            return local_create(boss, BOSS_MODEL, _purpose=purpose + " (fallback)", **kw)
 
         return create
 
     brain_create = make_brain(brain_at)
 
-    def brain_chat(system: str, user: str, max_tokens: int = 1200) -> str:
+    def brain_chat(system: str, user: str, max_tokens: int = 1200, purpose: str = "summary") -> str:
         """One plain question to the brain (no tools): summaries and skill playbooks."""
         r = brain_create(messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                         temperature=0.2, max_tokens=max_tokens)
+                         temperature=0.2, max_tokens=max_tokens, purpose=purpose)
         return re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
 
     windows_tools = MCP_TOOLS.split(",")
@@ -3149,7 +3178,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
 
             def work() -> None:
                 try:
-                    name = learned.learn(lambda sy, us: brain_chat(sy, us, 2000), standalone, steps, outcome, window)
+                    name = learned.learn(lambda sy, us: brain_chat(sy, us, 2000, "learn a skill"), standalone, steps, outcome, window)
                     if name:
                         print(json.dumps({"event": "learned", "skill": name, "steps": len(steps)}), flush=True)
                 except Exception as e:
@@ -3164,7 +3193,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             try:
                 limits = actions.constraints_text(ctx.constraints)
-                r = await asyncio.to_thread(brain_create, temperature=0.2, max_tokens=1500, messages=[
+                r = await asyncio.to_thread(brain_create, temperature=0.2, max_tokens=1500, purpose="ultracode plan", messages=[
                     {"role": "system", "content": ULTRA_PLAN},
                     {"role": "user", "content": f"Request: {standalone}" + (f"\nThe user's limits: {limits}" if limits else "")}])
                 subs = ultra_subtasks(loose_json(re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S)))
@@ -3198,7 +3227,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # sometimes stops with an empty answer even when a tool call is required, DeepSeek takes minutes)
                     helper = options.get("helper_model") or ""
                     first = [brain_models.index(helper) if helper in brain_models else 0]
-                    brain = make_brain(first, local_fallback=False, stop=stop, timeout=180)
+                    brain = make_brain(first, local_fallback=False, stop=stop, timeout=180, role="helper step")
                     t1, status, answer, last, nudged = time.time(), "done", "", "", False
                     try:
                         async with asyncio.timeout(ULTRA_HELPER_SECS), AsyncExitStack() as sub_stack:  # entered and left in this task (the MCP client needs that)
@@ -3379,7 +3408,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # the brain sees the window itself on its own turn (one request instead of a look_at_screen round trip to a
             # second model); a text-only model gets a note to call look_at_screen instead (text_only)
             view_window = (focus if loop else "") or focus_hint  # a loop's locked window, else where the task works now
+            t_view = time.time()
             view = await asyncio.to_thread(brain_view, view_window, loop and eyes.content) if remote_brain and view_window else ""
+            if view:
+                log("view", window=view_window, secs=round(time.time() - t_view, 2), kb=len(view) * 3 // 4 // 1024)
 
             def seen(msgs: list[dict]) -> list[dict]:
                 return msgs + [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": view}},

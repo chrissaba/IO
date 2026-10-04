@@ -244,6 +244,11 @@
   .ckdetail .found { margin-top: 4px; color: var(--text); } .ckdetail .found .secs { color: var(--faint); }
   .ultratag { font-size: 11.5px; color: var(--accent-text); display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
   .ultratag svg.lucide { width: 13px; height: 13px; }
+  .debug { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 6px 10px; margin: 0 0 12px; font-size: 12px; }
+  .debughead { cursor: pointer; color: var(--muted); user-select: none; }
+  .dbg { width: 100%; border-collapse: collapse; margin-top: 6px; font: 11.5px "Geist Mono", ui-monospace, monospace; }
+  .dbg td { padding: 2px 6px 2px 0; vertical-align: top; border-top: 1px solid var(--line); color: var(--text); overflow-wrap: anywhere; }
+  .dbg tr.bad td { color: var(--bad); } .dbg tr.note td { color: var(--muted); }
   .modelrow { display: flex; align-items: center; gap: 8px; flex-basis: 100%; padding: 4px 0; font-size: 13.5px; }
   .modelrow .num { width: 18px; color: var(--muted); text-align: right; }
   .modelrow .tag { font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; }
@@ -932,6 +937,8 @@
           <label class="switch"><input type="checkbox" x-model="s.settings.notify" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Keyboard shortcuts</div><div>Ctrl+Alt+Q for a new message, Ctrl+Alt+End to stop everything. Applies after a restart.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.hotkeys" @change="saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Debug timeline</div><div>Under each answer, a timeline of everything IO did: every model call (which model, why, how long it waited for IO's own limits, how long the model took, its size in and out), every screenshot and every tool, with times.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.debug" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Focus glow</div><div>While IO works, a purple glow outlines the window it's focused on. It's invisible to IO's own screenshots.</div></div>
           <label class="switch"><input type="checkbox" :checked="s.settings.focus_glow !== false" @change="s.settings.focus_glow = $event.target.checked; saveSettings()"><span></span></label></div>
       </div>
@@ -1467,6 +1474,7 @@ function agent() {
             </div>`).join("")}</div>`
         : "";
       const answer = t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "";
+      const debug = this.s.settings.debug ? debugTimeline(t, this.open[t.id + ":debug"]) : "";
       const meta = !busy && secs ? `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>` : "";
       const done = this.copied === t.id;
       const copy = answer && !busy ? `<button class="copy ${done ? "done" : ""}" onclick="copyAnswer('${t.id}')" title="${done ? "Copied" : "Copy"}">${ic(done ? "check" : "copy")}</button>` : "";
@@ -1475,7 +1483,7 @@ function agent() {
       const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
       const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
       return `<div class="msg-user">${imgs}${said}</div>${divider}
-        <div class="msg-agent ${last ? "last" : ""}">${card}${answer}
+        <div class="msg-agent ${last ? "last" : ""}">${card}${debug}${answer}
           ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${foot}</div>`;
     },
 
@@ -1827,6 +1835,39 @@ function checklist(t) {
     if (laneAt < 0) planned.slice(doneCount + 1).forEach((p, j) => items.push({ key: "p" + j, state: "todo", text: cleanPlanStep(p) }));
   }
   return items;
+}
+
+// Debug timeline: every model call, screenshot and tool of a task, with timings, and a total per model
+function debugTimeline(t, open) {
+  const ev = (t.events || []).filter((e) => ["llm", "view", "tool", "warning", "plan", "agent_done", "compact", "research", "skills"].includes(e.event));
+  if (!ev.length) return "";
+  const t0 = (t.events[0] || {}).t || ev[0].t;
+  const per = {};
+  ev.filter((e) => e.event === "llm").forEach((e) => {
+    const p = per[e.model] = per[e.model] || { n: 0, secs: 0, wait: 0, fail: 0 };
+    p.n += 1; p.secs += e.secs || 0; p.wait += e.wait || 0; p.fail += e.ok ? 0 : 1;
+  });
+  // look_at_screen and click_on call a model from inside the tool: their time is already in the tool's
+  const inTool = (e) => /^(look at the screen|find where to click)/.test(e.purpose || "");
+  const llmSecs = ev.filter((e) => e.event === "llm" && !inTool(e)).reduce((a, e) => a + (e.secs || 0) + (e.wait || 0), 0);
+  const toolSecs = ev.filter((e) => e.event === "tool").reduce((a, e) => a + (e.secs || 0), 0);
+  const total = Math.round((((t.finished || Date.now() / 1000)) - (t.started || t0)));
+  const totals = Object.entries(per).sort((a, b) => b[1].secs - a[1].secs).map(([m, p]) =>
+    `<tr><td>${esc(m)}</td><td>${p.n} call${p.n === 1 ? "" : "s"}${p.fail ? `, ${p.fail} failed` : ""}</td><td>${p.secs.toFixed(1)}s</td><td>${(p.secs / p.n).toFixed(1)}s avg</td><td>${p.wait ? p.wait.toFixed(1) + "s waiting for IO's limits" : ""}</td></tr>`).join("");
+  const row = (e) => {
+    const at = "+" + (e.t - t0).toFixed(1) + "s";
+    const who = e.agent ? `<span class="agent-chip">${esc(e.agent)}</span>` : "";
+    if (e.event === "llm") {
+      const size = `${Math.round((e.chars || 0) / 1000)}k chars${e.images ? `, ${e.images} image${e.images === 1 ? "" : "s"}` : ""}${e.in_tokens ? ` (${e.in_tokens} tok in` + (e.out_tokens ? `, ${e.out_tokens} out)` : ")") : ""}`;
+      const out = e.ok ? ((e.calls || []).length ? "→ " + e.calls.join(", ") : (e.finish ? "→ " + e.finish : "")) : "✕ " + (e.error || "failed");
+      return `<tr class="${e.ok ? "" : "bad"}"><td>${at}</td><td>${who}model</td><td>${esc(e.model)}</td><td>${esc(e.purpose || "")}</td><td>${e.wait ? e.wait + "s wait + " : ""}<b>${e.secs}s</b></td><td>${esc(size)} ${esc(out)}</td></tr>`;
+    }
+    if (e.event === "view") return `<tr><td>${at}</td><td>${who}screenshot</td><td>${esc(e.window)}</td><td></td><td>${e.secs}s</td><td>${e.kb} KB</td></tr>`;
+    if (e.event === "tool") return `<tr class="${/^error/.test(e.result || "") ? "bad" : ""}"><td>${at}</td><td>${who}tool</td><td>${esc(e.name)}</td><td>${esc(short(JSON.stringify(e.args || {}), 60))}</td><td><b>${e.secs ?? ""}${e.secs != null ? "s" : ""}</b></td><td>${esc(short(e.result, 90))}</td></tr>`;
+    return `<tr class="note"><td>${at}</td><td>${who}${esc(e.event)}</td><td colspan="4">${esc(short(e.text || e.summary || e.plan || e.notes || "", 140))}</td></tr>`;
+  };
+  return `<div class="debug"><div class="debughead" onclick="toggleSteps('${t.id}:debug', event)">Debug · ${total}s total · brain ${llmSecs.toFixed(0)}s · tools ${toolSecs.toFixed(0)}s (incl. their model calls) · IO's own time ${Math.max(0, total - llmSecs - toolSecs).toFixed(0)}s ${open ? "▾" : "▸"}</div>
+    ${open ? `<table class="dbg">${totals}</table><table class="dbg">${ev.map(row).join("")}</table>` : ""}</div>`;
 }
 
 // "**App** – Switch to the BlueStacks window." -> "Switch to the BlueStacks window"

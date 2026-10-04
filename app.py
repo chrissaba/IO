@@ -56,7 +56,7 @@ EYES_LOAD = {
     "n_parallel": 1,
     "speculative_type": "off",
 }
-MAX_EVENTS_PER_TASK = 600  # an Ultracode task logs for up to 5 helpers at once
+MAX_EVENTS_PER_TASK = 1500  # an Ultracode task logs for up to 5 helpers at once, plus a timing record per model call
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
@@ -69,6 +69,7 @@ DEFAULT_SETTINGS = {
     "brain_models": list(nim.BRAIN_MODELS),  # the NVIDIA models the brain goes round, in order
     "vision_model": "",  # the one look_at_screen asks first ("" = the brain's first vision model)
     "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
+    "debug": False,  # show each message's debug timeline: every model call, screenshot and tool, with timings
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -806,7 +807,7 @@ async def save_settings(request: Request) -> JSONResponse:
             s[key] = str(body[key] or "").strip()[:120]
     if "ask_gemini" in body:
         s["brain_v2"] = True  # the user chose: no migration ever flips it again
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode"):
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode", "debug"):
         if key in body:
             s[key] = bool(body[key])
     if not s["focus_glow"]:

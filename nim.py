@@ -64,12 +64,12 @@ _health: dict = {}  # model -> {"avg": running reply time, "failed": when it las
 _orders = [0]
 
 
-def note(model: str, secs: float, ok: bool) -> None:
+def note(model: str, secs: float, ok: bool, gone: bool = False) -> None:
     h = _health.setdefault(model, {"avg": None, "failed": 0.0})
     if ok:
         h["avg"] = secs if h["avg"] is None else 0.6 * h["avg"] + 0.4 * secs
     else:
-        h["failed"] = time.time()
+        h["failed"] = time.time() + (3600 if gone else 0)
 
 
 def brain_order(start: int, models: list[str] | None = None) -> list[int]:
@@ -92,14 +92,58 @@ def brain_order(start: int, models: list[str] | None = None) -> list[int]:
     return good + [i for i in base if i not in good]
 
 
-def create(client, **kw):
+listeners: list = []  # called with a timing record for every request (IO's debug timeline)
+
+
+def size_of(messages) -> tuple[int, int]:
+    """(characters of text, pictures) in a request's messages."""
+    chars = images = 0
+    for m in messages or []:
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, str):
+            chars += len(c)
+        elif isinstance(c, list):
+            for p in c:
+                if p.get("type") == "image_url":
+                    images += 1
+                else:
+                    chars += len(str(p.get("text") or ""))
+    return chars, images
+
+
+def trace(record: dict) -> None:
+    for f in listeners:
+        try:
+            f(record)
+        except Exception:
+            pass
+
+
+def create(client, _purpose: str = "", **kw):
     """client.chat.completions.create, holding one of the MAX_PARALLEL slots while the request is out, and paced under
-    the per-minute limit."""
+    the per-minute limit. Each request is reported to `listeners`: how long it waited for IO's own limits, how long
+    NVIDIA took, and how big it was."""
+    t0 = time.time()
+    chars, images = size_of(kw.get("messages"))
+    rec = {"model": kw.get("model", ""), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or [])}
     if not _slots.acquire(timeout=SLOT_WAIT):
+        trace({**rec, "ok": False, "wait": round(time.time() - t0, 1), "secs": 0, "error": "no free slot"})
         raise TimeoutError(f"all {MAX_PARALLEL} NVIDIA slots stayed busy for {SLOT_WAIT}s")
     try:
         _pace()
-        return client.chat.completions.create(**kw)
+        t1 = time.time()
+        try:
+            r = client.chat.completions.create(**kw)
+        except Exception as e:
+            trace({**rec, "ok": False, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
+                   "error": f"{type(e).__name__}: {scrub(str(e))[:120]}"})
+            raise
+        u = getattr(r, "usage", None)
+        m = r.choices[0].message if r.choices else None
+        trace({**rec, "ok": True, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
+               "in_tokens": getattr(u, "prompt_tokens", None), "out_tokens": getattr(u, "completion_tokens", None),
+               "calls": [c.function.name for c in (m.tool_calls or [])] if m else [], "finish": r.choices[0].finish_reason if r.choices else ""})
+        return r
     finally:
         _slots.release()
 
