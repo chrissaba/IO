@@ -3414,7 +3414,9 @@ def known_folder(name: str) -> Path:
 
 
 def _path(p: str) -> Path:
-    s = os.path.expanduser(os.path.expandvars(str(p or "").strip().strip("\"'")))
+    # PowerShell's $env:NAME too: models that just ran PowerShell write paths the same way in file actions
+    s = re.sub(r"(?i)\$env:(\w+)", r"%\1%", str(p or "").strip().strip("\"'"))
+    s = os.path.expanduser(os.path.expandvars(s))
     m = re.match(r"(?i)^(?:my\s+|the\s+)?(desktop|documents|downloads|pictures|music|videos|home|temp)(?:\s+folder)?(?:\s*[\\/](.*))?$", s)
     if m:
         return _real(known_folder(m.group(1)) / (m.group(2) or ""))
@@ -3851,15 +3853,71 @@ def _app_exe_path(app: str) -> str:
     return ""
 
 
+@action("start_app", group="PC", summary="start something that keeps running after the task (a web server, a script); waits for its port",
+        params="""
+        command s what to run, e.g. python -m http.server 8123
+        folder s? where to run it
+        port i? wait until this port answers
+        open b? also open http://localhost:port in the browser
+        """, cost=2.0, star=True, top="command,folder?,port?", fallback='PowerShell("Start-Process ...")', timeout=60,
+        risky=lambda a, c: _h().risky_reason("PowerShell", {"command": a.get("command", "")}, c.request),
+        limits="its own window, so you can see and stop it; PowerShell's Start-Process ends with the task")
+async def start_app(ctx: Ctx, command: str, folder: str = "", port: int = 0, open: bool = False, **_) -> str:
+    """Started from IO's own process, outside the job Windows-MCP runs PowerShell in: when a task ends, the MCP client
+    closes that job and everything started inside it (the servers of two graded runs died that way)."""
+    where = _path(folder) if folder else known_folder("home")
+    if not where.is_dir():
+        raise Fail("NOT_FOUND", f"{where} isn't a folder", f'file_op(op="mkdir", src="{where}")')
+    if port and _port_open(port):
+        raise Fail("BLOCKED", f"port {port} is already in use", f'start_app on another port, or open http://localhost:{port}')
+    q = lambda t: str(t).replace("'", "''")  # noqa: E731  PowerShell single-quoted text
+    ps = f"Set-Location -LiteralPath '{q(where)}'; $host.UI.RawUI.WindowTitle = 'IO: {q(command[:60])}'; {command}"
+    flags = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        proc = subprocess.Popen(["powershell", "-NoProfile", "-NoExit", "-Command", ps], cwd=str(where),
+                                creationflags=flags | 0x01000000)  # CREATE_BREAKAWAY_FROM_JOB, in case IO itself is in one
+    except OSError:
+        proc = subprocess.Popen(["powershell", "-NoProfile", "-NoExit", "-Command", ps], cwd=str(where), creationflags=flags)
+    if not port:
+        await asyncio.sleep(1.5)
+        if proc.poll() is not None:
+            raise Fail("UNSUPPORTED", f"it exited at once (code {proc.returncode})", "PowerShell(command) to see its error")
+        return ok(f"started in its own window (pid {proc.pid}) in {where}; it keeps running after this task")
+    for _ in range(40):
+        if _port_open(port):
+            break
+        if proc.poll() is not None:
+            raise Fail("UNSUPPORTED", f"it exited (code {proc.returncode}) before port {port} answered", "PowerShell(command) to see its error")
+        await asyncio.sleep(0.5)
+    else:
+        return unsure(f"started (pid {proc.pid}) but port {port} didn't answer within 20 s", f"check its window, or wait_until then open_path")
+    url = f"http://localhost:{port}"
+    if open:
+        await asyncio.to_thread(os.startfile, url)
+    return ok(f"running in its own window (pid {proc.pid}), {url} answers" + ("; opened it in the default browser" if open else "")
+              + "; it keeps running after this task")
+
+
+def _port_open(port: int) -> bool:
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+
+
 @action("open_path", group="FILE", summary="open a file or folder in its app (or app=), or reveal it in Explorer",
         params="""
-        path s the file or folder
+        path s the file, folder or http(s) address
         app s? open it in this app instead
         reveal b? true: show it selected in File Explorer
         expect s? what should show afterwards
         """, cost=2.0, star=True, expect=True, top="path", fallback='PowerShell("Start-Process ...")', timeout=20,
         risky=lambda a, c: _open_risky(a, c), limits="programs and scripts ask first; the default app may already be open")
 async def open_path(ctx: Ctx, path: str, app: str = "", reveal: bool = False, **_) -> str:
+    if re.match(r"(?i)https?://\S+$", path.strip()):
+        # an address is something to open too (the user's own browser, not IO's tab), not a file named "http:"
+        await asyncio.to_thread(os.startfile, path.strip())
+        return ok(f"opened {path.strip()} in the default browser")
     p = _path(path)
     if not p.exists():
         raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
@@ -4499,6 +4557,9 @@ BLOCKED_WEB = re.compile(r"\b(ad|ads|sponsored|buy|buy now|purchase|checkout|che
                          r"register|download)\b", re.I)
 SKIP_RESULTS = re.compile(r"youtube\.com|youtu\.be|tiktok\.com|facebook\.com|instagram\.com|twitter\.com|x\.com/|pinterest\.|amazon\.|ebay\.", re.I)
 PAGE_STATE_JS = "() => location.href + '\\n' + document.title + '\\n' + (document.body ? document.body.innerText.slice(0, 600) : '')"
+MAIN_TEXT_JS = ("() => { const b = document.body ? document.body.innerText : ''; "
+                "const m = document.querySelector('#mw-content-text, main, [role=main], article'); "
+                "const t = m ? m.innerText : ''; return t.trim().length > 200 ? t : b; }")
 LINKS_ALL_JS = ("() => { const main = document.querySelector('#mw-content-text, article, main') || document.body; "
                 "const seen = new Set(); const out = []; for (const root of [main, document.body]) { for (const a of root.querySelectorAll('a[href]')) { "
                 "const t = (a.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 100); if (!t || !a.href.startsWith('http') || seen.has(a.href)) continue; "
@@ -4631,7 +4692,9 @@ async def read_page(ctx: Ctx, url: str = "", find: str = "", what: str = "text",
     if what == "headings":
         heads = _json(await beval(ctx, HEADINGS_JS)) or []
         return ok(f"{head}\n" + ("\n".join(heads) if heads else "(the page has no h1-h3 headings)"))
-    text = await beval(ctx, "() => document.body ? document.body.innerText : ''", 20)
+    # without find=, the page's main content: sites put their menus first (python.org's ran thousands of characters
+    # before a release's date), and a reading that is mostly menu crowds out the facts
+    text = await beval(ctx, MAIN_TEXT_JS if not find else "() => document.body ? document.body.innerText : ''", 20)
     if not text.strip():
         return unsure(f"{head} has no readable text (still loading, or all images)", 'wait_until("screen_still") then read_page()')
     body = h.find_in_text(text, find) if find else text[:6000] + ("\n[page continues; use find= to look for something]" if len(text) > 6000 else "")
@@ -5691,7 +5754,7 @@ ROUTES = {
     "images": Route("images", ["done"], [], "local", None, "no"),
     "loop": Route("loop", LOOP_MENU, ["GAME", "SEE"], "director", 0, "as_today"),
     "chat": Route("chat", ["done"], [], "local", None, "no"),
-    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "file_op", "open_path", "open_file", "PowerShell", "ask_user", "done"],
+    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "file_op", "open_path", "open_file", "start_app", "PowerShell", "ask_user", "done"],
                    ["FILE"], "local", 2, "no"),
     "screen": Route("screen", ["look_at_screen", "list_windows", "read_window", "check_screen", "done"], ["SEE", "READ"], "local", 1, "no"),
     "settings": Route("settings", ["change_setting", "open_settings", "set_control", "find_control", "read_window", "scroll_until", "click", "list_controls", "done"],

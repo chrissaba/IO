@@ -69,7 +69,11 @@ def plan_local(task: str, context: str, base_url: str, model: str, history: str 
     if context:
         user += f"\n\nCurrent state of the PC:\n{context}"
     if history:
-        user += f"\n\nThe agent got stuck. Recent actions and results:\n{history}\n\nWrite a new plan from the current state."
+        # the results themselves, not just the call names: a replan that couldn't see what had been found planned the
+        # finding all over again (step 1 was always the first web search)
+        user += (f"\n\nWhat the agent has done so far, with the results:\n{history}\n\nPlan only what "
+                 "is left: anything these results already show (facts found, folders made, files written) is done, so never "
+                 "plan it again, and use the facts found as they are.")
     client = OpenAI(base_url=base_url, api_key="local", max_retries=1, timeout=60)
     reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=400,
                                            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])

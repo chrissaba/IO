@@ -2966,7 +2966,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 log("warning", text=f"planning failed: {e}")
                 return
             if text:
-                messages.append({"role": "user", "content": f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
+                messages.append({"role": "user", "content": (f"A plan for what's left:\n{text}\n\nSkip any step you've already done; follow the "
+                                                             "rest, adapting to what you find.") if history else
+                                 f"Your plan:\n{text}\n\nFollow it step by step, adapting to what you find."})
             log("plan", source="local", plan=text, secs=round(time.time() - t0, 1), reason="" if text else "conversation, no plan needed")
 
         researcher = None
@@ -3534,10 +3536,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if loop:  # replan when stuck, as often as needed, but not on a timer: the goal never ends
                 stuck = error_streak >= REPLAN_AFTER_ERRORS and step - last_plan_step > REPLAN_AFTER_STEPS
             else:
-                stuck = (error_streak >= REPLAN_AFTER_ERRORS or step - last_plan_step > REPLAN_AFTER_STEPS) and replans < MAX_REPLANS
+                # failing calls are being stuck; a long task isn't. The step timer is for the small local brain, which drifts;
+                # it told a frontier brain it was "stuck" 10 steps into good research, and the new plan started it over
+                stuck = (error_streak >= REPLAN_AFTER_ERRORS or (not remote_brain and step - last_plan_step > REPLAN_AFTER_STEPS)) \
+                    and replans < MAX_REPLANS
             if stuck:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
-                await get_plan("\n".join(action_lines[-12:]))
+                await get_plan("\n".join(s[:700] for s in steps_log[-12:]))
             if sum(len(str(m.get("content") or "")) for m in messages[head:]) > compact_at:
                 cut = len(messages) - keep_recent
                 while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
@@ -3605,7 +3610,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 else:
                     response = await asyncio.to_thread(
                     brain_create,
-                    messages=seen(compact(messages, snaps_kept=snaps_kept)), tools=tools, temperature=0.2,
+                    # a frontier brain keeps every result of its recent steps word for word (its context holds them;
+                    # compact_at folds the oldest into a summary). Trimming them to their first 1,500 characters
+                    # cut what it had read off pages whose menus come first (python.org's release dates), so it
+                    # read the same pages again and again
+                    messages=seen(compact(messages, keep=keep_recent if remote_brain else 2, snaps_kept=snaps_kept,
+                                          cap=tool_cap if remote_brain else 0)), tools=tools, temperature=0.2,
                     max_tokens=2048 if remote_brain else 1024,
                 )
             except BadRequestError as e:
@@ -4029,6 +4039,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = text_of(await sessions[name].call_tool(aliases.get(name, name), call_args, **timeout))
                         if name == "PowerShell":
                             result = ps_unwrap(result)
+                            if re.search(r"(?i)\bStart-Process\b|\bStart-Job\b|\bstart\s+\"?\w", str(args.get("command", ""))) and "start_app" in actions.REGISTRY:
+                                # Windows-MCP runs in a job the MCP client closes when the task ends, taking these with it
+                                result += ("\nNote: anything started from PowerShell stops when this task ends. For a server or app "
+                                           "that must keep running, use start_app instead.")
                         if name == "App" and args.get("mode") == "switch" and "error" in result.lower() and args.get("name"):
                             # Windows-MCP matches app names exactly; fall back to any window title containing the name
                             if title := await asyncio.to_thread(focus_window, args["name"]):
