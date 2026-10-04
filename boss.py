@@ -2594,7 +2594,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 except Exception as e:  # rate limit, outage, queue timeout, a request it can't take: next one
                     last = e
                     nim.note(model, time.time() - t_req, False)
-                    if getattr(e, "status_code", 0) == 404:  # not offered (any more): skip it for an hour, not 2 minutes
+                    if getattr(e, "status_code", 0) == 404:  # not found: skip it for 10 minutes, not 2 (it can be a blip)
                         nim.note(model, 0, False, gone=True)
                     log("warning", text=f"{nim.label(model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
                     if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):

@@ -69,7 +69,7 @@ def note(model: str, secs: float, ok: bool, gone: bool = False) -> None:
     if ok:
         h["avg"] = secs if h["avg"] is None else 0.6 * h["avg"] + 0.4 * secs
     else:
-        h["failed"] = time.time() + (3600 if gone else 0)
+        h["failed"] = time.time() + (480 if gone else 0)  # "not found" can be a blip (Muse Glimmer 404d once, then worked)
 
 
 def brain_order(start: int, models: list[str] | None = None) -> list[int]:
