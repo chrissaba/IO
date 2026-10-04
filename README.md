@@ -1,81 +1,156 @@
-# IO
+<p align="center">
+  <img src="static/io.png" width="96" alt="IO logo">
+</p>
 
-IO is a local desktop assistant for Windows, named after Jupiter's moon. A small local text model (the boss,
-Gemma 4 E4B on llama.cpp) operates the PC through [Windows-MCP](https://github.com/CursorTouch/Windows-MCP),
-using the accessibility tree to launch apps, click named controls, type and run PowerShell. UI-TARS-1.5-7B
-(in Unsloth Studio) is its eyes: `find_on_screen` and `look_at_screen` handle what the accessibility tree
-can't see. It is fully local: the boss also writes its own plans.
+<h1 align="center">IO</h1>
+
+<p align="center">
+  <b>A desktop agent for Windows that runs on your own GPU.</b><br>
+  Tell it what to do in plain language. It opens apps, clicks, types, browses and plays games, and it can keep going for hours.
+</p>
+
+<p align="center">
+  <img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white">
+  <img alt="Python 3.14" src="https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white">
+  <img alt="llama.cpp" src="https://img.shields.io/badge/runs%20on-llama.cpp-black">
+  <img alt="MCP" src="https://img.shields.io/badge/tools-MCP-6E56CF">
+</p>
+
+---
+
+IO (named after Jupiter's moon) is a local assistant that operates your PC the way a person would. A local model
+plans and decides, UI-TARS-1.5 finds things on screen, and [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)
+reads the accessibility tree so most clicks land on real controls instead of guessed pixels. If you have a key, a
+stronger brain on NVIDIA's free API can take over planning, while the local models stay on as eyes and as the
+fallback.
+
+## Highlights
+
+- **Chat like you would with Claude.** Each message runs as a task with a live checklist, and it remembers the
+  conversation, the actions it took and any images you attached.
+- **Loops that run until you say stop.** "Play Idle Obelisk Miner until I tell you to stop" locks onto that window
+  and keeps acting, researching and writing itself playbooks it reuses on later runs.
+- **Several actions per decision.** The `steps` tool lets the brain send up to 8 actions in one turn (tap, tap,
+  wait, tap). The rest of a batch is skipped if a step fails or a popup appears.
+- **Taps it can verify.** In a loop, every tap compares the window before and after, so the brain is told when a
+  tap did nothing instead of assuming it worked.
+- **Models as tools.** With `ask_model`, the brain consults another model, picked from a list of what each one
+  is good at and how fast it has been lately. Nothing about that choice is hardcoded.
+- **Race mode.** A step can go to up to 5 NVIDIA models at once; the first good answer wins.
+- **87 actions with self-checks**, grouped by job (apps, controls, files, web, games, PC info), plus one-click
+  MCP plugins (web search, documents, Obsidian, GitHub, SQLite and more) and your own skills.
+- **Schedules and triggers.** Run tasks every N minutes, daily, when a file lands in a folder, or from
+  `POST /api/hook/<name>`.
+- **Safe by default.** Deleting files, killing processes and other risky actions wait for your OK.
+  **Ctrl+Alt+End** stops everything.
+
+## How a step works
+
+```mermaid
+flowchart LR
+    S[Screenshot of the<br>working window] --> B{Brain<br>local model or NVIDIA race}
+    B -->|one action| A[Run it]
+    B -->|steps: up to 8| Q[Run in order,<br>stop on failure or popup]
+    B -->|ask_model| H[Helper model<br>advises]
+    B -->|research| R[Hidden browser<br>reads guides]
+    A --> C[Check: did the<br>screen change?]
+    Q --> C
+    H --> B
+    R --> B
+    C --> S
+```
+
+Every action, whether it arrives alone or inside a batch, goes through the same checks: what you told it not to
+do, actions turned off in Settings, risky-action confirmation, and in loops, clicks that must stay inside the
+locked window.
+
+## Models
+
+Pick a mode in Settings. Everything here runs locally through llama.cpp (Unsloth Studio's build).
+
+| Mode | Thinks | Sees and clicks | Notes |
+| --- | --- | --- | --- |
+| **Fast** | Gemma 4 E4B | UI-TARS-1.5-7B | Quickest |
+| **Balanced** | Qwen 3.6 35B-A3B | Qwen 3.6 35B-A3B | Mixture of experts, about 3B active per token |
+| **Smart** | Qwen 3.8 27B | Qwen 3.8 27B | Strongest local option, several times slower |
+
+**Optional cloud brain:** paste an NVIDIA API key in Settings and choose the models (GLM-5.3 Flash, Kimi K3,
+Nemotron 3 Nano Omni, Llama 3.2 90B Vision and others; Settings can test any model in NVIDIA's catalog). IO goes
+round them in order, skips ones that are failing or slow, and falls back to the local model if none answers.
 
 ## Using it
 
-IO is an installed per-user app: open it from the Start menu or Windows search, pin it to the taskbar, and
-find it under Settings > Apps. It starts at sign-in in the tray when **Start with Windows** is on (tray menu).
-Closing the window keeps it running in the tray, so queued and scheduled tasks keep going. On start it opens
-Unsloth Studio, loads UI-TARS and starts the boss model as needed.
+IO installs as a normal per-user app: open it from the Start menu, pin it to the taskbar, or turn on
+**Start with Windows** in the tray menu. Closing the window keeps it in the tray, so queued and scheduled tasks keep
+running. On start it launches Unsloth Studio, loads UI-TARS and starts the local model as needed.
 
-- **Chat** like Claude: each message runs as a task that sees the conversation's earlier messages, actions
-  and attached images, with a live checklist of steps, Tab-to-complete suggestions and a "New" line for
-  replies that arrived while you were away. Chats can be pinned, renamed and deleted from the title menu.
-- **Browser**: Playwright MCP drives pages by their elements, either in a separate Edge window or in your
-  own Chrome through IO's Chrome extension (`chrome-extension/`), where IO's tabs sit in a tab group named
-  IO. The agent opens its tab with `browser_open` and reads long pages with `browser_read`.
-- **Customize**: one-click plugins (MCP servers from `catalog.json`: web search, documents, Obsidian,
-  GitHub, SQLite and more) and skills (your own instructions, added to tasks they fit).
-- **Schedules** (every N minutes or daily), **triggers** (a new file in a folder, or
-  `POST /api/hook/<name>`), **memory** notes, **history**, **usage**, pause/resume and notifications.
-- **Safety**: risky actions (deleting files, killing processes, writing plugin tools, SQL that writes)
-  wait for your OK; Ctrl+Alt+End stops everything. Ctrl+Alt+Q opens a new chat.
+The panel is also served at http://127.0.0.1:8765, so other programs can queue work:
 
-The window is frameless with its own title bar (`desktop.py` hands the caption to the page and keeps Windows'
-snapping, resizing and shadow). The same panel is served at http://127.0.0.1:8765, and other programs can
-queue work there:
-
-```
+```bash
 curl -X POST http://127.0.0.1:8765/api/tasks -H "Content-Type: application/json" -d "{\"task\": \"open notepad and type hello\"}"
 ```
 
-## Fully local
+**Shortcuts:** Ctrl+Alt+Q opens a new chat, Ctrl+Alt+End stops everything.
 
-Everything runs on this PC: the boss plans each task itself before acting (and replans when stuck), and no
-requests go to cloud models.
+### Use your own Chrome (optional)
 
-## Your Chrome (optional)
+By default IO browses in a separate Edge window. To use your Chrome instead, with IO's tabs in a tab group named IO:
 
-1. In Chrome, open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and choose
-   `chrome-extension/` (Settings > Browser has an "Open extension folder" button).
+1. Open `chrome://extensions`, turn on Developer mode, click **Load unpacked** and choose `chrome-extension/`
+   (Settings > Browser has an "Open extension folder" button).
 2. Click IO's icon in Chrome, copy its token, and paste it in Settings > Browser with "Your Chrome" selected.
-3. Press Test: a tab opens in a group called IO.
-
-`chrome-extension/` is a modified copy of Microsoft's Playwright Extension (Apache-2.0); see its NOTICE.
+3. Press **Test**. A tab opens in a group called IO.
 
 ## Setup from scratch
 
-Needs Windows 11, Node.js, [uv](https://docs.astral.sh/uv/), Unsloth Studio (with UI-TARS-1.5-7B Q8_0 and
-its llama.cpp build) and the Gemma 4 E4B GGUF in the Hugging Face cache (see `start-boss-server.cmd`).
+**Needs:** Windows 11, an NVIDIA GPU, Node.js, [uv](https://docs.astral.sh/uv/), and
+[Unsloth Studio](https://unsloth.ai) with UI-TARS-1.5-7B (Q8_0) and its llama.cpp build. The model for your mode
+goes in the Hugging Face cache; the `start-*-server.cmd` scripts show which files each mode expects.
 
-```
+```bash
 uv venv --python 3.14 .venv
 uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 cd mcp && npm install && cd ..
 .venv\Scripts\pythonw.exe install.py
 ```
 
-Run these from a normal terminal. A Python installed from inside another packaged app (for example the
-Claude desktop app's terminal) lands in that app's private storage, where Windows can't start it from the
-Start menu; `install.py` refuses in that case.
+Run these from a normal terminal. A Python installed from inside another packaged app (for example the Claude
+desktop app's terminal) lands in that app's private storage, where Windows can't start it from the Start menu, so
+`install.py` refuses in that case.
 
-Run a task without the window: `.venv\Scripts\python.exe boss.py "open notepad and type hello"`. Each step is
-logged to `logs/boss.jsonl`. `toolcheck.py` (Settings > Tools) tests every tool without touching the screen.
+**Without the window:** `.venv\Scripts\python.exe boss.py "open notepad and type hello"`. Every step is logged to
+`logs/boss.jsonl`, and the panel's debug timeline shows every model call, screenshot and tool with timings.
+`toolcheck.py` (Settings > Tools) tests every tool without touching the screen.
 
 | Variable | Default |
 | --- | --- |
 | `BOSS_URL` / `BOSS_MODEL` | `http://127.0.0.1:8090/v1` / `boss` |
 | `EYES_URL` / `EYES_MODEL` | `http://127.0.0.1:8888/v1` / `mradermacher/UI-TARS-1.5-7B-GGUF` |
 | `STUDIO_API_KEY` | `data/studio.json`, else UI-TARS Desktop's saved settings |
+| `BOSS_APP_PORT` | `8765` |
 
-`extras/ui-tars-desktop.patch` holds the changes made to [UI-TARS-desktop](https://github.com/bytedance/UI-TARS-desktop)
-while testing it with Unsloth Studio (timeouts and retries, image size for UI-TARS-1.5, clipboard timing,
-pulling windows to the primary monitor, snapping clicks to controls).
+## Project layout
 
-UI libraries vendored in `static/`: Alpine.js (MIT), Lucide (ISC), marked (MIT), DOMPurify (Apache-2.0/MPL),
-Geist and Lora fonts (OFL).
+| Path | What it is |
+| --- | --- |
+| `desktop.py` | The app window and tray (frameless, keeps Windows snapping and resizing) |
+| `app.py`, `panel.html` | The local web panel and its API |
+| `boss.py` | The agent loop: brain, eyes, checks, loops and race mode |
+| `actions.py` | The action library, routing and tool catalog |
+| `nim.py` | NVIDIA models: pacing, health, tests and strengths |
+| `learned.py` | Playbooks IO writes for itself after runs |
+| `plugins.py`, `catalog.json` | One-click MCP plugins |
+| `triggers.py` | Folder and webhook triggers |
+| `bench/` | Regression benchmark |
+| `chrome-extension/` | Modified Playwright Extension for driving your Chrome |
+
+## Credits
+
+- [UI-TARS-1.5](https://github.com/bytedance/UI-TARS) by ByteDance for screen grounding.
+  `extras/ui-tars-desktop.patch` holds the changes made to
+  [UI-TARS-desktop](https://github.com/bytedance/UI-TARS-desktop) while testing it with Unsloth Studio.
+- [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) for the accessibility tree and input.
+- [Playwright MCP](https://github.com/microsoft/playwright-mcp); `chrome-extension/` is a modified copy of
+  Microsoft's Playwright Extension (Apache-2.0), see its NOTICE.
+- Vendored in `static/`: Alpine.js (MIT), Lucide (ISC), marked (MIT), DOMPurify (Apache-2.0/MPL), Geist and Lora
+  fonts (OFL).
