@@ -265,7 +265,7 @@ TASKS = [
     task("H34", "web", "Which RFC number defines HTTP Semantics (the 2022 edition that obsoletes RFC 7231)?",
          checks=[{"type": "answer_regex", "pattern": "\\b9110\\b"}]),
     task("H35", "web", "On Wikipedia, in what year was the Hubble Space Telescope launched, and on which Space Shuttle?",
-         checks=[{"type": "answer_regex", "pattern": "1990"}, {"type": "answer_regex", "pattern": "discovery"}]),
+         checks=[{"type": "answer_regex", "pattern": "1990"}, {"type": "answer_regex", "pattern": "discovery|sts-31"}]),
     task("H36", "web", "Find the ISO 4217 currency codes for the Swiss franc, the South African rand and the Indian rupee, and save them "
          "to {dir}\\codes.txt as lines like 'Swiss franc: CHF'.",
          checks=[verify("H36", "t = read('codes.txt').upper()\nfor c in ('CHF', 'ZAR', 'INR'):\n    if c not in t: fail(f'{c} missing: {t[:120]!r}')\nprint('ok')")]),

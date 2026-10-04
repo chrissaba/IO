@@ -432,6 +432,7 @@ async def worker() -> None:
         options["race_width"] = int(state["settings"].get("race_width") or 0)
         options["helper_model"] = state["settings"].get("helper_model", "")
         options["focus_glow"] = bool(state["settings"].get("focus_glow", True))
+        options["learn"] = task.get("learn", True)  # the benchmark sends learn=false: its runs teach IO nothing
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -690,6 +691,8 @@ async def chat_message(request: Request) -> JSONResponse:
         task["loop"] = True
     if "ultracode" in body:
         task["ultracode"] = bool(body["ultracode"])
+    if body.get("learn") is False:
+        task["learn"] = False
     chat["messages"].append({"task_id": task["id"], "at": time.time()})
     # an image-only first message gets a placeholder name; the first message with text names the chat
     if chat["title"] in ("New chat", "Image", "Images") and text:

@@ -861,8 +861,16 @@ def bench_owned(question: str, ctx: dict) -> bool:
     if m := re.search(r"close these windows: (.*?)\. Allow it\?", question, re.S):
         names = [n.strip() for n in m.group(1).split(", ") if n.strip() and n.strip() != "(none match)"]
         return bool(names) and all(any(n == w["title"] for w in new) for n in names)
-    if m := re.search(r"(?:write|delete|move) the file (.*?)\. Allow it\?", question, re.S):
+    if m := re.search(r"(?:write|delete|move|edit|overwrite) the file (.*?)\. Allow it\?", question, re.S):
         return in_sandbox(m.group(1))
+    if m := re.search(r"rename (.*?) to (.*?)\. Allow it\?", question, re.S):
+        return in_sandbox(m.group(1)) and in_sandbox(m.group(2))
+    if m := re.search(r"(?:recycle|delete) (.*?)\. Allow it\?", question, re.S):
+        return all(in_sandbox(p.strip()) for p in m.group(1).split(", ") if p.strip())
+    if m := re.search(r"run in (.*?): (.*)\. Allow it\?", question, re.S):
+        folder, cmd = m.group(1), m.group(2)
+        paths = re.findall(r"[A-Za-z]:\\[^\s'\";|&]+|%TEMP%[^\s'\";|&]*", cmd, re.I)
+        return in_sandbox(folder) and all(in_sandbox(p) for p in paths) and not re.search(r"\b(shutdown|format\s+[a-z]:|reg\s+delete)\b", cmd, re.I)
     if m := re.search(r"run PowerShell: (.*)\. Allow it\?", question, re.S):
         cmd = m.group(1)
         paths = re.findall(r"[A-Za-z]:\\[^\s'\";|]+|%TEMP%[^\s'\";|]*|\$env:TE?MP[^\s'\";|]*", cmd, re.I)
@@ -1089,6 +1097,7 @@ def base_options(cell: dict, task: dict, boss) -> dict:
     else:
         options.update(ask_gemini=False, gemini_mode=settings.get("gemini_mode", "private"), advisor_role=settings.get("advisor_role", "director"))
     options["focus_glow"] = False
+    options["learn"] = False  # bench tasks must not teach IO playbooks (six had piled up and one derailed a later task)
     options["images_from_earlier"] = False
     options["loop"] = bool(task.get("loop") or boss.LOOP_REQUEST.search(task["text"]))
     return options
@@ -1173,7 +1182,7 @@ async def run_http(task: dict, cell: dict, ctx: dict, chats: dict, timeout: floa
     if key not in chats:
         chats[key] = (await asyncio.to_thread(api, "/api/chats", {}))["id"]
     ctx["t0"] = time.time()
-    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop")), "ultracode": False}))["task_id"]
+    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop")), "ultracode": False, "learn": False}))["task_id"]
     run = {"status": "", "answer": "", "error": "", "stop_secs": None, "questions": [], "had_conversation": bool(task.get("chat"))}
     answered, t_stop, t = set(), None, {}
     limit = task.get("run_secs") or timeout

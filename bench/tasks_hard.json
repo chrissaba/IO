@@ -891,7 +891,7 @@
     },
     {
      "type": "answer_regex",
-     "pattern": "discovery"
+     "pattern": "discovery|sts-31"
     }
    ]
   },

@@ -3926,8 +3926,16 @@ def _app_exe_path(app: str) -> str:
         timeout i? seconds it may take (120, at most 600)
         save_to s? also save the output to this file
         """, cost=1.0, star=True, top="command,folder?", fallback="PowerShell(command)", timeout=620,
-        risky=lambda a, c: _h().risky_reason("PowerShell", {"command": a.get("command", "")}, c.request),
-        limits="cmd.exe syntax (2>&1, >, &&); for a server or anything that keeps running use start_app")
+        risky=lambda a, c: (f"run in {a.get('folder') or known_folder('home')}: {a.get('command', '')}"
+                            if _h().risky_reason("PowerShell", {"command": _shell_part(a.get("command", ""))}, c.request) else ""),
+        limits="cmd.exe syntax (2>&1, >, &&), not bash (no << heredocs); for a server or anything that keeps running use start_app")
+def _shell_part(command: str) -> str:
+    """The command line as the shell sees it, without quoted text or heredoc bodies: the risky-command words (del, rm,
+    format...) are about shell commands, and Python code passed in quotes (".format(") was asked about as if it deleted."""
+    s = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?^\s*\1\s*$", " ", str(command or ""), flags=re.S | re.M)
+    return re.sub(r"\"(?:[^\"\\]|\\.)*\"|'[^'\n]*'", " ", s)
+
+
 async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, save_to: str = "", **_) -> str:
     """Programs the way a terminal runs them: stdout and stderr merged in order, the real exit code, no PowerShell
     wrapping (Windows PowerShell 5.1 turns each stderr line into an error record, so a run that redirected its test

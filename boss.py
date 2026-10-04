@@ -207,6 +207,8 @@ FRONTIER_STYLE = """WORKING STYLE
 - Check your work the way the user will use it before calling done: run the tests and read their output, request the
   server's page and its API, look at the result. A command's "Status Code" is the last program's exit code: not 0 means it failed.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
+- State facts only from what your tools returned in this task. If a page didn't show something, look somewhere better
+  (a site's own API, another page) or say you couldn't find it; never fill the gap from memory.
 
 """
 
@@ -3491,8 +3493,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
 
         def learn_now(outcome: str) -> None:
             """The brain rewrites this task's playbook from the run so far, in the background (never slows the task)."""
-            if not remote_brain or len(steps_log) - learned_at[0] < learned.MIN_STEPS:
-                return
+            if not remote_brain or options.get("learn") is False or len(steps_log) - learned_at[0] < learned.MIN_STEPS:
+                return  # learn=False: the benchmark's runs (they had taught IO playbooks about its own sandbox tasks)
             learned_at[0] = len(steps_log)
             steps, window = list(steps_log), (focus if loop else focus_hint) or ""
 
