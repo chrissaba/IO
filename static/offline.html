@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>IO is asleep</title>
+<style>
+  :root { --bg: #fff; --text: #1a1a19; --muted: #6b6a66; --line: #e4e3df; --accent: #6d4aff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1a; --text: #ecebe8; --muted: #a09f9a; --line: #353432; --accent: #9b85ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: grid; place-items: center; padding: 24px 16px; text-align: center; }
+  main { width: 100%; max-width: 360px; }
+  img { width: 64px; height: 64px; border-radius: 16px; opacity: .75; }
+  h1 { font-size: 22px; margin: 14px 0 6px; } p { color: var(--muted); margin: 0 0 22px; font-size: 14.5px; }
+  button { width: 100%; font: inherit; font-weight: 600; padding: 13px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; margin-bottom: 10px; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; }
+  #status { color: var(--muted); font-size: 14px; min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/static/io-192.png" alt="">
+  <h1 id="title">Your PC is asleep</h1>
+  <p id="sub">IO isn't answering. Your PC is probably asleep, or off this network.</p>
+  <button id="wake" hidden>Wake it</button>
+  <button id="retry" class="ghost">Try again</button>
+  <div id="status"></div>
+</main>
+<script>
+  // the wake address (Home Assistant's webhook) is saved on this phone whenever IO is reachable, so it's here when it isn't
+  const status = (t) => { document.getElementById("status").textContent = t; };
+  let config = {};
+  async function loadConfig() {
+    try { const c = await caches.open("io-config"); const r = await c.match("/io-config.json"); if (r) config = await r.json(); } catch {}
+    if (config.machine) document.getElementById("title").textContent = config.machine + " is asleep";
+    document.getElementById("wake").hidden = !config.wake_url;
+    if (!config.wake_url) document.getElementById("sub").textContent += " Waking it from here needs a wake address in IO's Settings > Remote.";
+  }
+  async function up() {
+    try { const r = await fetch("/api/ping", { cache: "no-store", signal: AbortSignal.timeout(5000) }); return r.ok; } catch { return false; }
+  }
+  async function waitForIO(limit = 180) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < limit * 1000) {
+      status(`Waiting for IO… ${Math.round((Date.now() - t0) / 1000)}s`);
+      if (await up()) { status("IO is up."); location.replace("/"); return true; }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    status("No answer yet. The PC may need its Ethernet cable, or Wake-on-LAN turned on.");
+    return false;
+  }
+  document.getElementById("wake").onclick = async () => {
+    const b = document.getElementById("wake"); b.disabled = true;
+    status("Asking Home Assistant to wake the PC…");
+    try { await fetch(config.wake_url, { method: "POST", mode: "no-cors" }); }
+    catch { status("Couldn't reach Home Assistant from here."); b.disabled = false; return; }
+    await waitForIO();
+    b.disabled = false;
+  };
+  document.getElementById("retry").onclick = async () => { status("Checking…"); if (!(await up())) status("Still not answering."); else location.replace("/"); };
+  loadConfig();
+  // the PC may wake by itself (or you woke it another way): go back to IO as soon as it answers
+  setInterval(async () => { if (!document.hidden && !document.getElementById("wake").disabled && await up()) location.replace("/"); }, 6000);
+</script>
+</body>
+</html>

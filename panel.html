@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="IO">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/io-192.png">
 <title>IO</title>
 <script>
   // the chosen theme before anything paints, so a dark IO never flashes light while it loads
@@ -436,6 +441,7 @@
   .url { font: 12px "Geist Mono", ui-monospace, monospace; background: var(--raised); border-radius: 5px; padding: 1px 6px; user-select: all; }
   .checklines { list-style: none; margin: 10px 0 0; padding: 0; } .checklines li { font: 12px "Geist Mono", ui-monospace, monospace; padding: 2px 0; color: var(--muted); }
   .checklines li.ok { color: var(--ok); } .checklines li.err { color: var(--bad); }
+  .paircode { font: 600 20px "Geist Mono", ui-monospace, monospace; letter-spacing: .12em; color: var(--text); user-select: all; }
 
   @media (max-width: 760px) {
     .app { grid-template-columns: 1fr; }
@@ -443,10 +449,26 @@
     .app.railopen .rail { display: flex; }
     .grid2, .prow { grid-template-columns: 1fr; } .ptest { padding-left: 0; }
   }
+  /* the phone (through Tailscale): room for the notch and the home bar, text big enough that iOS doesn't zoom in when
+     you tap a box, and finger-sized buttons */
+  html.remote { -webkit-text-size-adjust: 100%; }
+  html.remote body { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); -webkit-tap-highlight-color: transparent; }
+  html.remote .rail { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  html.remote .composerwrap { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  html.remote .composer textarea, html.remote .typing > .ghost { font-size: 16px; line-height: 23px; }
+  html.remote .composer textarea { height: 23px; min-height: 23px; }
+  html.remote input[type=text], html.remote input[type=number], html.remote input[type=time], html.remote select, html.remote .field textarea { font-size: 16px; }
+  @media (max-width: 760px) {
+    html.remote .iconbtn { padding: 8px; }
+    html.remote .rail { width: min(300px, 86vw); }
+    html.remote .navbtn, html.remote .chatitem { min-height: 40px; }
+    html.remote .chatitem .acts { display: none; }  /* no hover on a phone: pin and delete are in the chat's title menu */
+    html.remote .composerwrap { padding-left: 10px; padding-right: 10px; }
+  }
 </style>
 </head>
 <body>
-<div class="app" :class="{ collapsed: railHidden && !narrow, railopen: railOpen }" x-data="agent()" x-cloak>
+<div class="app" :class="{ collapsed: railHidden && !narrow, railopen: railOpen }" x-data="agent()" x-cloak @io-notice.window="notice = $event.detail">
   <template x-if="dialog">
     <div class="scrim" @mousedown.self="$event.detail < 2 && closeDialog(false)">
       <div class="dialog" role="dialog" aria-modal="true" @keydown.escape.stop="closeDialog(false)"
@@ -501,10 +523,10 @@
 
     <div class="mewrap" @mousedown.outside="menuOpen = false">
       <div class="menu" x-show="menuOpen" x-transition.opacity.duration.100ms>
-        <div class="menuhead" x-text="(s.user || 'You') + ' · IO on this PC'"></div>
-        <button @click="go('settings'); menuOpen = false"><span class="ic" x-html="ic('settings')"></span>Settings<kbd>Ctrl+,</kbd></button>
+        <div class="menuhead" x-text="(s.user || 'You') + (remote ? ' · IO on ' + (s.machine || 'your PC') : ' · IO on this PC')"></div>
+        <button x-show="!remote" @click="go('settings'); menuOpen = false"><span class="ic" x-html="ic('settings')"></span>Settings<kbd>Ctrl+,</kbd></button>
         <button @click="go('usage'); menuOpen = false"><span class="ic" x-html="ic('gauge')"></span>Usage</button>
-        <button @click="go('customize'); menuOpen = false"><span class="ic" x-html="ic('blocks')"></span>Plugins and skills</button>
+        <button x-show="!remote" @click="go('customize'); menuOpen = false"><span class="ic" x-html="ic('blocks')"></span>Plugins and skills</button>
         <hr>
         <button @click="s.settings.theme = isDark() ? 'light' : 'dark'; saveSettings()"><span class="ic" x-html="ic(isDark() ? 'sun' : 'moon')"></span><span x-text="isDark() ? 'Light mode' : 'Dark mode'"></span></button>
         <button @click="togglePause(); menuOpen = false"><span class="ic" x-html="ic(s.status.paused ? 'play' : 'pause')"></span><span x-text="s.status.paused ? 'Resume' : 'Pause'"></span></button>
@@ -512,7 +534,7 @@
       </div>
       <button class="me" @click="menuOpen = !menuOpen">
         <span class="av" x-text="(s.user || 'You').slice(0, 1).toUpperCase()"></span>
-        <span class="who"><span x-text="s.user || 'You'"></span> <small x-text="s.status.paused ? '· paused' : '· local'"></small></span>
+        <span class="who"><span x-text="s.user || 'You'"></span> <small x-text="s.status.paused ? '· paused' : remote ? '· remote' : '· local'"></small></span>
         <span class="ic" x-html="ic('chevrons-up-down', 'sm')" style="color:var(--faint)"></span>
       </button>
     </div>
@@ -1030,6 +1052,41 @@
           <label class="switch"><input type="checkbox" x-model="s.settings.debug" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>Focus glow</div><div>While IO works, a purple glow outlines the window it's focused on. It's invisible to IO's own screenshots.</div></div>
           <label class="switch"><input type="checkbox" :checked="s.settings.focus_glow !== false" @change="s.settings.focus_glow = $event.target.checked; saveSettings()"><span></span></label></div>
+        <div class="setting"><div class="txt"><div>Keep the PC awake while IO works</div><div>Holds off sleep (the screen can still turn off) while a run, goal or schedule is going, and for 15 minutes after your phone last used IO.</div></div>
+          <label class="switch"><input type="checkbox" :checked="s.settings.keep_awake !== false" @change="s.settings.keep_awake = $event.target.checked; saveSettings()"><span></span></label></div>
+      </div>
+
+      <h2>Remote</h2>
+      <div class="card" x-effect="view === 'settings' && !remoteInfo && loadRemote()">
+        <div class="setting"><div class="txt"><div>Use IO from your phone</div><div>Your own phone reaches IO through Tailscale, your private network, after you pair it here. Nothing is opened to the internet. A paired phone can chat, watch runs and goals, and answer approvals; settings, keys and plugins stay on this PC.</div></div>
+          <label class="switch"><input type="checkbox" x-model="s.settings.remote_access" @change="saveSettings(); loadRemote()"><span></span></label></div>
+        <template x-if="s.settings.remote_access">
+          <div>
+            <div class="setting"><div class="txt"><div>Tailscale</div>
+                <div x-show="!remoteInfo">Checking…</div>
+                <div x-show="remoteInfo?.tailscale === 'missing'">Not installed. Install it on this PC (<span class="url">winget install Tailscale.Tailscale</span>) and on your phone (App Store or Play Store), then sign in to both with the same account.</div>
+                <div x-show="remoteInfo?.tailscale === 'signed_out'">Installed, but not signed in. Open Tailscale from the tray and sign in.</div>
+                <div x-show="remoteInfo?.tailscale === 'error'" x-text="remoteInfo?.note"></div>
+                <div x-show="remoteInfo?.tailscale === 'ready' && !remoteInfo?.serving">Signed in. Press "Set up" so Tailscale serves IO over HTTPS at this PC's private address.</div>
+                <div x-show="remoteInfo?.serving">Ready. On your phone, open <span class="url" x-text="remoteInfo?.address"></span>, then Share &gt; Add to Home Screen.</div>
+                <div x-show="remoteSetup.link">Tailscale needs HTTPS turned on for your network first: <a :href="remoteSetup.link" target="_blank" rel="noopener">turn it on</a>, then press "Set up" again.</div>
+                <div class="note" x-show="remoteSetup.output && !remoteSetup.ok && !remoteSetup.link" x-text="remoteSetup.output"></div></div>
+              <div style="display:flex; gap:6px">
+                <button class="btn" x-show="remoteInfo?.tailscale === 'ready' && !remoteInfo?.serving" @click="setupRemote()" :disabled="remoteSetup.busy" x-text="remoteSetup.busy ? 'Setting up…' : 'Set up'"></button>
+                <button class="btn ghost" @click="loadRemote()" title="Check again"><span class="ic" x-html="ic('refresh-cw', 'sm')"></span></button>
+              </div></div>
+            <div class="setting"><div class="txt"><div>Pair a phone</div>
+                <div x-show="!pairCode">On the phone, open IO's address, then type the code this shows. A code works once, for ten minutes.</div>
+                <div x-show="pairCode">Type this on the phone: <b class="paircode" x-text="pairCode"></b></div></div>
+              <button class="btn" @click="makePairCode()" x-text="pairCode ? 'New code' : 'Pair a phone'"></button></div>
+            <template x-for="d in (s.remote?.devices || [])" :key="d.id">
+              <div class="setting"><div class="txt"><div x-text="d.name"></div><div x-text="'Paired ' + ago(d.created) + ' · last used ' + ago(d.last_seen)"></div></div>
+                <button class="btn danger sm" @click="revokeDevice(d)">Remove</button></div>
+            </template>
+            <div class="setting"><div class="txt"><div>Wake address</div><div>When the PC is asleep, your phone shows a Wake button that calls this: a Home Assistant webhook that sends the PC a Wake-on-LAN packet. Needs the PC on Ethernet.</div></div>
+              <input type="text" style="width:260px" :value="s.settings.wake_url || ''" @change="s.settings.wake_url = $event.target.value.trim(); saveSettings()" placeholder="https://…/api/webhook/wake-pc"></div>
+          </div>
+        </template>
       </div>
 
       <h2>Tools</h2>
@@ -1049,6 +1106,21 @@
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json());
 const md = (text) => enrich(DOMPurify.sanitize(marked.parse(String(text ?? ""), { breaks: true })));
+// opened through Tailscale from a phone (not the desktop window): compact feed, phone layout, the app shell kept offline
+const REMOTE = !["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+if (REMOTE) {
+  document.documentElement.classList.add("remote");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+// what the "PC is asleep" screen needs when IO can't answer: kept on the phone while it can
+async function saveWakeConfig(s) {
+  if (!REMOTE || !("caches" in window)) return;
+  try {
+    const c = await caches.open("io-config");
+    await c.put("/io-config.json", new Response(JSON.stringify({ wake_url: (s.settings || {}).wake_url || "", machine: s.machine || "" }),
+      { headers: { "Content-Type": "application/json" } }));
+  } catch {}
+}
 
 // answers are about this PC: links open in your browser, paths open in File Explorer (checked against the disk first, since
 // paths can hold spaces), code blocks get a copy button, wide tables scroll, and localhost addresses say they're on this PC
@@ -1133,6 +1205,11 @@ document.addEventListener("click", async (ev) => {
   const open = ev.target.closest("[data-open]");
   if (open) {
     ev.preventDefault();
+    if (REMOTE) {  // on the phone: web links open here; files and folders live on the PC
+      if (/^https?:\/\//i.test(open.dataset.open)) window.open(open.dataset.open, "_blank", "noopener");
+      else window.dispatchEvent(new CustomEvent("io-notice", { detail: `${open.dataset.open} is on your PC; open it there.` }));
+      return;
+    }
     const r = await post("/api/open", { target: open.dataset.open, reveal: ev.shiftKey }).catch(() => ({ error: "IO didn't answer" }));
     if (r && r.error) { open.classList.add("missing"); open.title = r.error; }
     return;
@@ -1176,7 +1253,8 @@ function agent() {
       { id: "triggers", label: "Triggers", icon: "zap" },
       { id: "memory", label: "Memory", icon: "brain" },
       { id: "history", label: "History", icon: "history" },
-    ],
+    ].filter((v) => !(REMOTE && v.id === "customize")),  // plugins and skills are changed on the PC only
+    remote: REMOTE,
     suggestions: [
       { icon: "notebook-pen", label: "Write a note", text: "Open Notepad and write a shopping list: eggs, milk, bread" },
       { icon: "eye", label: "What's on my screen", text: "Tell me what's on my main monitor right now" },
@@ -1220,6 +1298,36 @@ function agent() {
       return parts.join(" · ");
     },
     decide(a, decision) { post(`/api/approvals/${a.id}`, { decision }).then(() => this.refresh()); },
+    // ----- remote (Settings > Remote, on the PC) -----
+    remoteInfo: null, remoteSetup: {}, pairCode: "", pairTimer: 0,
+    async loadRemote() {
+      if (REMOTE) return;
+      this.remoteInfo = { tailscale: "" };  // checking (and only once at a time)
+      try { this.remoteInfo = await (await fetch("/api/remote/status")).json(); } catch { this.remoteInfo = { tailscale: "error", note: "IO didn't answer" }; }
+    },
+    async setupRemote() {
+      this.remoteSetup = { busy: true };
+      try { this.remoteSetup = await post("/api/remote/serve", {}); } catch { this.remoteSetup = { output: "IO didn't answer" }; }
+      if (this.remoteSetup.tailscale) this.remoteInfo = this.remoteSetup;
+    },
+    async makePairCode() {
+      const r = await post("/api/remote/code", {}).catch(() => ({}));
+      if (!r.code) return;
+      this.pairCode = r.code.slice(0, 3) + " " + r.code.slice(3);
+      clearTimeout(this.pairTimer);
+      this.pairTimer = setTimeout(() => { this.pairCode = ""; }, Math.max(0, r.expires * 1000 - Date.now()));
+    },
+    async revokeDevice(d) {
+      if (await this.askUser({ title: `Remove ${d.name}?`, text: "It stops reaching IO at once. You can pair it again later.", ok: "Remove", danger: true }))
+        post(`/api/remote/devices/${d.id}/revoke`, {}).then(() => this.refresh());
+    },
+    ago(t) {
+      const s = Math.max(0, Date.now() / 1000 - (t || 0));
+      if (s < 90) return "just now";
+      if (s < 5400) return Math.round(s / 60) + " min ago";
+      if (s < 129600) return Math.round(s / 3600) + " h ago";
+      return Math.round(s / 86400) + " days ago";
+    },
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
@@ -1292,9 +1400,17 @@ function agent() {
       ["pointerdown", "keydown", "wheel"].forEach((ev) => window.addEventListener(ev, () => { this.lastInput = Date.now(); }, { capture: true, passive: true }));
       window.addEventListener("mousemove", (e) => { if (e.movementX || e.movementY) this.lastInput = Date.now(); }, { passive: true });
       window.addEventListener("focus", () => { this.lastInput = Date.now(); this.refresh(); });
-      document.addEventListener("visibilitychange", () => this.refresh());
+      document.addEventListener("visibilitychange", () => { this.missed = 0; this.refresh(); });
       try { this.chatId = localStorage.getItem("chatId") || ""; } catch {}
       await Promise.all([this.refresh(false), this.loadNotes(), this.loadCustomize()]);
+      // a link to a chat or a page (a notification on the phone opens one): #chat/<id>, #goals, #approvals…
+      const follow = () => {
+        const [page, id] = decodeURIComponent(location.hash.slice(1)).split("/");
+        if (page === "chat" && id && this.s.chats.some((c) => c.id === id)) this.openChat(id);
+        else if (this.views.some((v) => v.id === page)) this.go(page);
+      };
+      follow();
+      window.addEventListener("hashchange", follow);
       window.addEventListener("keydown", (e) => {
         if (this.dialog) { if (e.key === "Escape") this.closeDialog(false); return; }
         if (e.ctrlKey && e.key === ",") { e.preventDefault(); this.go("settings"); }
@@ -1304,12 +1420,13 @@ function agent() {
       if (this.chat) this.lockDividerIfUnseen(); else this.chatId = "";
       this.ready = true;
       this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "chat") this.scrollToStart(); });
-      setInterval(() => this.refresh(), 1000);
+      setInterval(() => this.refresh(), REMOTE ? 2500 : 1000);
       this.scrollToStart();
       this.$refs.task.focus();
     },
     go(v) {
       if (this.renaming) this.saveRename();  // leaving with Ctrl+, or the hotkey keeps what you typed
+      if (REMOTE && (v === "settings" || v === "customize")) v = "chat";  // changed on the PC only
       this.view = v; this.menuOpen = false; this.railOpen = false; this.titleMenu = false;
     },
 
@@ -1396,12 +1513,33 @@ function agent() {
     },
     async refresh(track = true) {
       let text;
-      try { text = await (await fetch("/api/state")).text(); } catch { return; }
+      if (REMOTE) {
+        // the phone: a compact feed, and nothing at all when it hasn't changed (304 against the last ETag)
+        // in the background the phone polls nothing (it comes back up to date the moment you look)
+        if (document.hidden || this.polling) return;
+        let r;
+        this.polling = true;
+        try { r = await fetch("/api/state?lite=1", { headers: this.etag ? { "If-None-Match": this.etag } : {}, cache: "no-store", signal: AbortSignal.timeout(10000) }); }
+        catch { this.missed = (this.missed || 0) + 1; if (this.missed >= 3) location.replace("/offline.html"); return; }
+        finally { this.polling = false; }
+        this.missed = 0;
+        if (r.status === 401) { location.replace("/pair"); return; }
+        if (r.status === 304) { if (track && this.ready) this.trackSeen(); return; }
+        if (!r.ok) return;
+        this.etag = r.headers.get("ETag") || "";
+        text = await r.text();
+      } else {
+        try { text = await (await fetch("/api/state")).text(); } catch { return; }
+      }
       if (text !== this.lastState) {
         this.lastState = text;
         const el = this.$refs.messages;
         const atBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
         this.s = JSON.parse(text);
+        if (REMOTE) {
+          try { this.s.settings.theme = localStorage.getItem("theme") || "system"; } catch { this.s.settings.theme = "system"; }
+          if (!this.wakeSaved) { this.wakeSaved = true; saveWakeConfig(this.s); }
+        }
         if (atBottom) this.scrollDown();
       }
       if (track && this.ready) this.trackSeen();
@@ -1713,7 +1851,13 @@ function agent() {
       if (await this.askUser({ title: "Clear history?", text: "Finished items are removed. Chats that used them will lose those messages.", ok: "Clear", danger: true }))
         post("/api/history/clear").then(() => this.refresh());
     },
-    saveSettings() { return post("/api/settings", this.s.settings); },
+    saveSettings() {
+      if (REMOTE) {  // the phone can't change IO's settings; its light or dark mode is its own
+        try { localStorage.setItem("theme", this.s.settings.theme || "system"); } catch {}
+        return Promise.resolve({});
+      }
+      return post("/api/settings", this.s.settings);
+    },
     isDark() { const t = this.s.settings.theme; return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); },
     MODELS: [
       { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },
@@ -1798,7 +1942,7 @@ function agent() {
 
     // ----- customize -----
     post,
-    async loadCustomize() { this.custom = await (await fetch("/api/customize")).json(); },
+    async loadCustomize() { if (!REMOTE) this.custom = await (await fetch("/api/customize")).json(); },  // the phone doesn't manage plugins
     get pluginCategories() { return [...new Set(this.filteredPlugins.map((p) => p.category || "Other"))]; },
     get filteredPlugins() {
       const q = this.pluginQuery.toLowerCase();

@@ -8,6 +8,7 @@ templates and settings are saved in data/store.json. Other programs can queue ta
 """
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import os
@@ -27,14 +28,15 @@ import uvicorn
 from PIL import Image
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import approvals
 import boss
+import remote
 import learned
 import nim
 import overlay
@@ -62,6 +64,7 @@ MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
     "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, "keep_awake": True,
+    "remote_access": False, "wake_url": "",
     "browser_mode": "edge", "model_mode": "fast", "focus_glow": True, "theme": "system",
     # the brain: ask_gemini on = the NVIDIA brain (GLM-5.3 Flash, DeepSeek V4.1 Flash, Kimi K3) runs tasks once a key is
     # saved; off = the local models alone. (The name is from when the remote AI was Gemini; boss.py and the bench read it.)
@@ -740,7 +743,8 @@ async def keep_awake() -> None:
     while True:
         now = time.time()
         busy = any(t["status"] in ("queued", "running", "waiting") for t in state["tasks"]) or any(
-            g.get("status", "active") == "active" and (g.get("next_check") or 0) - now < 600 for g in state["goals"])
+            g.get("status", "active") == "active" and (g.get("next_check") or 0) - now < 600 for g in state["goals"]) or (
+            now - remote.last_remote[0] < 900)  # your phone was here in the last 15 min (it may have just woken the PC)
         want = busy and state["settings"].get("keep_awake", True)
         if want != held:
             ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if want else 0))
@@ -807,11 +811,45 @@ def today_stats() -> dict:
             "avg": round(sum(t["finished"] - t["started"] for t in fin) / len(fin)) if fin else 0}
 
 
-async def get_state(_request: Request) -> JSONResponse:
-    return JSONResponse(
+LITE_EVENTS = {"tool", "todo", "plan", "progress", "warning", "director", "agents", "agent_done", "check", "done"}
+
+
+def lite_task(t: dict, with_events: bool) -> dict:
+    """A task for a phone: its checklist's events only (the last 80, results cut short), or none for older tasks."""
+    out = {k: v for k, v in t.items() if k != "events"}
+    if with_events:
+        evs = [e for e in t.get("events", []) if e.get("event") in LITE_EVENTS][-80:]
+        cut = lambda v: v[:200] + "…" if isinstance(v, str) and len(v) > 200 else v  # a file's whole text is a write's argument
+        out["events"] = [{**e, **({"result": str(e["result"])[:300]} if "result" in e else {}),
+                          **({"args": {k: cut(v) for k, v in e["args"].items()}} if isinstance(e.get("args"), dict) else {})} for e in evs]
+    else:
+        out["events"] = []
+    return out
+
+
+async def get_state(request: Request) -> Response:
+    """Everything the panel shows. ?lite=1 (the phone): only the newest tasks keep their checklist events, so a poll is
+    a few KB instead of 1.7 MB; and an unchanged state answers 304 to the ETag it sent."""
+    lite = bool(request.query_params.get("lite"))
+    tasks = visible_tasks()
+    if lite:
+        tasks = [lite_task(t, i < 25 or t["status"] in ("queued", "running", "waiting")) for i, t in enumerate(tasks)]
+    body = state_body(tasks, lite)
+    if not lite:
+        return JSONResponse(body)
+    raw = json.dumps(body, ensure_ascii=False).encode()
+    etag = '"' + hashlib.sha1(raw).hexdigest()[:20] + '"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return Response(raw, media_type="application/json", headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
+def state_body(tasks: list, lite: bool) -> dict:
+    return (
         {
             "status": status,
-            "tasks": visible_tasks(),
+            "tasks": tasks,
+            "remote": {"devices": remote.devices(), "enabled": bool(state["settings"].get("remote_access"))} if not lite else {},
             "chats": sorted(state["chats"], key=lambda c: c.get("updated", c["created"]), reverse=True),
             "schedules": state["schedules"],
             "goals": state["goals"],
@@ -1087,9 +1125,13 @@ async def save_settings(request: Request) -> JSONResponse:
             s[key] = str(body[key] or "").strip()[:120]
     if "ask_gemini" in body:
         s["brain_v2"] = True  # the user chose: no migration ever flips it again
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode", "debug"):
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode", "debug",
+                "keep_awake", "remote_access"):
         if key in body:
             s[key] = bool(body[key])
+    if "wake_url" in body:  # Home Assistant's webhook that sends this PC a wake packet (the phone calls it when IO is asleep)
+        url = str(body["wake_url"] or "").strip()
+        s["wake_url"] = url if re.match(r"^https?://\S+$", url) else ""
     if not s["focus_glow"]:
         overlay.hide()
     elif current["task"]:
@@ -1307,27 +1349,129 @@ async def index(_request: Request) -> HTMLResponse:
     return HTMLResponse((HERE / "panel.html").read_text(encoding="utf-8"))
 
 
+# ---------- remote: pairing a phone, the app shell, waking the PC ----------
+
+async def pair_page(_request: Request) -> HTMLResponse:
+    return HTMLResponse((HERE / "static" / "pair.html").read_text(encoding="utf-8"))
+
+
+async def pair_device(request: Request) -> JSONResponse:
+    body = await request.json()
+    token = remote.pair(str(body.get("code", "")), str(body.get("name", "")))
+    if not token:
+        return JSONResponse({"error": "That code is wrong or has expired. Make a new one in IO's Settings > Remote on the PC."}, status_code=403)
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(remote.COOKIE, token, max_age=365 * 86400, httponly=True, secure=True, samesite="strict", path="/")
+    return resp
+
+
+async def pair_code(_request: Request) -> JSONResponse:
+    if not state["settings"].get("remote_access"):
+        return JSONResponse({"error": "turn remote access on first"}, status_code=400)
+    p = remote.new_code()
+    return JSONResponse({"code": p["code"], "expires": p["expires"]})
+
+
+async def revoke_device(request: Request) -> JSONResponse:
+    return JSONResponse({"ok": remote.revoke(request.path_params["id"]), "devices": remote.devices()})
+
+
+async def remote_status(_request: Request) -> JSONResponse:
+    return JSONResponse(await asyncio.to_thread(remote.tailscale_status, PORT))
+
+
+async def remote_serve(_request: Request) -> JSONResponse:
+    return JSONResponse(await asyncio.to_thread(remote.tailscale_serve, PORT))
+
+
+async def ping(_request: Request) -> JSONResponse:
+    """Is IO up (the phone's wake screen polls this after asking Home Assistant to wake the PC)."""
+    return JSONResponse({"ok": True, "machine": os.environ.get("COMPUTERNAME", ""), "busy": current["task"] is not None})
+
+
+async def manifest(_request: Request) -> JSONResponse:
+    return JSONResponse({
+        "name": "IO", "short_name": "IO", "description": "Your PC's assistant", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#ffffff", "theme_color": "#ffffff",
+        "icons": [{"src": "/static/io-192.png", "sizes": "192x192", "type": "image/png"},
+                  {"src": "/static/io-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}],
+    }, media_type="application/manifest+json")
+
+
+async def service_worker(_request: Request) -> Response:
+    # served from the root so it can look after the whole app; never cached by the browser itself
+    return Response((HERE / "static" / "sw.js").read_text(encoding="utf-8"), media_type="application/javascript",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+async def offline_page(_request: Request) -> HTMLResponse:
+    return HTMLResponse((HERE / "static" / "offline.html").read_text(encoding="utf-8"))
+
+
 ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
+# what a paired phone still can't do from afar: open IO wider or change what it may touch (keys, plugins, settings,
+# devices, the browser bridge, tool checks). Everything about using IO (chats, runs, goals, approvals) works.
+REMOTE_DENY = ("/api/remote/", "/api/keys/", "/api/plugins/", "/api/settings", "/api/browser", "/api/skills", "/api/toolcheck",
+               "/api/learned/", "/api/nim/", "/api/open",  # /api/open: a tapped path would open on the PC's screen
+               "/api/quit", "/api/show", "/api/customize")  # quitting would leave the phone nothing to reach
 
 
 class SameOriginOnly:
-    """Web pages on other sites can't send commands here (queue a task, change settings, install plugins)."""
+    """Web pages on other sites can't send commands here (queue a task, change settings, install plugins). A remote
+    page is allowed only from its own origin (the tailnet address it was served from)."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not scope["path"].startswith("/api/hook/"):
-            origin = dict(scope["headers"]).get(b"origin")
-            if origin is not None and origin.decode("latin-1") not in ALLOWED_ORIGINS:
-                return await PlainTextResponse("forbidden", status_code=403)(scope, receive, send)
+            headers = dict(scope["headers"])
+            origin = headers.get(b"origin")
+            if origin is not None:
+                o = origin.decode("latin-1")
+                host = headers.get(b"host", b"").decode("latin-1")
+                if o not in ALLOWED_ORIGINS and o.split("://", 1)[-1] != host:
+                    return await PlainTextResponse("forbidden", status_code=403)(scope, receive, send)
+        await self.app(scope, receive, send)
+
+
+class RemoteGate:
+    """127.0.0.1 and localhost: the desktop window, as always. Any other host is a request through Tailscale's proxy: it
+    gets through only with remote access turned on, and only from a paired device (the pairing page and the app shell
+    excepted). This replaces the old localhost-only host check, which it keeps when remote access is off."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            if remote.is_remote(scope):
+                path = scope["path"]
+                if not state["settings"].get("remote_access"):
+                    return await PlainTextResponse("IO's remote access is off (Settings > Remote)", status_code=403)(scope, receive, send)
+                if not path.startswith(remote.PUBLIC_PATHS) and remote.device_for(remote.token_of(scope)) is None:
+                    if path.startswith("/api/"):
+                        return await JSONResponse({"error": "pair this device first"}, status_code=401)(scope, receive, send)
+                    return await RedirectResponse("/pair", status_code=303)(scope, receive, send)
+                if path.startswith(REMOTE_DENY):
+                    return await JSONResponse({"error": "that can only be changed on the PC"}, status_code=403)(scope, receive, send)
         await self.app(scope, receive, send)
 
 
 app = Starlette(
-    middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"]), Middleware(SameOriginOnly)],
+    middleware=[Middleware(GZipMiddleware, minimum_size=2000), Middleware(RemoteGate), Middleware(SameOriginOnly)],
     routes=[
         Route("/", index),
+        Route("/pair", pair_page),
+        Route("/api/pair", pair_device, methods=["POST"]),
+        Route("/api/remote/code", pair_code, methods=["POST"]),
+        Route("/api/remote/devices/{id}/revoke", revoke_device, methods=["POST"]),
+        Route("/api/remote/status", remote_status),
+        Route("/api/remote/serve", remote_serve, methods=["POST"]),
+        Route("/api/ping", ping),
+        Route("/manifest.webmanifest", manifest),
+        Route("/sw.js", service_worker),
+        Route("/offline.html", offline_page),
         Route("/api/state", get_state),
         Route("/api/tasks", get_state, methods=["GET"]),  # kept for older callers
         Route("/api/tasks", add_task, methods=["POST"]),

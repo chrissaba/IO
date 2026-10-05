@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IO">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/io-192.png">
+<title>Pair with IO</title>
+<style>
+  :root { --bg: #fff; --text: #1a1a19; --muted: #6b6a66; --line: #e4e3df; --accent: #6d4aff; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1a; --text: #ecebe8; --muted: #a09f9a; --line: #353432; --accent: #9b85ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: grid; place-items: center; padding: 24px 16px; }
+  main { width: 100%; max-width: 360px; text-align: center; }
+  img { width: 64px; height: 64px; border-radius: 16px; }
+  h1 { font-size: 22px; margin: 14px 0 6px; } p { color: var(--muted); margin: 0 0 22px; font-size: 14.5px; }
+  input { width: 100%; font: inherit; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: transparent; color: var(--text); margin-bottom: 10px; }
+  input.code { font-size: 28px; letter-spacing: .4em; text-align: center; font-variant-numeric: tabular-nums; }
+  button { width: 100%; font: inherit; font-weight: 600; padding: 13px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; }
+  .err { color: var(--bad); font-size: 14px; min-height: 1.5em; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/static/io-192.png" alt="">
+  <h1>Pair this phone with IO</h1>
+  <p>On your PC, open IO, go to Settings &gt; Remote and press "Pair a phone". Type the six-digit code it shows.</p>
+  <input class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000000" autofocus>
+  <input id="name" placeholder="Name for this device" maxlength="40">
+  <button id="go">Pair</button>
+  <div class="err" id="err"></div>
+</main>
+<script>
+  const ua = navigator.userAgent;
+  document.getElementById("name").value = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android phone" : "Browser";
+  async function pair() {
+    const btn = document.getElementById("go"), err = document.getElementById("err");
+    btn.disabled = true; err.textContent = "";
+    try {
+      const r = await fetch("/api/pair", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: document.getElementById("code").value, name: document.getElementById("name").value }) });
+      const j = await r.json();
+      if (r.ok) { location.href = "/"; return; }
+      err.textContent = j.error || "That didn't work.";
+    } catch { err.textContent = "Couldn't reach IO."; }
+    btn.disabled = false;
+  }
+  document.getElementById("go").onclick = pair;
+  document.getElementById("code").addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);  // IO shows it as "123 456"
+    if (e.target.value.length === 6) pair();
+  });
+</script>
+</body>
+</html>

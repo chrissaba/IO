@@ -101,6 +101,21 @@ By default IO browses in a separate Edge window. To use your Chrome instead, wit
 2. Click IO's icon in Chrome, copy its token, and paste it in Settings > Browser with "Your Chrome" selected.
 3. Press **Test**. A tab opens in a group called IO.
 
+### Use IO from your phone (optional)
+
+IO can be an app on your phone: chat with it, watch runs and goals, and answer approvals from anywhere. It goes
+through [Tailscale](https://tailscale.com), your own private network, so nothing is opened to the internet.
+
+1. Install Tailscale on the PC and on your phone, and sign in to both with the same account.
+2. In IO's **Settings > Remote**, turn on remote access and press **Set up**. IO shows your PC's private address.
+3. Open that address on your phone, press **Pair a phone** on the PC, and type the six-digit code it shows.
+4. On an iPhone, Share > **Add to Home Screen** makes it a full-screen app.
+
+A paired phone can't change settings, keys or plugins; those stay on the PC, and Settings can remove a phone at any
+time. While you use IO from the phone, the PC holds off sleep for 15 minutes. If it does fall asleep, the phone
+shows a **Wake** button when you give IO a wake address: a Home Assistant webhook that sends the PC a Wake-on-LAN
+packet (the PC must be on Ethernet).
+
 ## Setup from scratch
 
 **Needs:** Windows 11, an NVIDIA GPU, Node.js, [uv](https://docs.astral.sh/uv/), and
@@ -141,6 +156,7 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 | `learned.py` | Playbooks IO writes for itself after runs |
 | `plugins.py`, `catalog.json` | One-click MCP plugins |
 | `triggers.py` | Folder and webhook triggers |
+| `remote.py`, `static/sw.js` | Phone access: pairing, device tokens, Tailscale, the offline Wake screen |
 | `bench/` | Regression benchmark |
 | `chrome-extension/` | Modified Playwright Extension for driving your Chrome |
 
