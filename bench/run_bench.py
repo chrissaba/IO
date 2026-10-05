@@ -863,7 +863,7 @@ def bench_owned(question: str, ctx: dict) -> bool:
         return bool(names) and all(any(n == w["title"] for w in new) for n in names)
     if m := re.search(r"(?:write|delete|move|edit|overwrite) the file (.*?)\. Allow it\?", question, re.S):
         return in_sandbox(m.group(1))
-    if m := re.search(r"rename (.*?) to (.*?)\. Allow it\?", question, re.S):
+    if m := re.search(r"(?:rename|move|copy) (.*?) to (.*?)\. Allow it\?", question, re.S):
         return in_sandbox(m.group(1)) and in_sandbox(m.group(2))
     if m := re.search(r"(?:recycle|delete) (.*?)\. Allow it\?", question, re.S):
         return all(in_sandbox(p.strip()) for p in m.group(1).split(", ") if p.strip())

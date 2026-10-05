@@ -27,6 +27,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from pathlib import Path
@@ -230,6 +231,45 @@ def layer_system(names: list, browser_where: str = "", frontier: bool = False) -
                                jobs=(FRONTIER_STYLE if frontier else "") +
                                (("COMMON JOBS\n" + "\n".join(f"- {j}" for j in jobs) + "\n\n") if jobs else ""), browser=browser,
                                folders=user_folders())
+
+
+MADE_FILE = re.compile(r"\b(?:creat|generat|wr[io]t|sav|made|built|produc|export)\w*\b[^.\n]{0,80}?([\w\-]+\.(?:svg|md|txt|csv|json|py|html?|js|css|png|jpe?g|zip|xlsx|docx|pptx|pdf|log|ya?ml|xml|ini|bat|ps1))\b"
+                       r"|([\w\-]+\.(?:svg|md|txt|csv|json|py|html?|js|css|png|jpe?g|zip|xlsx|docx|pptx|pdf|log|ya?ml|xml|ini|bat|ps1))\b[^.\n]{0,30}?\b(?:was|were|has been|have been|is now) (?:creat|generat|written|sav|made|built)\w*", re.I)
+NOT_DONE = re.compile(r"\b(couldn'?t|could not|can'?t|cannot|didn'?t|did not|unable|failed|wasn'?t|were not|weren'?t|not yet|instead of|would)\b", re.I)
+WRITE_TOOLS = ("write_file", "edit_file", "run_command", "PowerShell", "file_op", "FileSystem", "screenshot", "start_app", "save_file_as", "write_in_app")
+
+
+def leaked_call(text: str, names: set):
+    """A tool call written as text instead of made: <|python_tag|>{"name": t, "parameters": {...}} (Llama), or a bare
+    {"name": ..., "arguments": ...}. A call object when the name is a tool this task has, else None."""
+    s = re.sub(r"<\|python_tag\|>|<\|eom_id\|>|<\|eot_id\|>|```(?:json)?", "", text or "").strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        data = json.loads(s)
+    except ValueError:
+        data = loose_json(s)
+    if not isinstance(data, dict):
+        return None
+    name = data.get("name") or data.get("tool")
+    args = data.get("parameters", data.get("arguments", data.get("args", {})))
+    if name not in names or not isinstance(args, (dict, str)):
+        return None
+    return SimpleNamespace(id=f"leak-{uuid.uuid4().hex[:8]}", type="function",
+                           function=SimpleNamespace(name=name, arguments=args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)))
+
+
+def claimed_unmade(answer: str, steps_log: list[str]) -> str:
+    """A file the answer says was made that no step that can write files ever touched ('' when every claim has a step)."""
+    text = answer or ""
+    claimed = set()
+    for m in MADE_FILE.finditer(text):
+        clause = re.split(r"[.;\n]", text[:m.start()])[-1] + m.group(0)  # the sentence up to the claim
+        if not NOT_DONE.search(clause):  # "I couldn't create chart.svg" is an honest report, not a claim
+            claimed.add(m.group(1) or m.group(2))
+    writes = " ".join(s for s in steps_log if s.split("(", 1)[0] in WRITE_TOOLS).lower()
+    missing = sorted(f for f in claimed if f.lower() not in writes)
+    return f"your answer says {', '.join(missing)} {'was' if len(missing) == 1 else 'were'} made, but no step wrote it." if missing else ""
 
 
 def kill_by_name_problem(name: str) -> str:
@@ -2675,7 +2715,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """Whether a reply does something (a tool call), or tools weren't offered. A race takes the first reply that
             acts; one that only talks waits RACE_TALK_GRACE for an acting one ("Next, I will create the folder..." once
             won by being first and ended the task; rejecting talk outright instead threw away a good final answer)."""
-            return bool(r.choices[0].message.tool_calls) or not kw.get("tools")
+            m = r.choices[0].message
+            if m.tool_calls or not kw.get("tools"):
+                return True
+            return leaked_call(m.content or "", {t["function"]["name"] for t in kw["tools"]}) is not None  # a call written as text
 
         def race(kw: dict, purpose: str, width: int):
             """The same step sent to up to `width` models at once (healthy, quick-queue ones, in order); the first usable
@@ -3065,7 +3108,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """Before reporting back after doing things, check the work; if it falls short, say so and keep going.
             At most MAX_REDOS times per task, and never for plain chat (no tools used)."""
             nonlocal redos
-            if not steps_log or redos >= MAX_REDOS or remote_brain:  # a frontier brain checks itself
+            if steps_log and redos < MAX_REDOS and (unmade := claimed_unmade(answer, steps_log)):
+                # any brain: a race can be won by a small model that says it made a file no step wrote (it reported
+                # "generated chart.svg" after only reading the CSV)
+                redos += 1
+                log("check", text=unmade)
+                return f"Not done yet: {unmade} Do it and check it, or say plainly that it wasn't done."
+            if not steps_log or redos >= MAX_REDOS or remote_brain:  # a frontier brain checks the rest itself
                 return ""
             try:
                 if layer:  # the resolved request, the user's constraints and what the director saw on screen
@@ -3814,6 +3863,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     raise RuntimeError("this step needs more memory than the local model has, even after trimming; try a narrower request, "
                                        "or turn off some plugins or skills")
             msg = response.choices[0].message
+            if not msg.tool_calls and (leaked := leaked_call(msg.content or "", {t["function"]["name"] for t in tools})):
+                # Llama writes a tool call as text (<|python_tag|>{"name": ..., "parameters": ...}): it was taken as the
+                # final answer, so a task ended with a JSON blob instead of the file it meant to write
+                msg.tool_calls, msg.content = [leaked], ""
             calls, batch_of = split_steps(msg.tool_calls or [])
             messages.append(
                 {
