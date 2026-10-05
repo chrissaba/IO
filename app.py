@@ -15,8 +15,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
@@ -42,6 +44,7 @@ import nim
 import overlay
 import plugins
 import triggers
+import webpush
 
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("BOSS_APP_PORT", "8765"))
@@ -685,7 +688,7 @@ def approve_later_for(task: dict):
         save_state()
         for listener in question_listeners:  # the desktop app's notification: something waits for you
             try:
-                listener({**task, "question": f"Approval needed: {reason}"})
+                listener({**task, "question": f"Approval needed: {reason}", "approval": item["id"]})
             except Exception as e:
                 print("question listener failed:", e)
         return text
@@ -947,6 +950,8 @@ async def chat_message(request: Request) -> JSONResponse:
     if images and not saved:
         return JSONResponse({"error": "couldn't read the attached image(s)"}, status_code=400)
     task = new_task(text or "(see the attached image)", source="chat", chat_id=chat["id"], images=saved, task_id=task_id)
+    if remote.is_remote(request.scope):
+        task["from_phone"] = True  # its answer is sent to the phone as a notification
     if body.get("loop"):
         task["loop"] = True
     if "ultracode" in body:
@@ -1027,7 +1032,10 @@ async def add_task(request: Request) -> JSONResponse:
     # a re-run from History brings its images along
     images = [n for n in body.get("images", []) if isinstance(n, str) and re.fullmatch(r"[0-9a-f]{8}-\d\.(png|jpg|webp|gif)", n)
               and (UPLOADS / n).is_file()]
-    return JSONResponse({"id": new_task(text, str(body.get("source", "you")), body.get("max_steps"), images=images)["id"]})
+    task = new_task(text, str(body.get("source", "you")), body.get("max_steps"), images=images)
+    if remote.is_remote(request.scope):
+        task["from_phone"] = True
+    return JSONResponse({"id": task["id"]})
 
 
 async def stop_task(request: Request) -> JSONResponse:
@@ -1376,6 +1384,87 @@ async def revoke_device(request: Request) -> JSONResponse:
     return JSONResponse({"ok": remote.revoke(request.path_params["id"]), "devices": remote.devices()})
 
 
+# ---------- notifications on paired phones ----------
+
+PUSH_HOSTS = (".push.apple.com", "fcm.googleapis.com", ".notify.windows.com", ".push.services.mozilla.com")
+
+
+def phone_looking() -> bool:
+    """The phone app is open on screen: it polls every 2.5 s while you look at it, and not at all in the background."""
+    return time.time() - remote.last_remote[0] < 10
+
+
+def push_phones(title: str, body: str, url: str = "/", tag: str = "io") -> None:
+    targets = remote.push_targets()
+    if not targets or phone_looking():
+        return
+    message = {"title": title[:80], "body": body[:240], "url": url, "tag": tag}
+
+    def send() -> None:
+        for device_id, sub in targets:
+            if webpush.send(sub, message) in (404, 410):  # the phone turned them off or removed the app
+                remote.set_push(device_id, None)
+
+    threading.Thread(target=send, daemon=True).start()
+
+
+def push_finished(task: dict) -> None:
+    """What reaches the phone: answers to what you asked from it, goals reaching their end, and unattended runs that
+    failed. Everything else you'll see when you look."""
+    kind = task.get("source", "").split(":")[0]
+    goal = next((g for g in state["goals"] if g["id"] == task.get("goal")), None) if task.get("goal") else None
+    where = f"/#chat/{task['chat_id']}" if task.get("chat_id") else "/#history"
+    summary = boss.clean_summary(task.get("summary") or "") or task["status"]
+    if goal and goal.get("status") == "done":
+        push_phones(f"Goal complete: {goal.get('title', '')}", summary, where, f"goal-{goal['id']}")
+    elif task.get("from_phone") and task["status"] in ("done", "error"):
+        push_phones(("Failed: " if task["status"] == "error" else "") + task["text"][:60], summary, where, task["id"])
+    elif task["status"] == "error" and kind in ("schedule", "trigger", "webhook", "goal"):
+        push_phones(f"{task['source'][:60]} failed", summary, where, task["id"])
+
+
+def push_question(task: dict) -> None:
+    if task.get("approval"):
+        push_phones("Approval needed", task.get("question", "").removeprefix("Approval needed: "), "/#approvals", f"approval-{task['approval']}")
+    else:
+        push_phones("IO has a question", task.get("question", ""), f"/#chat/{task['chat_id']}" if task.get("chat_id") else "/#history", task["id"])
+
+
+finished_listeners.append(push_finished)
+question_listeners.append(push_question)
+
+
+async def push_key(_request: Request) -> JSONResponse:
+    return JSONResponse({"key": await asyncio.to_thread(webpush.public_key)})
+
+
+async def push_subscribe(request: Request) -> JSONResponse:
+    """The phone turns its notifications on (a subscription) or off (null)."""
+    device = remote.device_for(remote.token_of(request.scope))
+    if device is None:
+        return JSONResponse({"error": "notifications are for a paired phone"}, status_code=400)
+    sub = (await request.json()).get("subscription")
+    if sub is not None:
+        endpoint = str((sub or {}).get("endpoint", ""))
+        host = urllib.parse.urlsplit(endpoint).hostname or ""
+        keys = sub.get("keys") or {}
+        if not endpoint.startswith("https://") or not any(host == h.lstrip(".") or host.endswith(h) for h in PUSH_HOSTS) \
+                or not keys.get("p256dh") or not keys.get("auth"):
+            return JSONResponse({"error": "that isn't a push service IO knows"}, status_code=400)
+        sub = {"endpoint": endpoint, "keys": {"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])}}
+    remote.set_push(device["id"], sub)
+    return JSONResponse({"ok": True})
+
+
+async def push_test(request: Request) -> JSONResponse:
+    device = remote.device_for(remote.token_of(request.scope))
+    sub = next((s for d, s in remote.push_targets() if device and d == device["id"]), None)
+    if sub is None:
+        return JSONResponse({"error": "notifications aren't on for this phone"}, status_code=400)
+    code = await asyncio.to_thread(webpush.send, sub, {"title": "IO", "body": "Notifications work.", "url": "/", "tag": "test"})
+    return JSONResponse({"ok": code in (200, 201), "status": code})
+
+
 async def remote_status(_request: Request) -> JSONResponse:
     return JSONResponse(await asyncio.to_thread(remote.tailscale_status, PORT))
 
@@ -1467,6 +1556,9 @@ app = Starlette(
         Route("/api/remote/code", pair_code, methods=["POST"]),
         Route("/api/remote/devices/{id}/revoke", revoke_device, methods=["POST"]),
         Route("/api/remote/status", remote_status),
+        Route("/api/push/key", push_key),
+        Route("/api/push/subscribe", push_subscribe, methods=["POST"]),
+        Route("/api/push/test", push_test, methods=["POST"]),
         Route("/api/remote/serve", remote_serve, methods=["POST"]),
         Route("/api/ping", ping),
         Route("/manifest.webmanifest", manifest),

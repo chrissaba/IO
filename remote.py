@@ -107,7 +107,27 @@ def device_for(token: str) -> dict | None:
 
 
 def devices() -> list[dict]:
-    return [{k: v for k, v in d.items() if k != "hash"} for d in _load().get("devices", [])]
+    return [{**{k: v for k, v in d.items() if k not in ("hash", "push")}, "notifications": bool(d.get("push"))}
+            for d in _load().get("devices", [])]
+
+
+def set_push(device_id: str, subscription: dict | None) -> bool:
+    """A device's Web Push subscription (None: it turned notifications off, or its subscription is gone)."""
+    with _lock:
+        data = _load()
+        for d in data.get("devices", []):
+            if d["id"] == device_id:
+                if subscription:
+                    d["push"] = subscription
+                else:
+                    d.pop("push", None)
+                _save(data)
+                return True
+    return False
+
+
+def push_targets() -> list[tuple[str, dict]]:
+    return [(d["id"], d["push"]) for d in _load().get("devices", []) if d.get("push")]
 
 
 def revoke(device_id: str) -> bool:

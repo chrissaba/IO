@@ -527,6 +527,7 @@
         <button x-show="!remote" @click="go('settings'); menuOpen = false"><span class="ic" x-html="ic('settings')"></span>Settings<kbd>Ctrl+,</kbd></button>
         <button @click="go('usage'); menuOpen = false"><span class="ic" x-html="ic('gauge')"></span>Usage</button>
         <button x-show="!remote" @click="go('customize'); menuOpen = false"><span class="ic" x-html="ic('blocks')"></span>Plugins and skills</button>
+        <button x-show="remote" @click="togglePush(); menuOpen = false; railOpen = false" :disabled="pushBusy"><span class="ic" x-html="ic(pushOn ? 'bell-off' : 'bell')"></span><span x-text="pushOn ? 'Turn off notifications' : 'Turn on notifications'"></span></button>
         <hr>
         <button @click="s.settings.theme = isDark() ? 'light' : 'dark'; saveSettings()"><span class="ic" x-html="ic(isDark() ? 'sun' : 'moon')"></span><span x-text="isDark() ? 'Light mode' : 'Dark mode'"></span></button>
         <button @click="togglePause(); menuOpen = false"><span class="ic" x-html="ic(s.status.paused ? 'play' : 'pause')"></span><span x-text="s.status.paused ? 'Resume' : 'Pause'"></span></button>
@@ -1080,7 +1081,7 @@
                 <div x-show="pairCode">Type this on the phone: <b class="paircode" x-text="pairCode"></b></div></div>
               <button class="btn" @click="makePairCode()" x-text="pairCode ? 'New code' : 'Pair a phone'"></button></div>
             <template x-for="d in (s.remote?.devices || [])" :key="d.id">
-              <div class="setting"><div class="txt"><div x-text="d.name"></div><div x-text="'Paired ' + ago(d.created) + ' · last used ' + ago(d.last_seen)"></div></div>
+              <div class="setting"><div class="txt"><div x-text="d.name"></div><div x-text="'Paired ' + ago(d.created) + ' · last used ' + ago(d.last_seen) + (d.notifications ? ' · notifications on' : '')"></div></div>
                 <button class="btn danger sm" @click="revokeDevice(d)">Remove</button></div>
             </template>
             <div class="setting"><div class="txt"><div>Wake address</div><div>When the PC is asleep, your phone shows a Wake button that calls this: a Home Assistant webhook that sends the PC a Wake-on-LAN packet. Needs the PC on Ethernet.</div></div>
@@ -1298,6 +1299,39 @@ function agent() {
       return parts.join(" · ");
     },
     decide(a, decision) { post(`/api/approvals/${a.id}`, { decision }).then(() => this.refresh()); },
+    // ----- notifications on the phone (Web Push through IO's service worker) -----
+    pushOn: false, pushBusy: false,
+    async swReady() {  // the service worker, or null (an insecure address, or a browser without push)
+      if (!REMOTE || !("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+      return Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 5000))]);
+    },
+    async initPush() { const reg = await this.swReady(); this.pushOn = !!(reg && await reg.pushManager.getSubscription()); },
+    async togglePush() {
+      const reg = await this.swReady();
+      if (!reg) {
+        this.notice = /iPhone|iPad/.test(navigator.userAgent) ? "On iPhone, add IO to your Home Screen first (Share > Add to Home Screen), then turn notifications on from there."
+          : "This browser can't show IO's notifications.";
+        return;
+      }
+      this.pushBusy = true;
+      try {
+        let sub = await reg.pushManager.getSubscription();
+        if (this.pushOn) {
+          if (sub) await sub.unsubscribe();
+          await post("/api/push/subscribe", { subscription: null });
+          this.pushOn = false;
+          return;
+        }
+        if (await Notification.requestPermission() !== "granted") { this.notice = "Notifications are turned off for IO in this phone's settings."; return; }
+        const { key } = await (await fetch("/api/push/key")).json();
+        const raw = atob(key.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - key.length % 4) % 4));
+        sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(raw, (c) => c.charCodeAt(0)) });
+        const r = await post("/api/push/subscribe", { subscription: sub.toJSON() });
+        this.pushOn = !r.error;
+        this.notice = r.error || "Notifications are on: answers to what you ask from here, questions, approvals and finished goals.";
+      } catch (e) { this.notice = "Couldn't turn notifications on: " + e.message; }
+      finally { this.pushBusy = false; }
+    },
     // ----- remote (Settings > Remote, on the PC) -----
     remoteInfo: null, remoteSetup: {}, pairCode: "", pairTimer: 0,
     async loadRemote() {
@@ -1411,6 +1445,7 @@ function agent() {
       };
       follow();
       window.addEventListener("hashchange", follow);
+      this.initPush();
       window.addEventListener("keydown", (e) => {
         if (this.dialog) { if (e.key === "Escape") this.closeDialog(false); return; }
         if (e.ctrlKey && e.key === ",") { e.preventDefault(); this.go("settings"); }
