@@ -2398,7 +2398,9 @@ def risk_kind(reason: str) -> str:
 
 # plugin tools (notes, databases, git, GitHub...) that change things: by the server's own hint, by name,
 # or SQL that writes. Plain reads and SELECTs don't ask, so unattended tasks aren't held up.
-PLUGIN_RISKY = re.compile(r"(delete|remove|drop|reset|merge|push|move|rename|overwrite|write|update|edit|commit|create|close|truncate)", re.I)
+PLUGIN_RISKY = re.compile(r"(delete|remove|drop|reset|merge|push|move|rename|overwrite|write|update|edit|commit|create|close|truncate"
+                          # smart-home and service tools act on the real world: lights, locks, a server restart
+                          r"|action|call_service|restart|restore|reload|toggle|trigger|(^|_)(turn|set|add|lock|unlock|open|activate|run)(_|$))", re.I)
 SQL_WRITE = re.compile(r"\b(delete|drop|update|insert|alter|truncate|replace|create|attach)\b", re.I)
 
 
