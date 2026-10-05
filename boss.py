@@ -2950,8 +2950,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             d = mcp_to_openai(t, hide=set())  # label/labels are only hidden for Windows-MCP
             d["function"]["name"] = alias
             plugin_defs[alias] = d
-        # the boss has a 32K context: if the enabled plugins' tool lists are too big, keep the ones the task mentions
-        plugin_tools = plugins.fit_budget(plugin_tools, plugin_defs, task, log=lambda m: log("warning", text=m))
+        # the local boss has a 32K context: if the enabled plugins' tool lists are too big, keep the ones the task mentions.
+        # The NVIDIA brain's 131K holds far more: the 5K cap left Home Assistant's 29 tools out of a task that asked about
+        # Home Assistant, and the brain went looking for a configuration.yaml on the disk instead
+        plugin_tools = plugins.fit_budget(plugin_tools, plugin_defs, task, log=lambda m: log("warning", text=m),
+                                          budget=30000 if remote_brain else 0)
         aliases, plugin_meta = {}, {}
         for alias, session, t in plugin_tools:
             sessions[alias] = session

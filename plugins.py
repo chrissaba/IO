@@ -225,9 +225,10 @@ def approx_tokens(defs) -> int:
     return int(len(json.dumps(defs, ensure_ascii=False)) / 3.5)
 
 
-def fit_budget(plugin_tools: list, defs: dict, task: str, log=print) -> list:
-    """Drops whole plugins until their tool definitions fit TOOL_BUDGET: plugins the task mentions go
-    first, then the smallest. Each one left out is logged."""
+def fit_budget(plugin_tools: list, defs: dict, task: str, log=print, budget: int = 0) -> list:
+    """Drops whole plugins until their tool definitions fit the budget (TOOL_BUDGET, the local boss's share of 32K, unless
+    the caller has room for more): plugins the task mentions go first, then the smallest. Each one left out is logged."""
+    TOOL_BUDGET = budget or globals()["TOOL_BUDGET"]
     by_plugin: dict[str, list] = {}
     for item in plugin_tools:
         by_plugin.setdefault(item[0].split("_", 1)[0], []).append(item)
