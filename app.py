@@ -273,7 +273,7 @@ async def _ensure_boss() -> None:
     )
     for _ in range(300):  # Qwen 27B takes longer to load
         await asyncio.sleep(1)
-        if boss_up():
+        if boss_up() and (mode != "balanced" or await asyncio.to_thread(evo_up)):
             status["boss"] = "ready"
             return
     status["boss"] = "failed to start (see logs/boss-server.log)"
