@@ -90,6 +90,18 @@ def pair(code: str, name: str) -> str:
         return token
 
 
+def new_token(name: str) -> str:
+    """A token for a program (another AI, a script) instead of a phone: made on the PC, shown once, revocable like a
+    paired phone. It's sent as Authorization: Bearer <token>."""
+    token = "io_" + secrets.token_urlsafe(32)
+    with _lock:
+        data = _load()
+        data.setdefault("devices", []).append({"id": secrets.token_hex(4), "name": (name or "API").strip()[:40], "hash": _hash(token),
+                                               "kind": "api", "created": time.time(), "last_seen": 0})
+        _save(data)
+    return token
+
+
 def device_for(token: str) -> dict | None:
     if not token:
         return None

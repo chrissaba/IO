@@ -1393,6 +1393,23 @@ async def pair_code(_request: Request) -> JSONResponse:
     return JSONResponse({"code": p["code"], "expires": p["expires"]})
 
 
+async def api_token(request: Request) -> JSONResponse:
+    """Settings > Remote: a token for another program (shown once). On the PC only, like making a pairing code."""
+    if not state["settings"].get("remote_access"):
+        return JSONResponse({"error": "turn remote access on first"}, status_code=400)
+    name = str((await request.json()).get("name") or "API").strip() or "API"
+    return JSONResponse({"token": remote.new_token(name), "devices": remote.devices()})
+
+
+async def get_task(request: Request) -> JSONResponse:
+    """One task's outcome, for programs: its status, answer, and any question it waits on (answer it with
+    POST /api/tasks/{id}/answer)."""
+    t = next((t for t in state["tasks"] if t["id"] == request.path_params["id"]), None)
+    if t is None:
+        return JSONResponse({"error": "no such task"}, status_code=404)
+    return JSONResponse({k: t.get(k) for k in ("id", "status", "text", "summary", "question", "chat_id", "created", "finished")})
+
+
 async def revoke_device(request: Request) -> JSONResponse:
     return JSONResponse({"ok": remote.revoke(request.path_params["id"]), "devices": remote.devices()})
 
@@ -1569,6 +1586,8 @@ app = Starlette(
         Route("/api/remote/code", pair_code, methods=["POST"]),
         Route("/api/remote/devices/{id}/revoke", revoke_device, methods=["POST"]),
         Route("/api/remote/status", remote_status),
+        Route("/api/remote/token", api_token, methods=["POST"]),
+        Route("/api/tasks/{id}", get_task, methods=["GET"]),
         Route("/api/push/key", push_key),
         Route("/api/push/subscribe", push_subscribe, methods=["POST"]),
         Route("/api/push/test", push_test, methods=["POST"]),

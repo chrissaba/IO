@@ -1080,8 +1080,15 @@
                 <div x-show="!pairCode">On the phone, open IO's address, then type the code this shows. A code works once, for ten minutes.</div>
                 <div x-show="pairCode">Type this on the phone: <b class="paircode" x-text="pairCode"></b></div></div>
               <button class="btn" @click="makePairCode()" x-text="pairCode ? 'New code' : 'Pair a phone'"></button></div>
+            <div class="setting"><div class="txt"><div>API token</div>
+                <div x-show="!apiToken">For another program or AI (like a chat assistant) to send IO tasks: it sends the token as <span class="url">Authorization: Bearer …</span>. It can do what you can in IO's chat, not change settings. Remove it below at any time.</div>
+                <div x-show="apiToken">Copy it now; it isn't shown again: <span class="url" x-text="apiToken"></span>
+                  <div class="note">Queue a task: POST /api/tasks {"task": "…"}. Read it: GET /api/tasks/&lt;id&gt; (status, summary, any question; answer with POST /api/tasks/&lt;id&gt;/answer {"answer": "…"}).</div></div></div>
+              <div style="display:flex; gap:6px; align-items:center">
+                <input type="text" style="width:120px" x-model="apiTokenName" placeholder="Name, e.g. Muse.ai">
+                <button class="btn" @click="makeApiToken()">Create</button></div></div>
             <template x-for="d in (s.remote?.devices || [])" :key="d.id">
-              <div class="setting"><div class="txt"><div x-text="d.name"></div><div x-text="'Paired ' + ago(d.created) + ' · last used ' + ago(d.last_seen) + (d.notifications ? ' · notifications on' : '')"></div></div>
+              <div class="setting"><div class="txt"><div x-text="d.name"></div><div x-text="(d.kind === 'api' ? 'API token, made ' : 'Paired ') + ago(d.created) + (d.last_seen ? ' · last used ' + ago(d.last_seen) : ' · not used yet') + (d.notifications ? ' · notifications on' : '')"></div></div>
                 <button class="btn danger sm" @click="revokeDevice(d)">Remove</button></div>
             </template>
             <div class="setting"><div class="txt"><div>Wake address</div><div>When the PC is asleep, your phone shows a Wake button that calls this: a Home Assistant webhook that sends the PC a Wake-on-LAN packet. Needs the PC on Ethernet.</div></div>
@@ -1350,6 +1357,11 @@ function agent() {
       this.pairCode = r.code.slice(0, 3) + " " + r.code.slice(3);
       clearTimeout(this.pairTimer);
       this.pairTimer = setTimeout(() => { this.pairCode = ""; }, Math.max(0, r.expires * 1000 - Date.now()));
+    },
+    apiToken: "", apiTokenName: "",
+    async makeApiToken() {
+      const r = await post("/api/remote/token", { name: this.apiTokenName || "API" }).catch(() => ({}));
+      if (r.token) { this.apiToken = r.token; this.apiTokenName = ""; this.refresh(); }
     },
     async revokeDevice(d) {
       if (await this.askUser({ title: `Remove ${d.name}?`, text: "It stops reaching IO at once. You can pair it again later.", ok: "Remove", danger: true }))
