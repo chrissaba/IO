@@ -2346,6 +2346,19 @@ _log_lock = threading.Lock()  # sub-agents log at the same time, some from worke
 
 
 BOSS_SEES = [True]  # False in Balanced mode: Muse Glimmer loads without its vision part, to leave room for EvoCUA
+# NVIDIA model id (a part of it) -> what the local model's file name contains when this PC runs the same model
+LOCAL_TWINS = {"muse-glimmer-30b": "glimmer"}
+LOCAL_TWIN_CHARS = 75_000  # what fits the local copy's 32K-token context with room for its answer; larger goes to NVIDIA
+LOCAL_TWIN_OUT = 4096
+
+
+def boss_file() -> str:
+    """The file name of the model on the local boss server ('' when it isn't up)."""
+    try:
+        with urllib.request.urlopen(BOSS_URL.removesuffix("/v1") + "/props", timeout=3) as r:
+            return Path(str(json.loads(r.read()).get("model_path", ""))).name.lower()
+    except Exception:
+        return ""
 _described: dict = {}  # picture (its hash) -> EvoCUA's description, so an image kept in the conversation is described once
 
 
@@ -2750,6 +2763,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         looker = options.get("vision_model") or ""
         eyes.remote = [(nim_client, m) for m in dict.fromkeys(([looker] if looker else []) + brain_models) if nim.is_vision(m)]
     brain_at = [0]  # the NVIDIA model that answered last; each step starts there
+    # NVIDIA models this PC runs itself (Balanced mode's Muse Glimmer): their turns in the brain's order go to the local
+    # copy, so they don't wait in NVIDIA's queue or count against its rate limit. Its turns as look_at_screen's vision
+    # model stay on NVIDIA, since the local copy loads without its vision part.
+    local_twins = {m for m in brain_models if any(w in m for w, name in LOCAL_TWINS.items() if name in boss_file())}
 
     def text_only(messages):
         """The conversation without pictures, for a brain that reads text only (DeepSeek): it uses look_at_screen."""
@@ -2802,6 +2819,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
             return kw2
 
+        def ask(client, model: str, purpose: str, kw: dict):
+            """One request to one of the brain's models: NVIDIA's, or the local copy of a model this PC runs, when the
+            request fits its context (otherwise NVIDIA's copy takes it)."""
+            if model in local_twins:
+                kw2 = prepare(model, kw)
+                chars, _pics = nim.size_of(kw2["messages"])
+                if chars + len(json.dumps(kw2.get("tools") or [])) < LOCAL_TWIN_CHARS:
+                    kw2["messages"] = text_only(kw2["messages"])  # it reads text only; it can call look_at_screen
+                    kw2["max_tokens"] = min(int(kw2.get("max_tokens") or LOCAL_TWIN_OUT), LOCAL_TWIN_OUT)
+                    return local_create(boss, BOSS_MODEL, _purpose=f"{purpose} [local {nim.label(model)}]", **kw2)
+            return nim.create(client, _purpose=purpose, model=model, **prepare(model, kw))
+
         def usable(r, kw: dict) -> bool:
             m = r.choices[0].message
             words = re.sub(r"<\|[^|]*\|>|<think>.*?</think>", "", m.content or "", flags=re.S)
@@ -2838,7 +2867,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 try:
                     if finished.is_set():
                         return
-                    r = nim.create(client, _purpose=purpose + " (race)", model=model, **prepare(model, kw))
+                    r = ask(client, model, purpose + " (race)", kw)
                     if usable(r, kw):
                         nim.note(model, time.time() - t, True)
                         with lock:
@@ -2914,7 +2943,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 client, model = brain_chain[i]
                 t_req = time.time()
                 try:
-                    r = nim.create(client, _purpose=purpose, model=model, **prepare(model, kw))
+                    r = ask(client, model, purpose, kw)
                     if not usable(r, kw):  # nothing in it, token junk, or only "I will...": a failure, next model
                         raise RuntimeError("empty answer")
                     nim.note(model, time.time() - t_req, True)
