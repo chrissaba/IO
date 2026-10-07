@@ -1036,8 +1036,8 @@
             <div x-show="s.settings.ask_gemini && s.nim_key_set">The NVIDIA brain decides; these find where to click, and take a step only if NVIDIA can't answer.</div>
             <div x-show="!['smart', 'balanced'].includes(s.settings.model_mode)">Fast: Gemma 4 E4B thinks, UI-TARS finds where to click. Quickest.</div>
             <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
-            <div x-show="s.settings.model_mode === 'balanced'">Balanced: Qwen 3.6 35B-A3B does everything, including seeing and clicking. Smart, and much quicker than Qwen 3.8.</div></div>
-          <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Qwen 3.6 35B-A3B)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
+            <div x-show="s.settings.model_mode === 'balanced'">Balanced: Muse Glimmer 30B thinks and uses tools; EvoCUA-8B, a model trained for computer use, sees and clicks.</div></div>
+          <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Muse Glimmer + EvoCUA)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
         <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
       </div>
@@ -1896,7 +1896,7 @@ function agent() {
     isDark() { const t = this.s.settings.theme; return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); },
     MODELS: [
       { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },
-      { id: "balanced", name: "Balanced", about: "Qwen 3.6 35B-A3B. Sharper eyes, still quick." },
+      { id: "balanced", name: "Balanced", about: "Muse Glimmer 30B thinks, EvoCUA-8B clicks." },
       { id: "smart", name: "Smart", about: "Qwen 3.8 27B. Most careful, several times slower." },
     ],
     modelOpen: false,

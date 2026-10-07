@@ -793,15 +793,68 @@ NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}  # llama-serv
 QWEN_POINT_PROMPT = ("Find this on the screenshot: {target}\nAnswer only with JSON like {{\"point_2d\": [x, y]}}, the centre "
                      "of it, with x and y on a 0-1000 scale across the image's width and height.")
 
+# Balanced mode's eyes: EvoCUA-8B (Meituan's computer-use model) on its own llama-server. It's asked the way it was
+# trained (its "S2" prompt: one computer_use tool call, coordinates on a 1000x1000 grid), with only a click allowed.
+EVO_URL = os.environ.get("EVO_URL", "http://127.0.0.1:8091/v1")
+EVO_MODEL = "eyes"
+EVO_TOOL = {"type": "function", "function": {
+    "name_for_human": "computer_use", "name": "computer_use",
+    "description": ("Use a mouse and keyboard to interact with a computer, and take screenshots.\n* This is an interface to a "
+                    "desktop GUI.\n* The screen's resolution is 1000x1000.\n* Make sure to click any buttons, links, icons, etc "
+                    "with the cursor tip in the center of the element. Don't click boxes on their edges unless asked."),
+    "parameters": {"properties": {
+        "action": {"description": "* `left_click`: Click the left mouse button at a specified (x, y) pixel coordinate on the screen.\n"
+                                  "* `terminate`: Terminate the current task and report its completion status.",
+                   "enum": ["left_click", "terminate"], "type": "string"},
+        "coordinate": {"description": "The x,y coordinates for mouse actions.", "type": "array"},
+        "status": {"description": "The status of the task.", "type": "string", "enum": ["success", "failure"]}},
+        "required": ["action"], "type": "object"},
+    "args_format": "Format the arguments as a JSON object."}}
+EVO_SYSTEM = ("# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function "
+              "signatures within <tools></tools> XML tags:\n<tools>\n" + json.dumps(EVO_TOOL) + "\n</tools>\n\nFor each function "
+              "call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n"
+              "{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\n# Response format\n\nResponse format "
+              "for every step:\n1) Action: a short imperative describing what to do in the UI.\n2) A single <tool_call>...</tool_call> "
+              "block containing only the JSON: {\"name\": <function-name>, \"arguments\": <args-json-object>}.\n\nRules:\n- Output "
+              "exactly in the order: Action, <tool_call>.\n- Be brief: one sentence for Action.\n- Do not output anything else "
+              "outside those parts.\n- If finishing, use action=terminate in the tool call.")
+EVO_ASK = ("\nPlease generate the next move according to the UI screenshot, instruction and previous actions.\n\n"
+           "Instruction: Click on {target}. If it isn't on the screen, terminate with status failure.\n\nPrevious actions:\nNone")
+
+
+def evo_point(client, url: str, target: str) -> tuple[float, float] | None:
+    """EvoCUA's click for `target` on one image, as fractions of its width and height; None when it says it isn't there.
+    Asked plainly first (its Qwen3-VL base's point_2d answer: on a 4K desktop it hit 7 of 10 described targets, as many
+    as UI-TARS, against 6 with its own agent prompt), and with that agent prompt only when the plain answer has no point."""
+    plain = local_create(client, EVO_MODEL, _purpose="find where to click", temperature=0, max_tokens=300, extra_body=NO_THINKING, messages=[
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": QWEN_POINT_PROMPT.format(target=target)}]},
+    ]).choices[0].message.content or ""
+    m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", re.sub(r"<think>.*?</think>", "", plain, flags=re.S))
+    if m and 0 <= float(m.group(1)) <= 1000 and 0 <= float(m.group(2)) <= 1000:
+        return float(m.group(1)) / 1000, float(m.group(2)) / 1000
+    reply = local_create(client, EVO_MODEL, _purpose="find where to click (agent prompt)", temperature=0.01, max_tokens=200, messages=[
+        {"role": "system", "content": EVO_SYSTEM},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": EVO_ASK.format(target=target)}]},
+    ]).choices[0].message.content or ""
+    m = re.search(r"\"coordinate\"\s*:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", reply)
+    if not m or "terminate" in reply.split("<tool_call>")[-1]:
+        return None
+    x, y = float(m.group(1)), float(m.group(2))
+    return (x / 999, y / 999) if 0 <= x <= 999 and 0 <= y <= 999 else None
+
 
 class Eyes:
     """Where to click and what's on screen. Fast mode: UI-TARS in Unsloth Studio finds things, the boss describes.
     Smart mode: the boss (Qwen) does both with its own vision."""
 
     def __init__(self, mode: str = "fast") -> None:
-        self.mode = "smart" if mode in ("smart", "balanced") else "fast"  # the Qwen modes see for themselves
+        # Smart: Qwen 3.8 sees for itself. Balanced: EvoCUA sees and clicks for Muse Glimmer, which reads text only.
+        self.mode = {"smart": "smart", "balanced": "evo"}.get(mode, "fast")
+        BOSS_SEES[0] = self.mode != "evo"
         if self.mode == "smart":
             self.client, self.model = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=180), BOSS_MODEL
+        elif self.mode == "evo":
+            self.client, self.model = OpenAI(base_url=EVO_URL, api_key="local", max_retries=2, timeout=120), EVO_MODEL
         else:
             self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL
         self.content = False  # loops: look only at the window's content area (a game without its emulator's side bars)
@@ -816,6 +869,11 @@ class Eyes:
         buf = io.BytesIO()
         shot.resize((iw, ih)).save(buf, format="PNG")
         url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+        if self.mode == "evo":
+            frac = evo_point(self.client, url, description)
+            if frac is None:
+                return {"error": "could not locate it"}
+            return {"x": round(left + frac[0] * (right - left)), "y": round(top + frac[1] * (bottom - top))}
 
         prompt = QWEN_POINT_PROMPT if self.mode == "smart" else EYES_PROMPT
         reply = local_create(self.client, self.model, _purpose="find where to click",
@@ -881,7 +939,8 @@ class Eyes:
                 nim.note(model, time.time() - t_req, False)
             except Exception as e:  # next vision model, then the local one
                 nim.note(model, time.time() - t_req, False, gone=getattr(e, "status_code", 0) == 404)
-        reply = local_create(OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL,
+        local = (self.client, self.model) if self.mode == "evo" else (OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL)
+        reply = local_create(*local,
             _purpose="look at the screen", temperature=0.2, max_tokens=160 if self.brief else 700,
             extra_body=NO_THINKING if self.brief else None, messages=messages)
         return reply.choices[0].message.content or "(no answer)"
@@ -2286,8 +2345,43 @@ AGENT: contextvars.ContextVar = contextvars.ContextVar("agent", default=None)
 _log_lock = threading.Lock()  # sub-agents log at the same time, some from worker threads
 
 
+BOSS_SEES = [True]  # False in Balanced mode: Muse Glimmer loads without its vision part, to leave room for EvoCUA
+_described: dict = {}  # picture (its hash) -> EvoCUA's description, so an image kept in the conversation is described once
+
+
+def words_for_pictures(messages: list) -> list:
+    """The conversation for a local brain that reads text only: each picture becomes EvoCUA's description of it."""
+    out = []
+    for m in messages:
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list) and any(p.get("type") == "image_url" for p in c):
+            parts = []
+            for p in c:
+                if p.get("type") != "image_url":
+                    parts.append(p)
+                    continue
+                url = p["image_url"]["url"]
+                key = hashlib.sha1(url.encode()).hexdigest()
+                if key not in _described:
+                    try:
+                        r = local_create(OpenAI(base_url=EVO_URL, api_key="local", max_retries=1, timeout=120), EVO_MODEL,
+                                         _purpose="describe a picture for the brain", temperature=0.2, max_tokens=500, extra_body=NO_THINKING,
+                                         messages=[{"role": "user", "content": [p, {"type": "text", "text": (
+                                             "Describe this image for someone who can't see it: what it shows, every piece of text "
+                                             "that matters (exactly as written), and where the main buttons and items are.")}]}])
+                        _described[key] = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
+                    except Exception as e:
+                        _described[key] = f"(couldn't be described: {e})"[:200]
+                parts.append({"type": "text", "text": f"[a picture, described by the eyes model: {_described[key]}]"})
+            m = {**m, "content": parts}
+        out.append(m)
+    return out
+
+
 def local_create(client, model: str, _purpose: str = "", **kw):
     """A local llama-server call, timed for the debug timeline like NVIDIA's (nim.create)."""
+    if model == BOSS_MODEL and not BOSS_SEES[0] and kw.get("messages"):
+        kw["messages"] = words_for_pictures(kw["messages"])
     t0 = time.time()
     chars, images = nim.size_of(kw.get("messages"))
     rec = {"model": "local: " + str(model), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or []), "wait": 0}
@@ -2855,7 +2949,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         """The models ask_model can consult: short name -> (client, model id, sees screenshots, one-line card). The card
         is what the brain chooses by: what each is good at and how long it has been taking, measured this session."""
         out = {"local": (boss, BOSS_MODEL, eyes.mode == "smart",
-                         "the local Qwen on this PC: free, private, no rate limit" + (", sees screenshots" if eyes.mode == "smart" else ", text only"))}
+                         "the local model on this PC: free, private, no rate limit" + (", sees screenshots" if eyes.mode == "smart" else ", text only"))}
         for m in brain_models:
             secs = nim._health.get(m, {}).get("avg") or (nim.tests().get(m) or {}).get("secs")
             sees = nim.is_vision(m)
@@ -3527,7 +3621,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         if plan_now and not remote_brain:  # a frontier brain plans as it goes; the local planner would only slow it down
             await get_plan()
         compact_at, keep_recent = (LOOP_COMPACT_AT, LOOP_KEEP_RECENT) if loop else (COMPACT_AT, KEEP_RECENT)
-        # what fits: the model's context (16K for Qwen 3.6, 32K for the others) less the fixed prompt, the tool list and the
+        # what fits: the model's context (32K for each local mode) less the fixed prompt, the tool list and the
         # reply, at ~2.5 characters a token (UI trees and JSON tokenize worse than prose)
         fixed = len(json.dumps(tools)) + sum(len(str(m.get("content") or "")) for m in messages[:head])
         # the NVIDIA brain uses all the context it has: the smallest window among the models it may send a step to (a race

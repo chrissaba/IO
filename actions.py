@@ -1388,11 +1388,13 @@ def _jpeg(img, side: int = 1600) -> str:
 
 
 def vlm(img, prompt: str, max_tokens: int = 200) -> str:
-    """One no-thinking question about an image to the boss model (blocking: run it in a thread)."""
+    """One no-thinking question about an image to the boss model, or in Balanced mode to EvoCUA, since Glimmer runs
+    without its vision part there (blocking: run it in a thread)."""
     from openai import OpenAI
     h = _h()
-    reply = OpenAI(base_url=h.BOSS_URL, api_key="local", max_retries=1, timeout=90).chat.completions.create(
-        model=h.BOSS_MODEL, temperature=0, max_tokens=max_tokens, extra_body=h.NO_THINKING,
+    url, model = (h.BOSS_URL, h.BOSS_MODEL) if h.BOSS_SEES[0] else (h.EVO_URL, h.EVO_MODEL)
+    reply = OpenAI(base_url=url, api_key="local", max_retries=1, timeout=90).chat.completions.create(
+        model=model, temperature=0, max_tokens=max_tokens, extra_body=h.NO_THINKING,
         messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": _jpeg(img)}}, {"type": "text", "text": prompt}]}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
@@ -2433,6 +2435,10 @@ def _ground_on(ctx: Ctx, img, target: str) -> tuple[float, float] | None:
     """The eyes model on an image IO cut itself (the zoomed crop of careful=true): a point as fractions, or None."""
     h, e = _h(), eyes(ctx)
     smart = e.mode == "smart"
+    if e.mode == "evo":  # EvoCUA, asked the way it was trained
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        return h.evo_point(e.client, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), target)
     if smart:
         iw, ih = img.width, img.height
         send = img
@@ -2483,7 +2489,7 @@ async def vision_point(ctx: Ctx, w: W | None, target: str, careful: bool = False
         img = img.resize((img.width * 2, img.height * 2))
         frac = await asyncio.to_thread(_ground_on, ctx, img, target)
         if frac is None:
-            if e.mode == "smart":
+            if e.mode in ("smart", "evo"):
                 raise Fail("NOT_FOUND", f"vision says {target!r} isn't there on a closer look", "check_screen(...) or another description")
         else:
             new = (int(l + frac[0] * 640), int(t + frac[1] * 640))
@@ -3360,7 +3366,7 @@ async def wait_until(ctx: Ctx, cond: str, target: str = "", window: str = "", ti
         """, cost=5.0, tier="vision", top="description", fallback="find_on_screen(description)",
         limits="balanced/smart modes only: UI-TARS gives one point and can't say none")
 async def find_all(ctx: Ctx, description: str, window: str = "", max: int = 10, **_) -> str:
-    if eyes(ctx).mode != "smart":
+    if eyes(ctx).mode == "fast":
         raise Fail("UNSUPPORTED", "UI-TARS gives one point and can't say none", f'click_on("{description[:40]}") or tap_repeatedly("{description[:40]}")')
     w = resolve(ctx, window) if (window or ctx.focus) else None
     if w is not None:

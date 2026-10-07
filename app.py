@@ -177,8 +177,16 @@ def boss_up() -> bool:
         return False
 
 
-BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd", "balanced": "start-qwen36-server.cmd"}
-BOSS_NAMES = {"fast": "gemma", "smart": "qwen3.8", "balanced": "qwen3.6"}  # what the loaded model's file name contains
+BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd", "balanced": "start-balanced-server.cmd"}
+BOSS_NAMES = {"fast": "gemma", "smart": "qwen3.8", "balanced": "glimmer"}  # what the loaded model's file name contains
+
+
+def evo_up() -> bool:
+    """Balanced mode's eyes (EvoCUA on its own server) answer."""
+    try:
+        return http_json(boss.EVO_URL.removesuffix("/v1") + "/health", timeout=3).get("status") == "ok"
+    except Exception:
+        return False
 
 
 def boss_model_path() -> str:
@@ -189,9 +197,10 @@ def boss_model_path() -> str:
 
 
 def stop_boss_server() -> None:
-    """Stops the llama-server on the boss port, so the other model can load."""
+    """Stops the llama-servers on the boss port and Balanced's eyes port, so the other mode's models can load."""
     subprocess.run(["powershell", "-NoProfile", "-Command",
-                    "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | Where-Object { $_.CommandLine -like '*--port 8090*' } | "
+                    "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | "
+                    "Where-Object { $_.CommandLine -like '*--port 8090*' -or $_.CommandLine -like '*--port 8091*' } | "
                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
 
 
@@ -245,12 +254,16 @@ async def _ensure_boss() -> None:
                 break
     if boss_up():
         path = await asyncio.to_thread(boss_model_path)
-        if not path or BOSS_NAMES[mode] in path:
+        eyes_ok = mode != "balanced" or await asyncio.to_thread(evo_up)  # Balanced needs both of its servers
+        if (not path or BOSS_NAMES[mode] in path) and eyes_ok:
             status["boss"] = "ready"
             return
-        await asyncio.to_thread(stop_boss_server)  # the other mode's model is loaded
+        await asyncio.to_thread(stop_boss_server)  # the other mode's model is loaded, or half of Balanced died
         await asyncio.sleep(2)
-    status["boss"] = {"smart": "starting Qwen 3.8 27B", "balanced": "starting Qwen 3.6 35B-A3B"}.get(mode, "starting model")
+    elif mode == "balanced":
+        await asyncio.to_thread(stop_boss_server)  # an EvoCUA left over from a half start would hold its memory twice
+        await asyncio.sleep(1)
+    status["boss"] = {"smart": "starting Qwen 3.8 27B", "balanced": "starting Muse Glimmer + EvoCUA"}.get(mode, "starting model")
     log_file = open(HERE / "logs" / "boss-server.log", "a", encoding="utf-8")
     subprocess.Popen(
         ["cmd", "/c", str(HERE / BOSS_CMDS[mode])],
@@ -762,8 +775,8 @@ async def watchdog() -> None:
     await asyncio.sleep(120)  # let startup finish first
     while True:
         if state["settings"].get("watchdog", True) and current["task"] is None:
-            if not boss_up():
-                print("watchdog: boss model down, restarting")
+            if not boss_up() or (state["settings"].get("model_mode") == "balanced" and not evo_up() and not boss_loading()):
+                print("watchdog: a local model is down, restarting")
                 await ensure_boss()
             models = studio_models(boss.studio_key())
             if state["settings"].get("model_mode", "fast") == "fast" and (

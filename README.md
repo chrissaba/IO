@@ -71,7 +71,7 @@ Pick a mode in Settings. Everything here runs locally through llama.cpp (Unsloth
 | Mode | Thinks | Sees and clicks | Notes |
 | --- | --- | --- | --- |
 | **Fast** | Gemma 4 E4B | UI-TARS-1.5-7B | Quickest |
-| **Balanced** | Qwen 3.6 35B-A3B | Qwen 3.6 35B-A3B | Mixture of experts, about 3B active per token |
+| **Balanced** | Muse Glimmer 30B (3-bit, text only) | EvoCUA-8B | Meituan's computer-use model clicks; Glimmer reads its descriptions of pictures |
 | **Smart** | Qwen 3.8 27B | Qwen 3.8 27B | Strongest local option, several times slower |
 
 **Optional cloud brain:** paste an NVIDIA API key in Settings and choose the models (GLM-5.3 Flash, Kimi K3,
