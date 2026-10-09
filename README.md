@@ -41,6 +41,12 @@ take over hard tasks or all of them, while the local models stay on as eyes and 
   MCP plugins (web search, documents, Obsidian, GitHub, SQLite and more) and your own skills.
 - **Schedules and triggers.** Run tasks every N minutes, daily, when a file lands in a folder, or from
   `POST /api/hook/<name>`.
+- **Code against what's really installed.** A model remembers a library's API from whatever version it trained on.
+  `api_lookup` reads the real one from the installed files (a .NET project, dll or NuGet package, or a Python module),
+  and a failed build lists each error once with the library's real API for the names it couldn't find.
+- **A workshop for its own tools.** When a task needs an ability none of IO's tools give, IO asks in Approvals whether
+  it may build one. It writes and tests the tool in its own workshop folder (its program files are read-only to it),
+  and asks again before turning it on. Customize > Workshop lists what it built.
 - **Safe by default.** Deleting files, killing processes and other risky actions wait for your OK.
   **Ctrl+Alt+End** stops everything.
 
@@ -181,6 +187,8 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 | `nim.py` | NVIDIA models: pacing, health, tests and strengths |
 | `learned.py` | Playbooks IO writes for itself after runs |
 | `plugins.py`, `catalog.json` | One-click MCP plugins |
+| `workshop.py`, `workshop_host.py` | Tools IO builds for itself: proposals, tests, approvals, and the host that runs each one |
+| `tools/apilens/` | Reads a .NET library's public API from its metadata, for `api_lookup` (built on first use) |
 | `triggers.py` | Folder and webhook triggers |
 | `remote.py`, `static/sw.js` | Phone access: pairing, device tokens, Tailscale, the offline Wake screen |
 | `start-balanced-server.cmd` | Starts the two local models on llama-server (Glimmer on 8090, EvoCUA on 8091) |
