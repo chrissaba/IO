@@ -3857,7 +3857,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             try:
                 limits = actions.constraints_text(ctx.constraints)
-                r = await asyncio.to_thread(brain_create, temperature=0.2, max_tokens=1500, purpose="ultracode plan", messages=[
+                # a plan of parts, not the work itself: at Max reasoning GLM thought past 240 s without writing it
+                r = await asyncio.to_thread(brain_create, temperature=0.2, max_tokens=1500, purpose="ultracode plan", _level="medium", messages=[
                     {"role": "system", "content": ULTRA_PLAN},
                     {"role": "user", "content": f"Request: {standalone}" + (f"\nThe user's limits: {limits}" if limits else "")}])
                 subs = ultra_subtasks(loose_json(re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S)))
