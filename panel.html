@@ -28,13 +28,15 @@
   /* IO's palette, after its indigo icon: cool lavender-grey surfaces, ink text, a violet accent.
      --accent carries white text (5.6:1 light, 4.5:1 dark); --accent-text is the accent as text on the page.
      Every text colour, --faint and the status colours included, is at least 4.5:1 on --bg, --rail and --surface.
-     --spark-* are the sparkle squares, faint to bright. */
+     --spark-* are the sparkle squares, faint to bright. --glow is the halo of the live "what IO is doing" line and
+     --glow-hi the shine that sweeps across its words (lighter than --accent-text on both themes, so it reads as a glint). */
   :root {
     --bg: #faf9fc; --rail: #f4f3f8; --surface: #ffffff; --raised: #efedf5; --hover: #e8e5f0;
     --line: #e6e3ee; --line-strong: #d6d2e1; --text: #1f1c2c; --muted: #5f5b72; --faint: #716d81;
     --accent: #6d4ae3; --accent-text: #6d4ae3; --accent-soft: #ece7fc; --unread: #2f80d0;
     --ok: #37794f; --warn: #986017; --bad: #b44037; --bad-soft: #f9e4e1; --warn-soft: #f8efdc;
     --spark-1: #c4b5fb; --spark-2: #9a80f5; --spark-3: #6d4ae3;
+    --glow: rgb(109 74 227 / .3); --glow-hi: #b4a1fa;
     --shadow: 0 1px 2px rgb(31 26 51 / .04), 0 4px 14px -6px rgb(31 26 51 / .1);
   }
   /* dark: follows Windows unless Settings > Appearance picks one (data-theme on <html>); the two blocks must match */
@@ -45,6 +47,7 @@
       --accent: #7c5cf0; --accent-text: #b4a2fb; --accent-soft: #352d55; --unread: #66a6ec;
       --ok: #7cc496; --warn: #e3a857; --bad: #ec8476; --bad-soft: #45262a; --warn-soft: #433824;
       --spark-1: #7c5cf0; --spark-2: #b9a8fb; --spark-3: #ffffff;
+      --glow: rgb(146 116 252 / .55); --glow-hi: #ffffff;
       --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .45);
     }
   }
@@ -54,6 +57,7 @@
     --accent: #7c5cf0; --accent-text: #b4a2fb; --accent-soft: #352d55; --unread: #66a6ec;
     --ok: #7cc496; --warn: #e3a857; --bad: #ec8476; --bad-soft: #45262a; --warn-soft: #433824;
     --spark-1: #7c5cf0; --spark-2: #b9a8fb; --spark-3: #ffffff;
+    --glow: rgb(146 116 252 / .55); --glow-hi: #ffffff;
     --shadow: 0 1px 2px rgb(0 0 0 / .2), 0 6px 18px -8px rgb(0 0 0 / .45);
   }
   :root { color-scheme: light dark; }
@@ -278,6 +282,52 @@
   .dbg { width: 100%; border-collapse: collapse; margin-top: 6px; font: 11.5px "Geist Mono", ui-monospace, monospace; }
   .dbg td { padding: 2px 6px 2px 0; vertical-align: top; border-top: 1px solid var(--line); color: var(--text); overflow-wrap: anywhere; }
   .dbg tr.bad td { color: var(--bad); } .dbg tr.note td { color: var(--muted); }
+  /* under a finished answer, its steps fold into one row, like Claude Code's "Worked for …": open it for the checklist
+     (and, with Settings > Debug on, the timeline). Plain replies without steps keep the "Took 3s" line instead */
+  .worked { display: inline-flex; align-items: center; gap: 5px; min-width: 0; border: 0; background: none; color: var(--faint); font: inherit;
+            font-size: 12px; padding: 3px 7px; margin-left: -7px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .worked:hover { background: var(--hover); color: var(--muted); }
+  .worked:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -2px; }
+  .worked .chev, .live .chev { display: grid; transition: transform .15s; } .worked.open .chev, .live .chev.open { transform: rotate(90deg); }
+  .workdrop { margin: 6px 0 2px; }
+  .workdrop > :last-child { margin-bottom: 4px; }
+  /* while IO works: no checklist, one glowing line under your prompt (where the answer will appear) saying what it's doing
+     now. IO's own glint: a light wave runs corner to corner through a little grid of its sparkle squares and on across the
+     words, every 2.4s. The line is its own element (not part of the turn's HTML), so text changes never restart it.
+     It sticks to the bottom of the chat, just above the box, when you scroll up to read; stuck, it becomes a small card.
+     Calm (queued, or waiting for your answer): no sweep, the squares only breathe. */
+  .turnwrap { display: contents; }  /* no box: the live line's sticky range is the whole chat column, not just its turn */
+  .live { position: sticky; bottom: 8px; z-index: 2; display: flex; align-items: center; gap: 9px; width: fit-content; max-width: calc(100% + 10px);
+          margin: -8px 0 22px -10px; padding: 4px 10px; border: 1px solid transparent; border-radius: 11px; background: var(--bg);
+          font-size: 13.5px; cursor: pointer; outline: none; transition: background .2s, border-color .2s, box-shadow .2s; }
+  .live.stuck { background: var(--surface); border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); box-shadow: var(--shadow), 0 0 22px -8px var(--glow); }
+  .live:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .live .glyph { display: grid; grid-template-columns: repeat(3, 3px); gap: 1.5px; flex: none; filter: drop-shadow(0 0 3px var(--glow)); }
+  .live .glyph i { width: 3px; height: 3px; border-radius: .5px; background: var(--spark-2); opacity: .3; animation: glint 2.4s ease-in-out infinite; }
+  .live .glyph i:nth-child(odd) { background: var(--spark-1); } .live .glyph i:nth-child(5) { background: var(--spark-3); }
+  /* the wave: (row + column) steps of .1s, top-left to bottom-right */
+  .live .glyph i:nth-child(2), .live .glyph i:nth-child(4) { animation-delay: .1s; }
+  .live .glyph i:nth-child(3), .live .glyph i:nth-child(5), .live .glyph i:nth-child(7) { animation-delay: .2s; }
+  .live .glyph i:nth-child(6), .live .glyph i:nth-child(8) { animation-delay: .3s; }
+  .live .glyph i:nth-child(9) { animation-delay: .4s; }
+  @keyframes glint { 0%, 34%, 100% { opacity: .3; transform: scale(.7); } 12% { opacity: 1; transform: scale(1.15); } }
+  /* the words: accent-coloured with a soft halo (drop-shadow, since text-shadow would paint over clipped text), and the
+     shine picking up where the squares' wave ends; same 2.4s period, so the two stay in step */
+  .live .act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-text);
+               background: linear-gradient(100deg, var(--accent-text) 40%, var(--glow-hi) 50%, var(--accent-text) 60%) 100% 0 / 250% 100% no-repeat;
+               -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+               filter: drop-shadow(0 0 5px var(--glow)); animation: sweep 2.4s ease-in-out .25s infinite; }
+  @keyframes sweep { 0% { background-position: 100% 0; } 60%, 100% { background-position: 0 0; } }
+  .live .livemeta { flex: none; margin-left: -3px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .live .chev { flex: none; color: var(--faint); margin-left: -4px; }
+  .live:hover .chev { color: var(--text); }
+  .live.calm .act { animation: none; background: none; -webkit-text-fill-color: currentColor; color: var(--muted); filter: none; }
+  .live.calm .glyph i { animation: breathe 2.8s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .3; } 50% { opacity: .75; } }
+  @media (prefers-reduced-motion: reduce) {  /* still glowing, nothing moving */
+    .live .act { animation: none; background: none; -webkit-text-fill-color: currentColor; }
+    .live .glyph i, .live.calm .glyph i { animation: none; opacity: .55; } .live .glyph i:nth-child(5) { opacity: 1; }
+  }
   .modelrow { display: flex; align-items: center; gap: 8px; flex-basis: 100%; padding: 4px 0; font-size: 13.5px; }
   .modelrow .num { width: 18px; color: var(--muted); text-align: right; }
   .modelrow .tag { font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; }
@@ -485,6 +535,9 @@
     html.remote .composerwrap { padding-left: 10px; padding-right: 10px; }
     html.remote .effortpick > button { padding: 7px 8px; }
     html.remote .effortmenu button { padding: 8px; }
+    /* the live line and the folded steps row are tap targets too */
+    html.remote .live { min-height: 34px; bottom: 6px; }
+    html.remote .worked { padding: 6px 8px; margin-left: -8px; }
   }
 </style>
 </head>
@@ -618,7 +671,7 @@
       <div class="scroller" x-ref="messages" x-show="chat && chat.messages.length">
         <div class="column">
           <template x-for="(m, i) in (chat ? chat.messages : [])" :key="m.task_id">
-            <div>
+            <div class="turnwrap">
               <div x-effect="setHtml($el, turn(m, i))"></div>
               <template x-if="taskById(m.task_id)?.status === 'waiting'">
                 <div class="msg-agent" style="margin-top:-14px"><div class="question">
@@ -632,6 +685,18 @@
                     </template>
                   </div>
                 </div></div>
+              </template>
+              <!-- while IO works on this message: one glowing line saying what it's doing now (see .live); one per chat.
+                   Click it for the steps so far, the same dropdown the answer gets when it's done -->
+              <template x-if="liveTaskId === m.task_id">
+                <div class="live" :class="liveInfo(taskById(m.task_id)).calm && 'calm'" x-init="watchStuck($el)" tabindex="0"
+                     :title="open[m.task_id + ':steps'] ? 'Hide the steps' : 'Show the steps so far'" :aria-expanded="!!open[m.task_id + ':steps']"
+                     @click="toggleLive(m.task_id, $el)" @keydown.enter.prevent="toggleLive(m.task_id, $el)" @keydown.space.prevent="toggleLive(m.task_id, $el)">
+                  <span class="glyph" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="act" role="status" x-text="liveInfo(taskById(m.task_id)).text"></span>
+                  <span class="livemeta" x-text="liveInfo(taskById(m.task_id)).meta"></span>
+                  <span class="chev" :class="open[m.task_id + ':steps'] && 'open'" aria-hidden="true" x-html="ic('chevron-right', 'sm')"></span>
+                </div>
               </template>
             </div>
           </template>
@@ -1282,6 +1347,8 @@ function effortTag(t) {
 }
 const plural =(n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const short = (v, n = 48) => { const x = String(v ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
+// 42s, 1m 12s, 1h 5m
+const fmtDur = (s) => { s = Math.max(0, Math.round(s)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; };
 
 const iconCache = {};
 function ic(name, cls = "") {
@@ -1426,6 +1493,7 @@ function agent() {
     chromeToken: "", browserTest: "", nimKey: "", nimNote: "",
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
+    clock: Date.now(),  // ticks every second for the live line's elapsed time (only it reads this, so nothing else re-renders)
     ic,
 
     async init() {
@@ -1514,6 +1582,7 @@ function agent() {
       this.ready = true;
       this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "chat") this.scrollToStart(); });
       setInterval(() => this.refresh(), REMOTE ? 2500 : 1000);
+      setInterval(() => { this.clock = Date.now(); }, 1000);
       this.scrollToStart();
       this.$refs.task.focus();
     },
@@ -1933,7 +2002,10 @@ function agent() {
       const divider = t.id === this.dividerTaskId ? `<div class="newline"><i></i>New<i></i></div>` : "";
       const busy = BUSY.includes(t.status);
       const secs = t.finished && t.started ? Math.round(t.finished - t.started) : 0;
-      const items = checklist(t);
+      // the steps fold away: while IO works, the live line under the turn says what it's doing (and opens them); once it's
+      // done, one "Worked for 1m 12s · 9 steps" row under the answer does. Open or closed is remembered per task, like Debug
+      const open = !!this.open[t.id + ":steps"];
+      const items = busy && !open ? [] : checklist(t);
       const card = items.length
         ? `<div class="checklist">${items.map((it) => `
             <div class="ck ${it.state}${it.lane ? " lane" : ""}" ${it.detail ? `onclick="toggleSteps('${t.id}:${it.key}', event)"` : ""}>
@@ -1943,18 +2015,52 @@ function agent() {
             </div>`).join("")}</div>`
         : "";
       const answer = t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "";
-      const debug = this.s.settings.debug ? debugTimeline(t, this.open[t.id + ":debug"]) : "";
-      const meta = !busy && secs ? `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>` : "";
+      const debug = this.s.settings.debug && (open || !busy) ? debugTimeline(t, this.open[t.id + ":debug"]) : "";
+      const drop = open && (card || debug) ? `<div class="workdrop">${card}${debug}</div>` : "";
       const done = this.copied === t.id;
       const copy = answer && !busy ? `<button class="copy ${done ? "done" : ""}" onclick="copyAnswer('${t.id}')" title="${done ? "Copied" : "Copy"}">${ic(done ? "check" : "copy")}</button>` : "";
       const tag = effortTag(t);
-      const foot = copy || meta || tag ? `<div class="msgfoot">${meta}${tag}${copy}</div>` : "";
+      // finished with steps (or a Debug timeline): the folded row, effort tag and all; a plain reply keeps "Took 3s"
+      let row = "", meta = "";
+      if (!busy && (card || debug)) {
+        const steps = stepCount(t);
+        const label = (secs ? ({ cancelled: "Stopped after ", error: "Failed after " }[t.status] || (steps ? "Worked for " : "Took ")) + fmtDur(secs)
+          : { cancelled: "Stopped", error: "Failed" }[t.status] || "Done") + (steps ? " · " + plural(steps, "step") : "");
+        row = `<button class="worked ${open ? "open" : ""}" onclick="toggleSteps('${t.id}:steps', event)" aria-expanded="${open}" title="${open ? "Hide" : "Show"} the steps">${esc(label)}${tag ? " · " + tag : ""}<span class="chev">${ic("chevron-right", "sm")}</span></button>`;
+      } else if (!busy && secs) {
+        meta = `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>`;
+      }
+      // nothing under a turn that's still running: the live line below it is all there is
+      const foot = !busy && (row || meta || tag || copy) ? `<div class="msgfoot">${row || meta + tag}${copy}</div>` : "";
       const last = this.chat && i === this.chat.messages.length - 1;
       const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
       const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
       return `<div class="msg-user">${imgs}${said}</div>${divider}
-        <div class="msg-agent ${last ? "last" : ""}">${card}${debug}${answer}
-          ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${foot}</div>`;
+        <div class="msg-agent ${last ? "last" : ""}">${busy ? drop : ""}${answer}
+          ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${foot}${busy ? "" : drop}</div>`;
+    },
+    // the chat's live line: the task actually working (or waiting for you), else the first one queued; only one per chat
+    get liveTaskId() {
+      if (!this.chat) return "";
+      const busy = this.chatTasks(this.chat).filter((t) => BUSY.includes(t.status));
+      return (busy.find((t) => t.status !== "queued") || busy[0])?.id || "";
+    },
+    // what the live line says: what IO is doing now, then "· 42s · 7 steps" (and anything queued behind it)
+    liveInfo(t) {
+      if (!t) return { text: "", meta: "", calm: true };
+      const from = t.status === "queued" ? t.created : t.started || t.created;
+      const secs = from ? Math.max(0, this.clock / 1000 - from) : 0;
+      const steps = stepCount(t);
+      const behind = this.chat ? this.chatTasks(this.chat).filter((x) => x.id !== t.id && BUSY.includes(x.status)).length : 0;
+      const meta = [fmtDur(secs), steps ? plural(steps, "step") : "", behind ? `${behind} more queued` : ""].filter(Boolean).join(" · ");
+      return { text: nowDoing(t, this.s.model_info || {}), meta: "· " + meta, calm: t.status !== "running" };
+    },
+    // the live line opens the steps so far; stuck at the bottom of the chat, it also brings them into view
+    toggleLive(id, el) {
+      const k = id + ":steps";
+      this.open[k] = !this.open[k];
+      if (this.open[k] && el.classList.contains("stuck"))
+        this.$nextTick(() => requestAnimationFrame(() => el.parentElement?.querySelector(".workdrop")?.scrollIntoView({ block: "start", behavior: "smooth" })));
     },
 
     // ----- tasks & history -----
@@ -2228,8 +2334,192 @@ function stepText(name, a = {}) {
     case "browser_press_key": return `Pressed ${a.key}`;
     case "browser_snapshot": return "Read the web page";
     case "browser_wait_for": return "Waited for the page";
-    default: return String(name).startsWith("browser_") ? "Used the browser" : name;
+    default: return String(name).startsWith("browser_") ? "Used the browser" : doingText(name, a);  // newer tools: the live line's words
   }
+}
+
+// how many actions a task has taken (its helpers' included); the brain's to-do bookkeeping and its done call aren't steps
+function stepCount(t) { return (t.events || []).filter((e) => e.event === "tool" && e.name !== "todo" && e.name !== "done").length; }
+
+// an action, as what IO is doing now ("Reading boss.py"). a is its arguments, or null while it's still running (a tool's
+// record, args included, only lands when it finishes): then it says just the kind of thing ("Reading a file").
+// info is /api/state's model_info, to name the model ask_model asks.
+function doingText(name, a, info = {}) {
+  const has = !!a; a = a || {};
+  const q = (v, n = 40) => `“${short(v, n)}”`;
+  const base = (p) => short(String(p || "").split(/[\\/]/).filter(Boolean).pop() || p, 40);  // C:\x\boss.py -> boss.py
+  const site = (u) => short(String(u || "").replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, ""), 44);
+  const keys = (k) => short(Array.isArray(k) ? k.join(", ") : k, 30);
+  const n = String(name || "");
+  switch (n) {
+    case "read_file": return a.path ? `Reading ${base(a.path)}` : "Reading a file";
+    case "write_file": return a.path ? `Writing ${base(a.path)}` : "Writing a file";
+    case "edit_file": return a.path ? `Editing ${base(a.path)}` : "Editing a file";
+    case "edit_lines": return a.path ? `Editing lines ${a.start ?? ""}${a.end && a.end !== a.start ? "-" + a.end : ""} of ${base(a.path)}` : "Editing lines of a file";
+    case "list_files": return a.folder ? `Looking through ${base(a.folder)}` : "Looking through a folder";
+    case "find_file": return a.name ? `Looking for ${q(a.name)}` : "Looking for a file";
+    case "file_op": return a.op === "mkdir" ? (a.src ? `Making the folder ${base(a.src)}` : "Making a folder")
+      : ({ copy: "Copying", move: "Moving", rename: "Renaming", recycle: "Recycling", zip: "Zipping", unzip: "Unzipping", info: "Checking",
+           size: "Measuring", organize: "Sorting" }[a.op] || "Working with") + (a.src ? " " + base(a.src) : " files");
+    case "FileSystem": return a.mode === "mkdir" ? (a.path ? `Making the folder ${base(a.path)}` : "Making a folder")
+      : `${({ read: "Reading", write: "Writing", delete: "Deleting", move: "Moving", copy: "Copying", list: "Looking through",
+             search: "Searching", info: "Checking" })[a.mode] || "Working with"} ${a.path ? base(a.path) : "files"}`;
+    case "open_path": return a.path ? `Opening ${base(a.path)}` : "Opening a file";
+    case "open_file": return a.name ? `Opening ${q(a.name)}` : "Opening a file";
+    case "save_file_as": return a.path ? `Saving as ${base(a.path)}` : "Saving the file";
+    case "run_command": case "PowerShell": return a.command ? `Running ${short(a.command, 40)}` : "Running a command";
+    case "start_app": return a.command ? `Starting ${short(a.command, 40)}` : "Starting a program";
+    case "web_search": return a.query ? `Searching the web for ${q(a.query)}` : "Searching the web";
+    case "web_answer": case "research": return a.question ? `Researching ${q(a.question)}` : "Researching on the web";
+    case "read_page": case "Scrape": return a.url ? `Reading ${site(a.url)}` : "Reading a web page";
+    case "browser_open": case "browser_navigate": return a.url ? `Opening ${site(a.url)}` : "Opening a web page";
+    case "browser_read": case "browser_snapshot": return "Reading the web page";
+    case "web_click": case "browser_click": { const x = a.text || a.element || a.target; return x ? `Clicking ${q(x)}` : "Clicking on the page"; }
+    case "browser_type": return a.text ? `Typing ${q(a.text, 30)}` : "Typing on the page";
+    case "web_fill": case "fill_form": case "browser_fill_form": return "Filling in a form";
+    case "web_close_tab": return "Closing its browser tab";
+    case "click": case "click_on": { const x = a.target || a.description; return x ? `Clicking ${q(x)}` : "Clicking"; }
+    case "Click": return a.clicks === 2 ? "Double-clicking" : a.button === "right" ? "Right-clicking" : "Clicking";
+    case "hold_on": case "hold_until": case "hold": { const x = a.description || a.target; return x ? `Holding ${q(x)}` : "Pressing and holding"; }
+    case "tap_repeatedly": return a.target ? `Tapping ${q(a.target)}` : "Tapping";
+    case "type_into": return a.field ? `Typing into ${q(a.field)}` : a.text ? `Typing ${q(a.text, 30)}` : "Typing";
+    case "Type": case "type_text": case "phone_type": return a.text ? `Typing ${q(a.text, 30)}` : "Typing";
+    case "write_in_app": return a.app ? `Writing in ${a.app}` : "Writing in an app";
+    case "set_control": return a.label ? `Setting ${q(a.label)}` : "Changing a control";
+    case "change_setting": return a.setting ? `Changing ${q(a.setting)}` : "Changing a setting";
+    case "select_menu": return a.path ? `Choosing ${short(a.path, 40)}` : "Using a menu";
+    case "hotkeys": case "Shortcut": case "browser_press_key": case "media_key": {
+      const k = a.keys || a.shortcut || a.key;
+      // hotkeys can type too: ["ctrl+l", "text:C:\\x", "enter"]
+      const typed = (Array.isArray(k) ? k : []).filter((x) => /^text:/.test(x)).map((x) => x.slice(5));
+      if (typed.length) return `Typing ${q(typed.join(" "), 30)}`;
+      return k ? `Pressing ${keys(k)}` : "Pressing keys";
+    }
+    case "Scroll": case "scroll_until": case "swipe": case "phone_swipe": return a.target ? `Scrolling to ${q(a.target)}` : "Scrolling";
+    case "wait": case "Wait": case "WaitFor": case "wait_until": case "browser_wait_for": { const s = a.seconds ?? a.duration; return "Waiting" + (s ? ` ${s}s` : ""); }
+    case "open_app": case "App": return a.name ? `Opening ${a.name}` : "Opening an app";
+    case "focus_window": return a.window ? `Switching to ${a.window}` : "Switching windows";
+    case "window_state": return a.window ? `Arranging ${a.window}` : "Arranging a window";
+    case "list_windows": return "Checking the open windows";
+    case "close_window": case "close_windows": return a.window ? `Closing ${a.window}` : "Closing a window";
+    case "dismiss_dialog": case "close_popups": return "Closing a popup";
+    case "read_window": return a.window ? `Reading ${a.window}` : "Reading a window";
+    case "list_controls": case "find_control": return a.window ? `Looking over ${a.window}` : "Looking over a window";
+    case "read_table": return "Reading a table";
+    case "read_region": return a.window ? `Reading part of ${a.window}` : "Reading part of the screen";
+    case "check_screen": return "Checking the screen";
+    case "look_at_screen": case "Snapshot": return a.window ? `Looking at ${a.window}` : "Looking at the screen";
+    case "screenshot": return "Taking a screenshot";
+    case "find_on_screen": case "find_all": return a.description ? `Looking for ${q(a.description)}` : "Looking at the screen";
+    case "phone_look": return "Looking at the iPhone";
+    case "phone_tap": return a.target ? `Tapping ${q(a.target)} on the iPhone` : "Tapping on the iPhone";
+    case "phone_open": return a.target ? `Opening ${short(a.target, 40)} on the iPhone` : "Opening an app on the iPhone";
+    case "phone_home": return "Going to the iPhone's Home screen";
+    case "pc_info": return a.topic === "time" ? "Checking the time" + (a.place ? ` in ${a.place}` : "") : a.topic ? `Checking the PC's ${a.topic}` : "Checking the PC";
+    case "app_info": return a.name ? `Checking ${a.name}` : "Checking an app";
+    case "open_settings": return "Opening Settings";
+    case "calc": case "calculator": { const x = a.expr || a.expression; return x ? `Working out ${short(x, 30)}` : "Calculating"; }
+    case "Clipboard": return "Using the clipboard";
+    case "Process": return a.mode === "kill" ? `Closing ${a.name || "a program"}` : "Checking running programs";
+    case "game_state": return "Checking the game";
+    case "cleanup": return "Tidying up";
+    case "ask_user": return "Asking you";
+    case "ask_model": {
+      if (!a.model) return "Asking another model";
+      if (a.model === "local") return "Asking the local model";
+      // ask_model names a model by its label, slugged ("glm-5.3-flash"); model_info has the label back
+      const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9.]+/g, "-").replace(/^-|-$/g, "");
+      const hit = Object.values(info).find((m) => m && m.label && slug(m.label) === a.model);
+      return `Asking ${hit ? hit.label : a.model}`;
+    }
+    case "ask_gemini": return "Asking Gemini";
+    case "remember": return "Saving a note";
+    case "notes": return "Reading its notes";
+    case "todo": return "Updating its to-do list";
+    case "add_goal": return "Setting up a goal";
+    case "done": return "Wrapping up";
+    case "steps": return "Working through a few steps";
+    case "tools": return "Looking up its tools";
+    case "use": return a.name ? doingText(a.name, has && a.args ? a.args : null, info) : "Using a tool";
+    case "computer_use": return "Using the computer";
+  }
+  if (n.startsWith("homeassistant_")) return "Checking Home Assistant" + (a.entity_id ? ` (${short(a.entity_id, 36)})` : "");
+  if (n.startsWith("browser_")) return "Using the browser";
+  if (n.startsWith("phone_")) return "Using the iPhone";
+  // anything else (a plugin's tool): its name, readable
+  const words = n.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.]+/g, " ").trim().toLowerCase();
+  return words ? `Using ${words}` : "Working";
+}
+
+// what a running task is doing right now, in a few plain words, from its newest records. Order of the records for one
+// step: the brain's model call (llm, race) -> think -> each tool it called (tool, once that tool is done) -> view (the
+// screenshot for the next call) -> the next model call. So: a call it made that hasn't reported back is running now;
+// otherwise the brain is working on what its last action got, and the line keeps naming that ("Reading boss.py")
+// rather than a bare "Thinking" (the model calls are most of a task's time)
+function nowDoing(t, info) {
+  if (t.status === "queued") return "Queued";
+  if (t.status === "waiting") return "Waiting for your answer";
+  const ev = t.events || [];
+  // Ultracode: helpers working on parts at once (an "ultra" record means they've all reported)
+  let lanes = null;
+  ev.forEach((e) => {
+    if (e.event === "agents") lanes = new Map((e.agents || []).map((x) => [x.id, false]));
+    else if (e.event === "agent_done" && lanes && e.agent) lanes.set(e.agent, true);
+    else if (e.event === "ultra") lanes = null;
+  });
+  const working = lanes ? [...lanes.values()].filter((d) => !d).length : 0;
+  if (working) return working === lanes.size ? `Helpers working on ${plural(working, "part")}` : `Helpers working on ${working} of ${lanes.size} parts`;
+  // the brain keeps a to-do list: the item in progress is the activity, like Claude Code's
+  const todo = [...ev].reverse().find((e) => e.event === "todo" && Array.isArray(e.items) && e.items.length);
+  const item = todo && todo.items.find((it) => it && typeof it === "object" && /progress|now|running|doing|active/i.test(String(it.status || it.state || "")));
+  if (item && (item.text || item.content || item.task)) return short(item.text || item.content || item.task, 120);
+  const main = ev.filter((e) => !e.agent);
+  // a call from the brain's latest decision that hasn't reported back yet is running now (its arguments come with its record)
+  let ti = main.length - 1;
+  while (ti >= 0 && main[ti].event !== "think") ti--;
+  if (ti >= 0) {
+    let winner = "", calls = [];
+    for (let j = ti - 1; j >= 0 && !["think", "tool"].includes(main[j].event); j--) {
+      const e = main[j];
+      if (e.event === "race") winner = e.winner;
+      else if (e.event === "llm" && e.ok && (e.calls || []).length && (!winner || e.model === winner)) { calls = e.calls; break; }
+    }
+    const ran = main.slice(ti + 1).filter((e) => e.event === "tool").length;
+    if (ran < calls.length) return doingText(calls[ran], null, info);
+  }
+  for (let j = main.length - 1; j >= 0; j--) {
+    const e = main[j];
+    switch (e.event) {
+      case "tool": return doingText(e.name, e.args || {}, info);
+      case "view": return e.window ? `Looking at ${e.window}` : "Looking at the screen";
+      case "research": return e.question ? `Researching “${short(e.question, 40)}”` : "Researching";
+      case "compact": return "Tidying up its notes";
+      case "check": case "finish_check": return "Double-checking the answer";
+      case "escalate": return `Moving up to ${String(e.to || "high").replace(/^./, (c) => c.toUpperCase())} effort`;
+      case "ultra": return "Putting the parts together";
+      case "director": return "Planning the next steps";
+      case "warning": {
+        const m = /^the brain is now (.+)/.exec(e.text || "");
+        if (m) return "Switching to " + m[1];
+        if (/trying the next model/i.test(e.text || "")) return "Trying another model";
+        break;
+      }
+      case "think": case "start": case "loop": return "Thinking";
+    }
+  }
+  return "Thinking";
+}
+
+// the live line is sticky at the bottom of the chat; once it's actually stuck there (its turn scrolled out of view) it
+// gets .stuck, which makes it a small card so the text scrolling under it doesn't show through. Watched until it's gone
+function watchStuck(el) {
+  const root = el.closest(".scroller");
+  const io = new IntersectionObserver(([e]) => {
+    if (!el.isConnected) { io.disconnect(); return; }
+    // stuck = its last pixel is past the root's bottom inset (bottom: 8px), not cut off at the top
+    el.classList.toggle("stuck", e.intersectionRatio < 1 && e.boundingClientRect.top > (e.rootBounds ? e.rootBounds.top : 0));
+  }, { root, rootMargin: "0px 0px -9px 0px", threshold: [0, 1] });
+  io.observe(el);
 }
 
 // Claude-style checklist: finished actions ticked, the current one spinning, the rest of the plan still open

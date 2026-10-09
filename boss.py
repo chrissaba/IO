@@ -200,7 +200,9 @@ FRONTIER_STYLE = """WORKING STYLE
   each time a part is done; the user watches that list. Skip it for one-step tasks.
 - Think the whole task through first, then act. Every action you already know you'll need goes in this reply: several tool
   calls at once, or one steps call (they run in order; a failure stops the rest). Each reply costs a slow round trip.
-- Change code with edit_file (exact old text -> new); rewrite a whole file only when most of it changes.
+- Change code with edit_file (exact old text -> new), or read_file(path, lines="120-180", anchors=true) then edit_lines with
+  those line tags (no need to copy the old text); rewrite a whole file only when most of it changes. A big code file
+  read without lines= comes back as an outline with line ranges: then read the part you need.
 - Run programs and test suites with run_command(command, folder): the whole output in order and the real exit code.
   To keep the output in a file, add save_to="out.txt" (redirecting and then typing the file reports type's exit code,
   not the program's). Use PowerShell only for PowerShell's own cmdlets.
@@ -233,7 +235,7 @@ def layer_system(names: list, browser_where: str = "", frontier: bool = False) -
 MADE_FILE = re.compile(r"\b(?:creat|generat|wr[io]t|sav|made|built|produc|export)\w*\b[^.\n]{0,80}?([\w\-]+\.(?:svg|md|txt|csv|json|py|html?|js|css|png|jpe?g|zip|xlsx|docx|pptx|pdf|log|ya?ml|xml|ini|bat|ps1))\b"
                        r"|([\w\-]+\.(?:svg|md|txt|csv|json|py|html?|js|css|png|jpe?g|zip|xlsx|docx|pptx|pdf|log|ya?ml|xml|ini|bat|ps1))\b[^.\n]{0,30}?\b(?:was|were|has been|have been|is now) (?:creat|generat|written|sav|made|built)\w*", re.I)
 NOT_DONE = re.compile(r"\b(couldn'?t|could not|can'?t|cannot|didn'?t|did not|unable|failed|wasn'?t|were not|weren'?t|not yet|instead of|would)\b", re.I)
-WRITE_TOOLS = ("write_file", "edit_file", "run_command", "PowerShell", "file_op", "FileSystem", "screenshot", "start_app", "save_file_as", "write_in_app")
+WRITE_TOOLS = ("write_file", "edit_file", "edit_lines", "run_command", "PowerShell", "file_op", "FileSystem", "screenshot", "start_app", "save_file_as", "write_in_app")
 
 
 def leaked_call(text: str, names: set):
@@ -1597,6 +1599,9 @@ def split_steps(calls: list) -> tuple[list, dict]:
     return out, batch_of
 
 
+# reads that touch nothing shared (no window, no browser tab, no model slot): several in one reply run at once
+PARALLEL_SAFE = {"read_file", "list_files", "find_file", "pc_info", "app_info", "calc"}
+
 # calls that only look (a failed one doesn't stop the other calls in its reply)
 READ_ONLY = {"web_search", "web_answer", "read_page", "read_file", "list_files", "find_file", "look_at_screen", "Snapshot",
              "list_windows", "list_controls", "find_control", "read_window", "check_screen", "find_on_screen", "browser_snapshot",
@@ -2162,9 +2167,50 @@ def match_schema(args: dict, tool_def: dict | None) -> dict:
     return out
 
 
+ARTIFACTS = HERE / "data" / "artifacts"
+ARTIFACT_DAYS = 7  # spilled results older than this are deleted when a task starts
+_spilled: dict[str, str] = {}  # a result's sha1 -> its artifact id (saved once, however often compact() runs)
+
+
+def spill(content: str) -> str:
+    """Saves a whole tool result to data/artifacts/<id>.txt (once) and returns its id: a result cut to fit the model's
+    memory stays readable in full with read_file("artifact://<id>", lines=... or find=...), instead of being lost."""
+    key = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
+    if key not in _spilled:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        (ARTIFACTS / f"{key[:12]}.txt").write_text(content, encoding="utf-8", newline="")  # byte for byte, as returned
+        _spilled[key] = key[:12]
+    return _spilled[key]
+
+
+def prune_artifacts() -> None:
+    try:
+        cutoff = time.time() - ARTIFACT_DAYS * 86400
+        for f in ARTIFACTS.glob("*.txt"):
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def cut_with_link(content: str, keep: int, why: str) -> str:
+    """The start and end of a long result, with a link to all of it (the end of a command's output is usually where
+    the error or the total is)."""
+    try:
+        link = f"artifact://{spill(content)}"
+    except OSError:  # the disk said no: cut as before
+        return content[:keep] + f"\n[{why}; call the tool again for the rest]"
+    tail = min(400, keep // 4)
+    lines = content.count("\n") + 1
+    return (content[:keep - tail] + f"\n[... {len(content) - keep:,} characters left out ...]\n" + content[-tail:] +
+            f"\n[{why}. Full result ({len(content):,} characters, {lines:,} lines): {link}. Read parts of it with "
+            f"read_file(\"{link}\", lines=\"1-200\") or find=\"words\".]")
+
+
 def compact(messages: list[dict], keep: int = 2, trim: int = 1500, snaps_kept: int = KEEP_FULL_SNAPSHOTS, cap: int = 0) -> list[dict]:
     """Keep only the newest tool results in full. Older Snapshots are dropped (huge and stale); other
-    older results (web pages, documents, plugin output) are cut short so the context doesn't overflow.
+    older results (web pages, documents, plugin output) are cut short so the context doesn't overflow, each with a link
+    to its whole text (spill), so nothing is lost.
     cap: also cut any single remaining result to this many characters (0 = no limit)."""
     snapshot_ids = {
         tc["id"]
@@ -2183,9 +2229,9 @@ def compact(messages: list[dict], keep: int = 2, trim: int = 1500, snaps_kept: i
         if id(m) in stale_snaps:
             m = {**m, "content": "[older snapshot omitted; call Snapshot again if needed]"}
         elif id(m) in stale_others and len(m["content"]) > trim:
-            m = {**m, "content": m["content"][:trim] + "\n[older result trimmed; call the tool again if you need the rest]"}
+            m = {**m, "content": cut_with_link(m["content"], trim, "older result trimmed")}
         elif cap and m["role"] == "tool" and len(m["content"]) > cap:
-            m = {**m, "content": m["content"][:cap] + "\n[result cut to fit the model's memory; ask for less (a window, a find) if you need more]"}
+            m = {**m, "content": cut_with_link(m["content"], cap, "result cut to fit the model's memory")}
         out.append(m)
     return out
 
@@ -2808,6 +2854,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     level = options.get("effort") if options.get("effort") in EFFORT else ("high" if options.get("ask_gemini") else "low")
     eff = EFFORT[level]
     EFFORT_NOW.set(level)  # Glimmer's reasoning for this task (local_create reads it, also in worker threads)
+    prune_artifacts()  # whole tool results saved by earlier tasks (spill) go after a week
     if not loop:
         max_steps = min(max_steps, eff["steps"])
     boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
@@ -4129,6 +4176,22 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             plain_replies = 0
 
             batch_stop: dict[str, str] = {}  # a steps() batch's id -> why the rest of it was skipped
+            # several file/PC reads in one reply start together; each result is still taken in its turn below, through
+            # every check a single call gets (one that ends up skipped or blocked just goes unused: it only read)
+            prefetched: dict[str, tuple[str, asyncio.Task]] = {}
+            if layer:
+                reads = []
+                for c in calls:
+                    if c.function.name in PARALLEL_SAFE and actions.native(c.function.name) and task_allows(c.function.name):
+                        a = loose_json(c.function.arguments or "{}") if (c.function.arguments or "").strip() else {}
+                        if isinstance(a, dict):
+                            reads.append((c, a))
+                if len(reads) >= 2:
+                    for c, a in reads:
+                        prefetched[c.id] = (c.function.name + json.dumps(a, sort_keys=True, ensure_ascii=False),
+                                            asyncio.create_task(actions.call(c.function.name, dict(a), ctx)))
+                        prefetched[c.id][1].add_done_callback(lambda f: f.cancelled() or f.exception())  # an unused one is quiet
+                    log("parallel", step=step, names=[c.function.name for c, _a in reads])
             for c in calls:
                 name = c.function.name
                 in_batch = batch_of.get(c.id)  # (batch id, position, note) for an action that came from steps()
@@ -4356,7 +4419,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     got, problem = actions.expand_steps(args.get("steps"))
                     result = f"error: {problem}" if not got else "error: call steps directly, not through use()"
                 elif native:
-                    result = await actions.call(name, args, ctx)
+                    early = prefetched.pop(c.id, None)
+                    if early and early[0] == name + json.dumps(args, sort_keys=True, ensure_ascii=False):
+                        result = await early[1]  # started with the other reads of this reply
+                    else:
+                        if early:
+                            early[1].cancel()
+                        result = await actions.call(name, args, ctx)
                 elif layer and name == "click_on" and not loop and (args.get("window") or focus_hint):
                     # click_on in a known window is click's vision rung: the cover check, the cross-check against the
                     # window's controls and the did-anything-change check come with it (loops keep their tuned path)

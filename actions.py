@@ -30,7 +30,9 @@ import sys
 import threading
 import time
 import urllib.parse
+import warnings
 import zipfile
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,7 +67,8 @@ def _h():
 # ======================================================================================================================
 
 CODES = {"NOT_FOUND", "AMBIGUOUS", "NO_CHANGE", "COVERED", "NOT_FOCUSED", "DISABLED", "TIMEOUT", "ELEVATED",
-         "UNSUPPORTED", "BLOCKED", "REFUSED", "BAD_ARGS", "NEEDS", "FAILED"}  # FAILED: a program ran and exited non-zero
+         "UNSUPPORTED", "BLOCKED", "REFUSED", "BAD_ARGS", "NEEDS", "FAILED",  # FAILED: a program ran and exited non-zero
+         "STALE"}  # STALE: a file changed on disk since this task read it (an edit from the old read would undo that change)
 RESULT = re.compile(r"^(ok: |unsure: |error:(" + "|".join(sorted(CODES)) + r"): )", re.S)
 
 
@@ -252,6 +255,9 @@ class Ctx:
     allowed: Callable | None = None                 # (name) -> bool: what this task may run (toggles, a loop's window lock)
     page_chars: int = 6000                          # read_page's length: boss raises it to fit a large-context brain
     written: set = field(default_factory=set)       # files this task created (lowercase paths): its own to overwrite
+    # lowercase path -> (size, mtime_ns, sha1) of each text file as read_file last showed it (and after IO's own writes
+    # to it): edit_file / write_file refuse with STALE when the file changed on disk since, instead of undoing that change
+    file_prints: dict = field(default_factory=dict)
 
 
 # what models write for an enum value -> the value (each wrong spelling cost the director a whole round)
@@ -3598,11 +3604,46 @@ def _xml_text(data: bytes) -> str:
     return html.unescape(text.decode("utf-8", "replace"))
 
 
+OFFICE = (".docx", ".xlsx", ".pptx")  # zips whose text is extracted: no line tags, no fingerprint, never edited as text
+
+
+def _decode(p: Path, data: bytes) -> tuple[str, str]:
+    """A text file's bytes -> (text, how to write it back): the BOM, byte order and code page it had, so an edit by line
+    (edit_lines) doesn't re-encode the rest of the file."""
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data[3:].decode("utf-8", "replace"), "utf-8-sig"
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", "replace"), "utf-16-bom-le" if data[0] == 0xFF else "utf-16-bom-be"
+    if b"\x00" in data[:4096]:
+        if data[1:4096:2].count(0) > len(data[1:4096:2]) * 0.4:  # BOM-less UTF-16 (PowerShell's > writes it)
+            return data.decode("utf-16-le", "replace"), "utf-16-le"
+        raise Fail("UNSUPPORTED", f"{p.name} is a binary file", f'file_op("info", "{p}")')
+    try:
+        return data.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        return data.decode("cp1252", "replace"), "cp1252"
+
+
+def _encode(text: str, how: str) -> bytes:
+    """_decode's inverse (UnicodeEncodeError when the new text has characters a cp1252 file can't hold)."""
+    if how == "utf-16-bom-le":
+        return b"\xff\xfe" + text.encode("utf-16-le")
+    if how == "utf-16-bom-be":
+        return b"\xfe\xff" + text.encode("utf-16-be")
+    return text.encode(how)
+
+
 def _file_text_sync(p: Path) -> str:
+    return _file_text_print_sync(p)[0]
+
+
+def _file_text_print_sync(p: Path) -> tuple[str, tuple | None]:
+    """(the file's text, the fingerprint of exactly the bytes it came from; None for docx/xlsx/pptx)."""
     ext = p.suffix.lower()
-    if p.stat().st_size > 5_000_000 and ext not in (".docx", ".xlsx", ".pptx"):
+    st = p.stat()
+    if st.st_size > 5_000_000 and ext not in OFFICE:
         raise Fail("UNSUPPORTED", f"{p.name} is {_size(p)}; IO reads files up to 5 MB", f'list_files("{p.parent}")')
-    if ext in (".docx", ".xlsx", ".pptx"):
+    if ext in OFFICE:
         with zipfile.ZipFile(p) as z:
             names = z.namelist()
             if ext == ".docx":
@@ -3611,48 +3652,616 @@ def _file_text_sync(p: Path) -> str:
                 parts = sorted((n for n in names if re.match(r"ppt/slides/slide\d+\.xml", n)), key=lambda n: int(re.findall(r"\d+", n)[0]))
             else:
                 parts = ["xl/sharedStrings.xml"] + sorted(n for n in names if n.startswith("xl/worksheets/sheet"))
-            return "\n".join(_xml_text(z.read(n)) for n in parts if n in names)
+            return "\n".join(_xml_text(z.read(n)) for n in parts if n in names), None
     if ext == ".pdf":
         raise Fail("UNSUPPORTED", "no PDF reader", f'open_path("{p}") then read_window(...)')
     data = p.read_bytes()
-    if data.startswith(b"\xef\xbb\xbf"):
-        return data[3:].decode("utf-8", "replace")
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16", "replace")
-    if b"\x00" in data[:4096]:
-        if data[1:4096:2].count(0) > len(data[1:4096:2]) * 0.4:  # BOM-less UTF-16 (PowerShell's > writes it)
-            return data.decode("utf-16-le", "replace")
-        raise Fail("UNSUPPORTED", f"{p.name} is a binary file", f'file_op("info", "{p}")')
+    return _decode(p, data)[0], _print_of(st, data)
+
+
+# --- stale-edit protection: an edit is made from what the model read; if the user (or an editor, a build) changed the
+# file since, an edit or rewrite from the old read silently undoes their change. Files never read in a task aren't held.
+
+def _print_of(st: os.stat_result, data: bytes) -> tuple[int, int, str]:
+    return len(data), st.st_mtime_ns, hashlib.sha1(data).hexdigest()
+
+
+def _changed_since_read(ctx: Ctx, p: Path) -> bool:
+    was = ctx.file_prints.get(str(p).lower())
+    if not was:
+        return False
     try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data.decode("cp1252", "replace")
+        st = p.stat()
+        if (st.st_size, st.st_mtime_ns) == tuple(was[:2]):
+            return False
+        return hashlib.sha1(p.read_bytes()).hexdigest() != was[2]  # touched but the same bytes is no change
+    except OSError:
+        return False
 
 
-@action("read_file", group="FILE", summary="the text of a file (txt, csv, json, docx, xlsx, pptx); find= for parts",
+def _refuse_stale(ctx: Ctx, p: Path) -> None:
+    """edit_file, and write_file over or onto an existing file: refused when this task read it and it changed since."""
+    if p.is_file() and _changed_since_read(ctx, p):
+        raise Fail("STALE", f"{p} changed on disk since this task read it (the user or another program edited it); "
+                   "an edit from the old text would undo that change", f'read_file("{p}") again, then redo the edit')
+
+
+def _note_written(ctx: Ctx, p: Path) -> None:
+    """After IO's own write to a file it read: the new bytes are what the task knows, so its next edit isn't refused."""
+    key = str(p).lower()
+    if key in ctx.file_prints:
+        try:
+            st = p.stat()
+            ctx.file_prints[key] = _print_of(st, p.read_bytes())
+        except OSError:
+            ctx.file_prints.pop(key, None)
+
+
+# --- lines and anchors ("hashline"): read_file(anchors=true) shows each line as N:hh|text, hh a 2-character tag of the
+# line's text; edit_lines names lines by number and proves it saw them by their tags, instead of copying old text exactly
+# (small models slip on spaces and long blocks, and every copied character is generated again)
+
+_EOL = re.compile(r"\r\n|\n|\r")
+_B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+_TAG_PREFIX = re.compile(r"^\d+:[0-9a-z]{2}\|")  # a line as read_file(anchors=true) showed it, pasted back into new_text
+
+
+def _rows(text: str) -> list[tuple[str, str]]:
+    """(line, its line break) pairs; a last line without a break gets "". The one numbering lines=, anchors, edit_lines
+    and the outlines share (\\r\\n, \\n and a lone \\r each end a line, as in editors and Python's ast)."""
+    out, pos = [], 0
+    for m in _EOL.finditer(text):
+        out.append((text[pos:m.start()], m.group()))
+        pos = m.end()
+    if pos < len(text):
+        out.append((text[pos:], ""))
+    return out
+
+
+def _hh(line: str) -> str:
+    """A line's tag: crc32 of its text (no line break) as 2 base-36 characters. With the line number, a changed or moved
+    line is caught 1295 times in 1296."""
+    n = zlib.crc32(line.encode("utf-8", "replace")) % 1296
+    return _B36[n // 36] + _B36[n % 36]
+
+
+def _tagged(rows: list, lo: int, hi: int) -> list[str]:
+    return [f"{n}:{_hh(rows[n - 1][0])}|{rows[n - 1][0]}" for n in range(lo, hi + 1)]
+
+
+def _clip(s: str, width: int) -> str:
+    return s if len(s) <= width else s[:builtins_max(1, width - 1)] + "…"
+
+
+def _fit(lines: list[str], budget: int) -> tuple[str, int]:
+    """As many whole lines as fit the budget (at least one, cut if it alone is too long): (text, lines kept)."""
+    used, n = 0, 0
+    for ln in lines:
+        if n and used + len(ln) + 1 > budget:
+            break
+        used += len(ln) + 1
+        n += 1
+    text = "\n".join(lines[:n])
+    return (text if len(text) <= budget else _clip(text, budget)), n
+
+
+def _line_span(spec: str, total: int, shown: str) -> tuple[int, int]:
+    """lines="120-180" -> (120, 180), clamped to the file. "120" is that line, "120-" runs to the end."""
+    m = re.fullmatch(r"\s*L?(\d+)\s*(?:(-|–|—|:|\.\.|to|,)\s*L?(\d*))?\s*", str(spec), re.I)
+    if not m:
+        raise Fail("BAD_ARGS", f"lines={str(spec)[:30]!r}: give one range like 120-180", f'read_file("{shown}", lines="1-200")')
+    a = max(1, int(m.group(1)))
+    b = int(m.group(3)) if m.group(3) else (total if m.group(2) else a)
+    if a > total:
+        raise Fail("BAD_ARGS", f"the file has {total} lines", f'read_file("{shown}", lines="{max(1, total - 99)}-{total}")')
+    if b < a:
+        raise Fail("BAD_ARGS", f"lines={spec}: the end is before the start", f'read_file("{shown}", lines="{a}-{a + 60}")')
+    return a, min(b, total)
+
+
+# --- artifact:// links: boss saves a tool result too long for the model's context whole to data/artifacts/<id>.txt and
+# says "full output: artifact://<id>"; read_file reads it like a file (lines=, find=). IO's own data, so exempt from the
+# user-folders rule, and read-only: the id can never name anything else.
+
+ARTIFACTS = HERE / "data" / "artifacts"
+_ARTIFACT_ID = re.compile(r"[A-Za-z0-9-]{1,80}")
+_ARTIFACT_LINK = re.compile(r"(?i)^\s*[\"']?artifact://(.*?)[\"']?\s*$")
+
+
+def artifact_path(id: str) -> Path:
+    """data/artifacts/<id>.txt. ValueError for an id that isn't letters, digits and dashes (no slashes or dots, so it can
+    never point outside the folder). The writer (boss) makes the folder."""
+    s = str(id or "").strip()
+    if not _ARTIFACT_ID.fullmatch(s):
+        raise ValueError(f"bad artifact id {s[:40]!r}")
+    return ARTIFACTS / f"{s}.txt"
+
+
+def new_artifact_id() -> str:
+    """A fresh id for artifact_path: time first (names sort by age), then 6 random hex digits."""
+    return time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex()
+
+
+def _artifact_of(path: str) -> Path | None:
+    """artifact://<id> -> its file; None for any other path."""
+    m = _ARTIFACT_LINK.match(str(path or ""))
+    if not m:
+        return None
+    try:
+        return artifact_path(m.group(1).strip())
+    except ValueError:
+        raise Fail("BAD_ARGS", f"artifact://{m.group(1)[:40]} isn't a valid link (the id is letters, digits and dashes only)",
+                   "the artifact:// link exactly as the result gave it") from None
+
+
+# --- outlines: a big source file read from the top costs the model's whole context for the first few hundred lines,
+# usually not the part it needs. The outline (a few KB) says what is where; lines= then reads just that part.
+
+CODE_EXTS = {".py": "py", ".js": "js", ".ts": "js", ".tsx": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js", ".java": "c", ".cs": "c",
+             ".go": "go", ".rs": "rs", ".c": "c", ".cpp": "c", ".h": "c", ".hpp": "c", ".rb": "rb", ".php": "php", ".swift": "swift",
+             ".kt": "kt"}
+OUTLINE_LINES, OUTLINE_BYTES, OUTLINE_CHARS = 250, 12_000, 6000  # outline a code file above 250 lines or 12 KB, in <= 6000 chars
+_CONST = re.compile(r"_?[A-Z][A-Z0-9_]*")
+
+
+def _squeeze(s: str, width: int) -> str:
+    return _clip(" ".join(str(s).split()), width)
+
+
+def _first_line(doc: str | None, width: int = 80) -> str:
+    return next((_squeeze(ln, width) for ln in (doc or "").splitlines() if ln.strip()), "")
+
+
+def _packed(items: list[str], width: int) -> str:
+    out, used = [], 0
+    for i, s in enumerate(items):
+        if out and used + len(s) + 2 > width:
+            return ", ".join(out) + f" (+{len(items) - i} more)"
+        out.append(s)
+        used += len(s) + 2
+    return ", ".join(out)
+
+
+def _py_entry(n: ast.AST, level: int, out: list) -> None:
+    """A def or class (with its methods, and a nested class's methods) as (start, end, level, head, doc, name)."""
+    start = min([d.lineno for d in n.decorator_list] + [n.lineno])  # a decorator belongs to what it decorates
+    deco = "".join("@" + _squeeze(ast.unparse(d.func if isinstance(d, ast.Call) else d), 30) + " " for d in n.decorator_list)
+    doc = _first_line(ast.get_docstring(n))
+    if isinstance(n, ast.ClassDef):
+        bases = ", ".join(ast.unparse(b) for b in n.bases + n.keywords)
+        out.append((start, n.end_lineno, level, f"{deco}class {n.name}" + (f"({_squeeze(bases, 60)})" if bases else ""), doc, n.name))
+        if level < 2:
+            for m in n.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    _py_entry(m, level + 1, out)
+        return
+    ret = f" -> {_squeeze(ast.unparse(n.returns), 30)}" if n.returns else ""
+    kw = "async def" if isinstance(n, ast.AsyncFunctionDef) else "def"
+    out.append((start, n.end_lineno, level, f"{deco}{kw} {n.name}({_squeeze(ast.unparse(n.args), 90)}){ret}", doc, n.name))
+
+
+def _outline_py(text: str) -> tuple[list, list] | None:
+    """Python by ast: (header lines: what it is, imports, constants; entries). None when it doesn't parse."""
+    try:
+        with warnings.catch_warnings():  # "\d" in a plain string is a SyntaxWarning, not this file's problem
+            warnings.simplefilter("ignore")
+            tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    entries: list = []
+    mods, spans, consts = [], [], []
+    blocks = tuple(t for t in (ast.If, ast.Try, getattr(ast, "TryStar", None)) if t)
+
+    def flat(body: list):  # module level, and under a module-level if/try (optional imports, per-platform defs)
+        for n in body:
+            if isinstance(n, ast.If) and "__name__" in ast.unparse(n.test):
+                entries.append((n.lineno, n.end_lineno, 0, "if __name__ == '__main__':", "", "__main__"))
+            elif isinstance(n, blocks):
+                yield from flat(n.body + n.orelse + getattr(n, "finalbody", []) + [s for h in getattr(n, "handlers", []) for s in h.body])
+            else:
+                yield n
+
+    for n in flat(tree.body):
+        if isinstance(n, ast.Import):
+            mods += [a.name for a in n.names]
+            spans.append(n.lineno)
+        elif isinstance(n, ast.ImportFrom):
+            mods.append("." * n.level + (n.module or ""))
+            spans.append(n.lineno)
+        elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            consts += [f"{t.id} {n.lineno}" + (f"-{n.end_lineno}" if n.end_lineno > n.lineno else "")
+                       for t in targets if isinstance(t, ast.Name) and _CONST.fullmatch(t.id)]
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _py_entry(n, 0, entries)
+    head = []
+    about = _first_line(ast.get_docstring(tree), 110)
+    if about:
+        head.append(f"about: {about}")
+    if mods:
+        head.append(f"imports {min(spans)}-{max(spans)}: " + _packed(list(dict.fromkeys(mods)), 300))
+    if consts:
+        head.append("constants: " + _packed(consts, 450))
+    return head, entries
+
+
+# the other languages: a regex outline on the code with comments and string contents taken out (a brace in a string
+# must not end a function), each declaration's end found by its braces (by indentation in Ruby)
+# a string ends on its own line or isn't one (an apostrophe in JSX text, a Rust lifetime 'a): the quote is then a character
+_LEX = {
+    "c": re.compile(r"//|/\*|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"),
+    "js": re.compile(r"//|/\*|`|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|/|\{|\}"),  # / : maybe a /regex/; { } : ${ } nesting
+    "go": re.compile(r"//|/\*|`|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"),
+    "rs": re.compile(r"//|/\*|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])'"),
+    "php": re.compile(r"//|/\*|#(?!\[)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"),
+}
+_LEX["swift"], _LEX["kt"] = _LEX["c"], _LEX["c"]
+_TICK_TEXT = re.compile(r"(?:\\.|[^`\\$]|\$(?!\{))*")  # a template's text up to its closing ` or a ${
+_REGEX_END = re.compile(r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\[])+/[a-z]*")  # a JS regex literal's body after its first /
+_REGEX_BEFORE = re.compile(r"(?:^|[(,=:\[!&|?{};+\-~^]|\b(?:return|typeof|case|do|else|in|of|void|yield|await))$")
+_KW = frozenset("if for while switch catch return else do try finally new delete sizeof throw case using lock foreach with typeof "
+                "await yield when match elif unless until synchronized fixed checked unchecked function super this defined assert "
+                "loop select go defer import package require include not and or in is goto".split())
+_MODS = (r"(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|unsafe|final|virtual|override|extern|"
+         r"inline|async|new|file|synchronized|native|default|const|constexpr|explicit|friend|volatile|transient|strictfp|open|data|"
+         r"enum|annotation|inner|value|companion|lateinit|suspend|operator|infix|tailrec|external|actual|expect|fileprivate|"
+         r"mutating|nonmutating|convenience|required|dynamic|lazy|weak|unowned|indirect|declare|export|pub(?:\([^)]*\))?)\s+)*")
+_OPEN_CLASS = r"(?:<.*>)?\s*(?:$|[:{(,]|extends\b|implements\b|where\b|final\b|sealed\b|permits\b)"
+# (kind, pattern, where, needs a { } body, is a c-style "type name(" line that must look like a declaration)
+# where: any depth; top = depth 0; member = depth 0 or directly inside a class/namespace/impl; inbox = directly inside one;
+# deep_body = like member, or deeper with a body of several lines (a one-line arrow inside a function is a local, noise)
+_OUTLINE_RX = {k: [(kind, re.compile(rx), where, body, decl) for kind, rx, where, body, decl in v] for k, v in {
+    "js": [
+        ("box", r"^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?class\b", "any", True, False),
+        ("box", r"^\s*(?:export\s+)?(?:declare\s+)?(?:interface|namespace|enum)\s+[\w$.]+", "any", True, False),
+        ("def", r"^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?function\b", "any", False, False),
+        ("def", r"^\s*(?:export\s+)?(?:const|let|var)\s+[\w$]+\s*(?::[^=]+)?=\s*(?:async\s+)?"
+                r"(?:function\b|(?:\([^()]*\)|[\w$]+)\s*(?::[^=]+?)?=>|\(\s*$)", "deep_body", False, False),
+        ("def", r"^\s*(?:(?:module\.)?exports\.[\w$]+|[\w$.]+\.prototype\.[\w$]+)\s*=\s*(?:async\s+)?(?:function\b|\([^()]*\)\s*=>)", "top", False, False),
+        ("def", r"^\s*(?:(?:static|async|get|set|public|private|protected|readonly|override|abstract|declare)\s+)*\*?\s*#?[\w$]+\s*"
+                r"(?:<[^>]*>)?\s*\(", "inbox", True, True),
+        ("def", r"^\s*(?:(?:static|public|private|protected|readonly)\s+)*#?[\w$]+\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^()]*\)|[\w$]+)\s*=>",
+         "inbox", False, False),
+        ("export", r"^\s*(?:export\s+(?:default\b|\*|\{|(?:const|let|var|type)\s)|module\.exports\s*=)", "top", False, False),
+        ("type", r"^\s*type\s+[\w$]+\s*(?:<[^>]*>)?\s*=", "top", False, False),
+    ],
+    "c": [
+        ("box", r"^\s*(?:\[[^\]]*\]\s*)*(?:template\s*<.*>\s*)?(?:typedef\s+)?" + _MODS + r"(?:class|interface|struct|enum(?:\s+class)?|"
+                r"record(?:\s+(?:class|struct))?|namespace|union|@interface)\s+[\w.:]+" + _OPEN_CLASS, "member", True, False),
+        ("box", r"^\s*extern\s+\"\"\s*\{", "top", True, False),
+        ("def", r"^\s*(?:\[[^\]]*\]\s*)*(?:template\s*<.*>\s*)?(?:[\w$:<>,\[\]*&~.?]+\s+)+[*&]*\s*"
+                r"(?:operator\s*[^\s(]+|~?[A-Za-z_]\w*(?:::~?[A-Za-z_]\w*)*)\s*(?:<[^>()]*>)?\s*\(", "member", True, True),
+        ("def", r"^\s*~?[A-Za-z_]\w*(?:<[^>]*>)?::~?[A-Za-z_]\w*\s*\(", "member", True, True),  # C++ Foo::Foo(...) out of line
+        ("def", r"^[A-Za-z_]\w*\s*\(", "top", True, True),  # C with the return type on the line before (GNU style)
+    ],
+    "go": [
+        ("def", r"^func\b", "top", False, False),
+        ("type", r"^type\s+\w+", "top", False, False),
+    ],
+    "rs": [
+        ("def", r"^\s*" + _MODS + r"(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+(?:\"\"\s+)?)?fn\s+\w+", "member", False, False),
+        ("box", r"^\s*" + _MODS + r"(?:unsafe\s+)?(?:impl|trait|mod)\b", "member", True, False),
+        ("type", r"^\s*" + _MODS + r"(?:struct|enum|union|type)\s+\w+", "member", False, False),
+        ("def", r"^\s*macro_rules!\s*\w+", "top", False, False),
+    ],
+    "php": [
+        ("box", r"^\s*" + _MODS + r"(?:class|interface|trait|enum)\s+\w+", "any", True, False),
+        ("def", r"^\s*" + _MODS + r"function\s+&?\w+", "any", False, False),
+    ],
+    "swift": [
+        ("def", r"^\s*(?:@\w+\s+)*" + _MODS + r"(?:class\s+)?(?:func\s+\S+?\s*[(<]|init[?!]?\s*[(<]|deinit\b|subscript\s*\()", "member", False, False),
+        ("box", r"^\s*(?:@\w+\s+)*" + _MODS + r"(?:class|struct|enum|protocol|extension|actor)\s+\w+", "member", True, False),
+    ],
+    "kt": [
+        ("def", r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*" + _MODS + r"fun\b", "member", False, False),
+        ("box", r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*" + _MODS + r"(?:class|interface|object)\b", "member", False, False),
+    ],
+    "rb": [
+        ("box", r"^\s*(?:class|module)\s+[\w:]+", "any", False, False),
+        ("def", r"^\s*def\s+", "any", False, False),
+    ],
+    "py": [  # only when ast can't parse the file (Python 2, a half-written edit)
+        ("box", r"^\s*class\s+\w+", "any", False, False),
+        ("def", r"^\s*(?:async\s+)?def\s+\w+", "any", False, False),
+    ],
+}.items()}
+_BRACE = re.compile(r"[{};]")
+
+
+def _code_only(lines: list[str], lang: str) -> list[str]:
+    """Each line without its comments and with its strings emptied. Block comments and `templates` span lines; a
+    template's ${...} is code again (with its own strings and `nested ${templates}`), so its braces stay balanced."""
+    lex = _LEX[lang]
+    out, in_block, in_tick = [], False, False
+    held: list[int] = []  # JS: for each ${ open inside a template, the { } depth within it
+    for line in lines:
+        buf, pos, n = [], 0, len(line)
+        while pos < n:
+            if in_block:
+                j = line.find("*/", pos)
+                if j < 0:
+                    break
+                in_block, pos = False, j + 2
+                continue
+            if in_tick:  # a template's text: up to its closing ` or a ${
+                pos = _TICK_TEXT.match(line, pos).end()
+                if pos >= n:
+                    break
+                if line[pos] == "\\":  # a backslash at the very end of the line
+                    pos += 2
+                elif line[pos] == "`":
+                    in_tick, pos = False, pos + 1
+                    buf.append("`")
+                else:
+                    in_tick, pos = False, pos + 2
+                    held.append(0)
+                continue
+            m = lex.search(line, pos)
+            if not m:
+                buf.append(line[pos:])
+                break
+            buf.append(line[pos:m.start()])
+            t, pos = m.group(), m.end()
+            if t in ("//", "#"):
+                break
+            if t == "/":  # JS: a /regex/ (its [({] must not count) where an operand can start, else division
+                r = _REGEX_END.match(line, pos) if _REGEX_BEFORE.search("".join(buf).rstrip()) else None
+                buf.append('""' if r else "/")
+                pos = r.end() if r else pos
+            elif t == "/*":
+                in_block = True
+            elif t == "`":
+                in_tick = True
+                buf.append("`")
+            elif t == "{":
+                if held:
+                    held[-1] += 1
+                buf.append(t)
+            elif t == "}":
+                if held and held[-1] == 0:  # the } of a ${: back in the template's text
+                    held.pop()
+                    in_tick = True
+                    continue
+                if held:
+                    held[-1] -= 1
+                buf.append(t)
+            else:
+                buf.append(t if len(t) == 1 else t[0] * 2)
+        out.append("".join(buf))
+    return out
+
+
+def _looks_decl(code: str) -> bool:
+    """A c-style 'type name(' line that declares rather than calls: no keyword first or right before the (, no
+    assignment before it, not obj.method(."""
+    paren = code.find("(")
+    pre = code[:paren] if paren >= 0 else code
+    words = re.findall(r"[~\w$#]+", pre)
+    if not words or words[0] in _KW or words[-1] in _KW:
+        return False
+    if re.search(r"(?<![=!<>])=(?![=>])", pre) and "operator" not in pre:
+        return False
+    return not re.search(r"\.\s*[~\w$#]+\s*(?:<[^>]*>)?\s*$", pre)
+
+
+def _brace_end(code: list[str], i: int, stop: int) -> tuple[int, bool]:
+    """(the last line of the declaration starting at line i, whether it has a { } body). A body must open within a few
+    lines and before the next declaration (stop), else it's a one-liner (Kotlin's fun f() = x, a prototype)."""
+    d, opened = 0, False
+    for j in range(i, len(code)):
+        if not opened and j > i and (j >= stop or j - i > 12):
+            return i, False
+        for m in _BRACE.finditer(code[j]):
+            ch = m.group()
+            if ch == "{":
+                d += 1
+                opened = True
+            elif ch == "}":
+                d -= 1
+                if d < 0:  # an enclosing block closed too
+                    return (j, True) if opened else (i, False)
+            elif not opened and d == 0:  # a ; before any body
+                return j, False
+        if opened and d <= 0:  # judged at the line's end: f({ a }) { opens its body after closing a destructuring
+            return j, True
+    return (len(code) - 1, True) if opened else (i, False)
+
+
+def _indent_end(lines: list[str], i: int, ruby: bool) -> int:
+    """By indentation: the last line before one indented no deeper (Ruby: that line itself, when it is the end)."""
+    ind = len(lines[i].expandtabs(4)) - len(lines[i].expandtabs(4).lstrip())
+    last = i
+    for j in range(i + 1, len(lines)):
+        s = lines[j].strip()
+        if not s or s.startswith("#"):
+            continue
+        if len(lines[j].expandtabs(4)) - len(lines[j].expandtabs(4).lstrip()) <= ind and not s.startswith((")", "]", "}")):
+            return j if ruby and re.match(r"end\b", s) else last
+        last = j
+    return last
+
+
+def _decl_name(code: str, kind: str) -> str:
+    """The declared name, for the packed names-only outline: the word before the first ( that isn't a keyword (Go's
+    func (r *T) Name( is Name), else the word after class/const/def/..."""
+    if kind == "def":
+        for m in re.finditer(r"([~\w$#.:]+)\s*(?:<[^>()]*>)?\s*\(", code):
+            if m.group(1) not in _KW and m.group(1) not in ("func", "fun", "fn", "def"):
+                return m.group(1)
+    m = re.search(r"\b(?:class|interface|struct|enum|record|namespace|union|trait|impl|mod|module|object|protocol|extension|actor|"
+                  r"type|const|let|var|def|fn|fun|func|function)\s+([\w$.:<>]+)", code)
+    return m.group(1) if m else ""
+
+
+def _outline_re(lines: list[str], lang: str, ext: str) -> list:
+    code = lines if lang in ("rb", "py") else _code_only(lines, lang)
+    depth, d = [], 0
+    for c in code:
+        depth.append(d)
+        d = max(0, d + c.count("{") - c.count("}"))
+    cands = []
+    for i, c in enumerate(code):
+        if c.strip():
+            hit = next((x for x in _OUTLINE_RX[lang] if x[1].match(c)), None)
+            if hit:
+                cands.append((i, *hit))
+    boxes, entries = [], []
+    for k, (i, kind, _rx, where, body, decl) in enumerate(cands):
+        while boxes and boxes[-1][1] < i:
+            boxes.pop()
+        direct = bool(boxes) and depth[i] == boxes[-1][2] + 1
+        shallow = depth[i] == 0 or direct or lang in ("rb", "py")
+        if lang not in ("rb", "py") and ((where == "top" and depth[i] != 0) or (where == "member" and not shallow)
+                                         or (where == "inbox" and not direct)):
+            continue
+        if decl and not _looks_decl(code[i]):
+            continue
+        if lang in ("rb", "py"):
+            end, opened = _indent_end(lines, i, lang == "rb"), True
+        else:
+            end, opened = _brace_end(code, i, cands[k + 1][0] if k + 1 < len(cands) else len(code))
+        # a c-style "type name(...)" without a body is a call or a variable, except a header's prototype or C#'s => body
+        if body and not opened and not (decl and (ext in (".h", ".hpp") or "=>" in code[i])):
+            continue
+        if where == "deep_body" and not shallow and not (opened and end > i):
+            continue
+        if kind == "box" and opened:
+            boxes.append((i, end, depth[i]))
+        head = _squeeze(re.sub(r"\s*\{\s*$", "", lines[i].strip()), 110)
+        entries.append([i + 1, end + 1, 0, head, "", _decl_name(code[i], kind) or head[:24]])
+    stack: list = []
+    for e in entries:  # nesting by line ranges
+        while stack and stack[-1] < e[0]:
+            stack.pop()
+        e[2] = len(stack)
+        stack.append(e[1])
+    return [tuple(e) for e in entries]
+
+
+def _outline_text(text: str, rows: list, lang: str, ext: str, shown: str, info: str, cap: int) -> str:
+    """The outline of a big code file in <= cap characters: header (Python: what it is, imports, constants), then each
+    class / function / method as 'start-end head  # first docstring line', nested by indentation. '' if none found."""
+    got = _outline_py(text) if lang == "py" else None
+    head, entries = got if got else ([], _outline_re([r[0] for r in rows], lang, ext))
+    if not entries:
+        return ""
+    entries = sorted(entries, key=lambda e: (e[0], e[2]))
+    ex = next((f"{s}-{e}" for s, e, *_ in entries if e > s), f"1-{min(len(rows), 200)}")
+    top = f"{shown} ({info}): its outline, not its text"
+    foot = (f'[an outline: read_file("{shown}", lines="{ex}") reads a part (anchors=true too, to change it with edit_lines); '
+            f'find= searches; raw=true reads from the top]')
+    span = []  # how many entries follow inside each one
+    for k, e in enumerate(entries):
+        j = k + 1
+        while j < len(entries) and entries[j][0] <= e[1]:
+            j += 1
+        span.append(j - k - 1)
+
+    def line(k: int, docs: bool, width: int, deepest: int) -> str:
+        s, e, lv, h, doc, _n = entries[k]
+        hidden = sum(1 for x in entries[k + 1:k + 1 + span[k]] if x[2] > deepest)
+        return (f"{'  ' * lv}{s}-{e} " if e > s else f"{'  ' * lv}{s} ") + _clip(h, width) + (f"  # {doc}" if docs and doc else "") + \
+            (f"  [{hidden} more inside]" if hidden else "")
+
+    # shorter lines first; fewer levels only while that still names a fair share of the file (one big class with 125
+    # methods must not shrink to one line)
+    stages = [(True, 160, 9), (False, 160, 9), (False, 70, 9)] + \
+        [(False, 70, lv) for lv in (1, 0) if sum(1 for e in entries if e[2] <= lv) >= min(15, len(entries))]
+    for docs, width, deepest in stages:
+        out = "\n".join([top, *head, *(line(k, docs, width, deepest) for k, e in enumerate(entries) if e[2] <= deepest), foot])
+        if len(out) <= cap:
+            return out
+    # still too long (thousands of lines): names only, packed: every level, then the top level; names matter more than
+    # the imports and constants, and the public names more than the _private helpers; cut only when none of that fits
+    about = [h for h in head if h.startswith("about:")]
+    tries, seen = [], []
+    for deepest, label in ((9, "all"), (0, "top level")):
+        items = [(f"{s}-{e} {n}" if e > s else f"{s} {n}", n) for s, e, lv, _h, _d, n in entries if lv <= deepest]
+        if items in seen:
+            continue
+        seen.append(items)
+        public = [t for t in items if not t[1].startswith("_")]
+        tries += [(head, items, f"{label} (start-end name): "), (about, items, f"{label} (start-end name): ")]
+        if 0 < len(public) < len(items):
+            tries.append((about, public, f"{label}, the {len(items) - len(public)} _private ones left out (start-end name): "))
+    out = ""
+    for hd, items, label in tries:
+        room = cap - len(top) - len(foot) - sum(len(h) + 1 for h in hd) - len(label) - 4
+        out = "\n".join([top, *hd, label + _packed([t[0] for t in items], builtins_max(100, room - 16)), foot])
+        if sum(len(t[0]) + 2 for t in items) <= room and len(out) <= cap:
+            return out
+    return out[:cap]
+
+
+@action("read_file", group="FILE", summary="a file's text (txt, csv, json, docx, xlsx...); big code: an outline",
         params="""
-        path s the file's path
+        path s the file's path (or an artifact:// link)
         find s? only the lines about these words
+        lines s? only these lines, like 120-180
+        anchors b? prefix lines N:hh| for edit_lines
         max i? most characters (default: all that fits)
-        """, cost=0.1, star=True, top="path,find?", fallback='FileSystem(mode="read", path)',
-        limits="no PDFs; up to 5 MB; never opens an editor")
-async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, **_) -> str:
-    p = _path(path)
-    if _private(p):
-        raise Fail("BLOCKED", "that is IO's own data (keys and history), never read for a task", "ask_user")
-    if not p.exists():
-        raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
-    if p.is_dir():
-        raise Fail("BAD_ARGS", f"{p} is a folder", f'list_files("{p}")')
-    text = await asyncio.to_thread(_file_text_sync, p)
+        raw b? full text even for a big code file
+        """, cost=0.1, star=True, top="path,find?", fallback='FileSystem(mode="read", path)', hide=("raw",),
+        limits="no PDFs; up to 5 MB; never opens an editor; a big code file gives its outline (then lines=, or raw=true)")
+async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: str = "", anchors: bool = False, raw: bool = False,
+                    **_) -> str:
+    art = _artifact_of(path)
+    if art is not None:  # a saved tool result: IO's own data, so no _private refusal and no user-folder rule
+        p, shown = art, f"artifact://{art.stem}"
+        if not p.is_file():
+            raise Fail("NOT_FOUND", f"{shown} doesn't exist (saved results are kept about a week)", "run the tool that made it again")
+    else:
+        p = _path(path)
+        shown = str(p)
+        if _private(p):
+            raise Fail("BLOCKED", "that is IO's own data (keys and history), never read for a task", "ask_user")
+        if not p.exists():
+            raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
+        if p.is_dir():
+            raise Fail("BAD_ARGS", f"{p} is a folder", f'list_files("{p}")')
+    text, fp = await asyncio.to_thread(_file_text_print_sync, p)
+    if fp and art is None:  # what this task now knows of the file: edits refuse if it changes on disk after this
+        ctx.file_prints[str(p).lower()] = fp
     # as much as the brain's context allows (a large-context brain reads a whole source file in one call, not 4K at a time)
     room = builtins_max(4000, ctx.page_chars or 4000)
     budget = builtins_max(200, min(int(max or room), builtins_max(20000, room)))
+    head = f"{shown} ({_size(p)})"
+    if not text.strip():
+        return ok(f"{head}:\n(empty file)")
+    rows = _rows(text)
+    total = len(rows)
+    tag = bool(anchors) and fp is not None  # tags only on plain text: docx/xlsx/pptx text isn't the file's lines
+    note = " (anchors only on plain text files)" if anchors and not tag else ""
+    if lines:
+        a, b = _line_span(lines, total, shown)
+        part = _tagged(rows, a, b) if tag else [r[0] for r in rows[a - 1:b]]
+        if find:
+            return ok(f"{head}, lines {a}-{b} of {total}{note}:\n" + _h().find_in_text("\n".join(part), find, budget=budget))
+        body, kept = _fit(part, budget)
+        more = (f'\n[stopped at line {a + kept - 1} to fit; next: read_file("{shown}", lines="{a + kept}-{b}"'
+                f'{", anchors=true" if tag else ""})]') if kept < len(part) else ""
+        return ok(f"{head}, lines {a}-{b} of {total}{note}:\n{body}{more}")
     if find:
-        body = _h().find_in_text(text, find, budget=budget)
-    else:
-        body = text[:budget] + (f"\n[{len(text) - budget} more characters; use find=]" if len(text) > budget else "")
-    return ok(f"{p} ({_size(p)}):\n{body if text.strip() else '(empty file)'}")
+        return ok(f"{head}{note}:\n" + _h().find_in_text("\n".join(_tagged(rows, 1, total)) if tag else text, find, budget=budget))
+    lang = CODE_EXTS.get(p.suffix.lower())
+    if lang and not raw and fp is not None and total >= 20 and (total > OUTLINE_LINES or fp[0] > OUTLINE_BYTES):
+        out = await asyncio.to_thread(_outline_text, text, rows, lang, p.suffix.lower(), shown, f"{_size(p)}, {total} lines",
+                                      min(budget, OUTLINE_CHARS))
+        if out:
+            return ok(out)
+    if tag:
+        body, kept = _fit(_tagged(rows, 1, total), budget)
+        more = (f'\n[stopped at line {kept} to fit; next: read_file("{shown}", lines="{kept + 1}-{min(total, kept + 300)}", '
+                f'anchors=true)]') if kept < total else ""
+        return ok(f"{head}, {total} lines:\n{body}{more}")
+    if len(text) <= budget:
+        return ok(f"{head}{note}:\n{text}")
+    cut = text.rfind("\n", 0, budget)
+    whole = cut > budget * 0.8  # end on a whole line when one ends near the budget
+    cut = cut if whole else budget
+    nxt = text.count("\n", 0, cut) + (2 if whole else 1)  # the first line not shown in full
+    return ok(f"{head}{note}:\n{text[:cut].rstrip(chr(13))}\n[{len(text) - cut} more characters, {total} lines in all; use find=, "
+              f'or lines="{nxt}-{min(total, nxt + 199)}"]')
 
 
 @action("write_file", group="FILE", summary="write text to a file (new by default; append or overwrite on request)",
@@ -3673,6 +4282,7 @@ async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> 
         raise Fail("BAD_ARGS", f"{p} is a folder", f'write_file("{p}\\\\notes.txt", ...)')
     if mode == "new" and p.exists():
         raise Fail("BLOCKED", f"{p} exists ({_size(p)})", f'write_file("{path}", ..., mode="append") or mode="overwrite"')
+    await asyncio.to_thread(_refuse_stale, ctx, p)  # over or onto a file read earlier in this task that changed since
 
     def write() -> str:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -3691,6 +4301,7 @@ async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> 
         raise Fail("NO_CHANGE", f"wrote {p} but reading it back doesn't show the text", f'read_file("{p}")')
     if mode != "append":  # created here, or a rewrite the user allowed: later rewrites and edits of it don't ask again
         ctx.written.add(str(p).lower())
+    await asyncio.to_thread(_note_written, ctx, p)  # IO's own change: its next edit of the file isn't STALE
     return ok(f"{'appended to' if mode == 'append' else 'wrote'} {p} ({_size(p)})")
 
 
@@ -3712,6 +4323,7 @@ async def edit_file(ctx: Ctx, path: str, old: str, new: str, all: bool = False, 
         raise Fail("NOT_FOUND", f"{p} isn't a file", f'find_file("{p.name}")')
     if not old:
         raise Fail("BAD_ARGS", "old is empty", 'write_file(path, text, mode="append") to add to the end')
+    await asyncio.to_thread(_refuse_stale, ctx, p)
 
     def edit() -> tuple[int, str]:
         with open(p, encoding="utf-8", newline="") as f:  # newline="": keep the file's own line endings
@@ -3748,7 +4360,148 @@ async def edit_file(ctx: Ctx, path: str, old: str, new: str, all: bool = False, 
     if count < 0:
         raise Fail("AMBIGUOUS", f"old is in the file {-count} times", "include a few surrounding lines in old, or all=true")
     ctx.written.add(str(p).lower())
+    await asyncio.to_thread(_note_written, ctx, p)
     return ok(f"edited {p}: {count} replacement{'s' if count > 1 else ''}; around it now:\n{shown}")
+
+
+def _stale_view(p: Path, rows: list, tags: list, bad: list, start: int, end: int) -> tuple[str, str]:
+    """edit_lines' STALE result: which tag no longer matches and the file's current lines there with their tags, so the
+    model can retry at once (all within call()'s 700 characters for a failure)."""
+    total = len(rows)
+    n0, h0 = bad[0]
+    why = f"line {n0} is past its end ({total} lines)" if n0 > total else f"line {n0} isn't {n0}:{h0} any more"
+    moved = ""
+    if len({n for n, _ in tags}) >= 2:  # one 2-character tag can match a line by chance; two together don't
+        for dd in sorted(range(-80, 81), key=abs):
+            if dd and all(1 <= n + dd <= total and _hh(rows[n + dd - 1][0]) == h for n, h in tags):
+                moved = f"; the tagged lines are now {dd:+d} away (lines were added or removed above)"
+                start, end, n0 = start + dd, end + dd, start + dd
+                break
+    want = sorted({x for n in (start, end, n0) for x in (n - 1, n, n + 1) if 1 <= x <= total})[:9]
+    lo, hi = (want[0], want[-1]) if want else (builtins_max(1, total - 5), total)
+    try_ = f'edit_lines with these tags, or read_file("{p}", lines="{lo}-{hi}", anchors=true)'
+    text = f"{p} changed since it was read: {why}{moved}. Now:\n"
+    room = 640 - len(text) - len(try_)
+    width = builtins_max(16, room // builtins_max(1, len(want)) - 12)
+    view = "\n".join(f"{n}:{_hh(rows[n - 1][0])}|{_clip(rows[n - 1][0], width)}" for n in want)
+    return text + view[:builtins_max(0, room)], try_
+
+
+@action("edit_lines", group="FILE", summary="replace/insert/delete lines by number, checked by read_file anchors",
+        params="""
+        path s the file's path
+        start i first line to change (insert: before it)
+        end i? last line, inclusive (start-1 = insert)
+        anchors s tags as read, like 12:k3-14:9a
+        new_text s? the new lines ("" deletes them)
+        """, cost=0.1, top="path,start,end,anchors,new_text", bang=True, fallback="edit_file(path, old, new)",
+        risky=lambda a, c: "" if str(_path(str(a.get("path", "")))).lower() in c.written else f"edit the file {a.get('path')}",
+        limits="use it after read_file(anchors=true); exact old text not needed; edit from the bottom up (lines below a change move)")
+async def edit_lines(ctx: Ctx, path: str, start: int, anchors: str, end: int | None = None, new_text: str | None = None, **_) -> str:
+    """Hashline edits: the model names whole lines by number and proves it saw them with their tags (read_file
+    anchors=true), so it never copies old text: small models slip on its spaces, and every copied character costs a step's
+    tokens. The same folder rules and asking as edit_file; the file's line breaks and encoding are kept."""
+    if _ARTIFACT_LINK.match(str(path or "")):
+        raise Fail("BLOCKED", "an artifact:// link is a saved tool result: read-only", "write_file(a path in the user's folders, text)")
+    p = _path(path)
+    writable(ctx, p)
+    if _private(p):
+        raise Fail("BLOCKED", "that is IO's own data (keys and history)", "ask_user")
+    if not p.is_file():
+        raise Fail("NOT_FOUND", f"{p} isn't a file", f'find_file("{p.name}")')
+    if p.suffix.lower() in OFFICE + (".pdf",):
+        raise Fail("UNSUPPORTED", f"{p.name} isn't a plain text file", f'open_path("{p}") and edit it in its app')
+    if new_text is None:
+        raise Fail("BAD_ARGS", 'new_text is missing (new_text="" deletes the lines)', "edit_lines(path, start, end, anchors, new_text)")
+    start = int(start)
+    tags = [(int(n), h.lower()) for n, h in re.findall(r"(\d+)\s*:\s*([0-9A-Za-z]{2})(?![0-9A-Za-z])", str(anchors or ""))]
+    again = f'read_file("{p}", lines="{builtins_max(1, start - 2)}-{start + 8}", anchors=true)'
+    if not tags and not (start == 1 and end == 0):  # (an empty file has no line to tag: insert at 1 needs none)
+        raise Fail("BAD_ARGS", f"anchors={str(anchors)[:30]!r} has no N:hh tags (like 12:k3-14:9a)", again)
+    if end is None:  # one line, or up to the last tagged line
+        end = builtins_max([start] + [n for n, _ in tags])
+    end = int(end)
+    if start < 1 or end < start - 1:
+        raise Fail("BAD_ARGS", f"start={start}, end={end}: end is the last line to change (start-1 to insert)", again)
+    body = str(new_text).replace("\r\n", "\n").replace("\r", "\n")
+    new = body.split("\n") if body else []
+    if new and body.endswith("\n"):
+        new.pop()  # a final line break ends the last new line, it doesn't add an empty one
+    pasted = [x for x in new if x]
+    stripped = bool(pasted) and all(_TAG_PREFIX.match(x) for x in pasted)
+    if stripped:  # the tags read_file showed, copied into the new text
+        new = [_TAG_PREFIX.sub("", x, count=1) for x in new]
+    have = {n for n, _ in tags}
+    key = str(p).lower()
+
+    def apply() -> tuple:
+        data = p.read_bytes()
+        text, how = _decode(p, data)
+        rows = _rows(text)
+        total = len(rows)
+        if start > total + 1 or end > total:
+            raise Fail("BAD_ARGS", f"the file has {total} lines", f'read_file("{p}", lines="{builtins_max(1, total - 20)}-{total}", anchors=true)')
+        if total:  # (an empty file has nothing to tag or check)
+            if not tags:
+                raise Fail("BAD_ARGS", "anchors has no N:hh tags (like 12:k3-14:9a)", again)
+            if end >= start:
+                missing = sorted({start, end} - have)
+                if missing:
+                    raise Fail("BAD_ARGS", f"anchors must tag line {' and '.join(map(str, missing))} as read", again)
+            elif not ({start, start - 1} & have):
+                raise Fail("BAD_ARGS", f"to insert before line {start}, anchors must tag line {start} or {start - 1}", again)
+            bad = [(n, h) for n, h in tags if not (1 <= n <= total and _hh(rows[n - 1][0]) == h)]
+            if bad:
+                raise Fail("STALE", *_stale_view(p, rows, tags, bad, start, end))
+        old = rows[start - 1:end] if end >= start else []
+        if [t for t, _e in old] == new:
+            return old, rows, None
+        was = ctx.file_prints.get(key)
+        fresh = not was or hashlib.sha1(data).hexdigest() == was[2]  # nothing else changed since the task read it
+        crlf = text.count("\r\n")
+        lf, cr = text.count("\n") - crlf, text.count("\r") - crlf
+        nl = "\r\n" if crlf and crlf >= builtins_max(lf, cr) else "\r" if cr > lf else "\n"  # the file's own line break
+        out = rows[:start - 1] + [(t, nl) for t in new] + rows[end:]
+        for k in range(len(out) - 1):
+            if not out[k][1]:
+                out[k] = (out[k][0], nl)
+        if out:  # the last line ends with a break only if the file's did
+            out[-1] = (out[-1][0], (out[-1][1] or nl) if rows and rows[-1][1] else "")
+        try:
+            blob = _encode("".join(t + e for t, e in out), how)
+        except UnicodeEncodeError:
+            raise Fail("UNSUPPORTED", f"{p.name} is {how} text and new_text has characters it can't hold", "plain characters only") from None
+        p.write_bytes(blob)
+        return old, out, fresh
+
+    try:
+        old, out, fresh = await asyncio.to_thread(apply)
+    except PermissionError:
+        raise Fail("BLOCKED", f"{p} is in use or read-only", "close the app using it")
+    if fresh is None:
+        return ok(f"no change: lines {start}-{end} of {p} already read that")
+    ctx.written.add(key)
+    if fresh:  # else keep the old print: the file also changed elsewhere, and edit_file stays STALE until it's read again
+        await asyncio.to_thread(_note_written, ctx, p)
+    m, shift = len(new), len(new) - len(old)
+    if end < start:
+        what = f"inserted {m} line{'s' * (m != 1)} " + (f"before line {start}" if start <= len(out) - m else "at the end")
+    elif m:
+        what = f"replaced lines {start}-{end} ({len(old)}) with {m} line{'s' * (m != 1)}"
+    else:
+        what = f"deleted lines {start}-{end} ({len(old)})"
+    view = []
+    if start > 1:
+        view.append(f"  {_tagged(out, start - 1, start - 1)[0]}"[:200])
+    view += [f"- {start + i}  {_clip(t, 100)}" for i, (t, _e) in enumerate(old[:6])] + ([f"- …{len(old) - 6} more"] if len(old) > 6 else [])
+    plus = [f"+ {x}"[:300] for x in _tagged(out, start, start + m - 1)]
+    view += plus if m <= 40 else plus[:30] + [f"+ …{m - 35} more"] + plus[-5:]
+    if start + m <= len(out):
+        view.append(f"  {_tagged(out, start + m, start + m)[0]}"[:200])
+    tail = (f"; lines after it moved {'down' if shift > 0 else 'up'} {abs(shift)}" if shift and start + m <= len(out) else "") + \
+        ("; the N:hh| tags in new_text were left out" if stripped else "") + \
+        ("; the file had also changed elsewhere since it was read: read_file it before edit_file" if not fresh else "")
+    return ok(f"{what} in {p}{tail}. Now (new tags):\n" + "\n".join(view))
 
 
 def _tree_size(p: Path) -> tuple[int, int]:
