@@ -2666,6 +2666,8 @@ not done. Answering a general-knowledge question from knowledge is fine, and so 
 Tool results are real readings from this PC: never doubt them from your own knowledge (games, apps, versions and names
 newer than you know exist). One result that answers the request is enough, even if other attempts returned nothing.
 If the results reasonably support the answer, say YES: don't ask for extra proof the user didn't want.
+A step the request leaves to the user ("tell me how to load it", "I'll sign in", a test only they can run on their own
+device or game) isn't missing: if the answer tells them how, that part is done.
 Reply with exactly YES, or NO: followed by one sentence saying what is missing or wrong and what to do next."""
 
 SUMMARY_SYSTEM = """You compress the working notes of a Windows assistant so it can keep going with less to read.
