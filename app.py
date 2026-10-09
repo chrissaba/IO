@@ -731,11 +731,22 @@ def wall_worthy(task: dict) -> bool:
     build, or a task that already proposed a tool."""
     if task.get("loop") or task.get("workshop_build") or task.get("source") in ("workshop", "approval") or task.get("learn") is False:
         return False
-    if any(e.get("event") == "tool" and e.get("name") == "propose_tool" for e in task.get("events", [])):
+    events = task.get("events", [])
+    if any(e.get("event") == "tool" and e.get("name") == "propose_tool" for e in events):
         return False
     if task["status"] == "error":
         return True
-    return task["status"] == "done" and bool(boss.NOT_DONE.search(boss.clean_summary(task.get("summary") or "")[:800]))
+    # done, but only by improvising: a tool said it can't ("no PDF reader") and a script did it instead. The brain was
+    # told to propose a tool then, and didn't (it answered and stopped), so this asks for it
+    tools = [e for e in events if e.get("event") == "tool"]
+    if any(str(e.get("result", "")).startswith("error:UNSUPPORTED") for e in tools) and any(
+            e.get("name") in ("PowerShell", "run_command") and not str(e.get("result", "")).startswith("error") for e in tools):
+        return True
+    return task["status"] == "done" and bool(CANT.search(boss.clean_summary(task.get("summary") or "")[:800]))
+
+
+# an answer that says IO couldn't do something (boss.NOT_DONE's "would" and "instead of" are too common in good answers)
+CANT = re.compile(r"\b(couldn'?t|could not|can'?t|cannot|unable to|not able to|no way to|wasn'?t able|don'?t have (?:a|any) (?:tool|way))\b", re.I)
 
 
 async def wall_check_after(task: dict) -> None:

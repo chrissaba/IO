@@ -2747,12 +2747,14 @@ def local_chat(system: str, user: str, max_tokens: int = 300, think: bool | str 
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
 
-WALL_SYSTEM = """You look at a task an assistant on a Windows PC didn't get done, and say what stopped it.
+WALL_SYSTEM = """You look at a task an assistant on a Windows PC worked on, and say whether a missing tool was its wall.
 - "tool": it needed an ability none of its tools give: reading a kind of file or data it can't open, reaching a program,
   device or service it has no way to talk to, a conversion or calculation it can't do. A small Python program could give it.
+  This counts even when it got there anyway by improvising a one-off script for that ability (decoding the file itself
+  with a PowerShell or Python one-liner): the next time it would have to improvise again.
 - "info": it needed facts, a login, access or a choice that only the user has.
-- "other": anything else: an app or site misbehaving or blocking it, the user's own limits, or it ran out of steps on work
-  its tools can do.
+- "other": anything else: an app or site misbehaving or blocking it, the user's own limits, it ran out of steps on work
+  its tools can do, or it did the task with its tools (in whatever way it chose). A tool it already has is never "tool".
 Its tools: {tools}
 Reply with JSON only: {{"kind": "tool" or "info" or "other", "name": "a short name for the tool", "does": "what the tool would do, one sentence", "why": "what in the task needed it"}}"""
 
@@ -2769,7 +2771,11 @@ def wall_check(request: str, answer: str, steps: list[str]) -> dict | None:
         print("wall check:", type(e).__name__, e, file=sys.stderr)
         return None
     if isinstance(v, dict) and v.get("kind") == "tool" and v.get("name") and v.get("does"):
-        return {"name": str(v["name"])[:60], "does": str(v["does"])[:400], "why": str(v.get("why") or "")[:400]}
+        name = str(v["name"])[:60]
+        # a "new" tool named after one IO has (it once proposed about_io for a task that used open_app instead) is noise
+        if re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") in actions.REGISTRY:
+            return None
+        return {"name": name, "does": str(v["does"])[:400], "why": str(v.get("why") or "")[:400]}
     return None
 
 
