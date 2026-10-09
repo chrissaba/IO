@@ -786,6 +786,32 @@
       <div class="tabs">
         <button :class="customTab === 'plugins' && 'on'" @click="customTab = 'plugins'">Plugins</button>
         <button :class="customTab === 'skills' && 'on'" @click="customTab = 'skills'">Skills</button>
+        <button :class="customTab === 'workshop' && 'on'" @click="customTab = 'workshop'">Workshop</button>
+      </div>
+
+      <div x-show="customTab === 'workshop'">
+        <p class="note" style="margin-bottom:12px">Tools IO built for itself when it hit something it couldn't do. Each one was built and tested in IO's workshop folder after you said yes, and runs as its own small program. If its files change after you turned it on, it stops loading until IO tests it again and you approve it.</p>
+        <template x-for="w in (custom.workshop || [])" :key="w.id">
+          <div class="card item">
+            <div style="display:flex; gap:10px; align-items:flex-start">
+              <div class="txt" style="flex:1">
+                <div class="t"><span x-text="w.name"></span> <span class="badge" x-text="{proposed: 'waiting for you', building: 'being built', built: 'built, off', enabled: 'on', off: 'off', declined: 'declined', changed: 'changed since approved'}[w.status] || w.status"></span></div>
+                <div class="s" x-text="w.does"></div>
+                <div class="s" x-show="w.summary" x-text="'Tested: ' + w.summary"></div>
+                <div class="s" style="font-family:'Geist Mono',monospace; font-size:11.5px" x-show="(w.tools || []).length" x-text="(w.tools || []).join(', ')"></div>
+              </div>
+              <label class="switch" x-show="['enabled', 'off'].includes(w.status)" :title="w.status === 'enabled' ? 'On' : 'Off'">
+                <input type="checkbox" :checked="w.status === 'enabled'" @change="workshopDo(w, $event.target.checked ? 'on' : 'off')"><span></span>
+              </label>
+            </div>
+            <div class="pfoot">
+              <button class="linkbtn" @click="workshopDo(w, 'open')">Open folder</button>
+              <button class="linkbtn danger" @click="confirm('Send ' + w.name + ' to the Recycle Bin?') && workshopDo(w, 'remove')">Remove</button>
+              <span class="ptest" x-text="workshopNote[w.id] || ''"></span>
+            </div>
+          </div>
+        </template>
+        <div class="empty" x-show="!(custom.workshop || []).length">IO hasn't built any tools yet. When a task needs something none of its tools can do, it asks you in Approvals whether it may build one.</div>
       </div>
 
       <div x-show="customTab === 'plugins'">
@@ -923,7 +949,7 @@
 
     <!-- ===== approvals ===== -->
     <div class="page" x-show="view === 'approvals'">
-      <div class="pagehead"><h1>Approvals</h1><p>Steps an unattended run (a goal, schedule or trigger) needed your OK for. It didn't stop to wait: a risky command ran on a copy of its folder, and its changes wait here; anything else waits here without having run.</p></div>
+      <div class="pagehead"><h1>Approvals</h1><p>Steps an unattended run (a goal, schedule or trigger) needed your OK for. It didn't stop to wait: a risky command ran on a copy of its folder, and its changes wait here; anything else waits here without having run. New tools IO wants to build for itself wait here too: once to build one, once to turn it on.</p></div>
       <template x-for="a in (s.approvals || [])" :key="a.id">
         <div class="card" :style="a.status !== 'pending' ? 'opacity:.6' : ''">
           <div style="display:flex; gap:10px; align-items:flex-start">
@@ -937,13 +963,33 @@
                   <details><summary>Output</summary><pre style="white-space:pre-wrap; font-size:11.5px; max-height:240px; overflow:auto" x-text="a.sandbox.output || '(no output)'"></pre></details>
                 </div>
               </template>
-              <div class="s" x-show="!a.sandbox" x-text="a.name + ' ' + JSON.stringify(a.args).slice(0, 300)"></div>
+              <template x-if="a.name === 'build_tool'">
+                <div class="s">
+                  <div x-text="'IO can\'t do this yet. It could build a tool that would: ' + a.args.does"></div>
+                  <div x-show="a.args.why" x-text="'Needed for: ' + a.args.why"></div>
+                  <div>Building it runs as a task that writes and tests the tool in IO's workshop folder only. Nothing runs until you turn it on.</div>
+                </div>
+              </template>
+              <template x-if="a.name === 'enable_tool'">
+                <div class="s">
+                  <div x-text="'What it does: ' + a.args.does"></div>
+                  <div x-show="a.args.summary" x-text="'How IO tested it: ' + a.args.summary"></div>
+                  <div style="font-family:'Geist Mono',monospace; font-size:11.5px; margin:4px 0" x-text="(a.args.tools || []).join('\n')"></div>
+                  <details><summary>Test output</summary><pre style="white-space:pre-wrap; font-size:11.5px; max-height:240px; overflow:auto" x-text="a.args.test || '(none)'"></pre></details>
+                  <button class="linkbtn" x-show="!REMOTE" @click="post(`/api/workshop/${a.args.tool}`, { action: 'open' })">Open its folder to read the code</button>
+                </div>
+              </template>
+              <div class="s" x-show="!a.sandbox && !['build_tool', 'enable_tool'].includes(a.name)" x-text="a.name + ' ' + JSON.stringify(a.args).slice(0, 300)"></div>
               <div class="s" x-show="a.result" x-text="a.result"></div>
             </div>
-            <template x-if="a.status === 'pending'">
+            <template x-if="a.status === 'pending' && REMOTE && ['build_tool', 'enable_tool'].includes(a.name)">
+              <div class="note">Approve this on the PC</div>
+            </template>
+            <template x-if="a.status === 'pending' && !(REMOTE && ['build_tool', 'enable_tool'].includes(a.name))">
               <div style="display:flex; gap:6px">
-                <button class="btn primary sm" @click="decide(a, 'approve')" x-text="a.sandbox ? 'Apply changes' : 'Approve'"></button>
-                <button class="btn sm" @click="decide(a, 'reject')">Reject</button>
+                <button class="btn primary sm" @click="decide(a, 'approve')"
+                        x-text="a.sandbox ? 'Apply changes' : a.name === 'build_tool' ? 'Build it' : a.name === 'enable_tool' ? 'Turn it on' : 'Approve'"></button>
+                <button class="btn sm" @click="decide(a, 'reject')" x-text="['build_tool', 'enable_tool'].includes(a.name) ? 'Not now' : 'Reject'"></button>
               </div>
             </template>
           </div>
@@ -1385,7 +1431,7 @@ function agent() {
     view: "chat", chatId: "",
     s: { status: { boss: "…", eyes: "…", paused: false }, tasks: [], chats: [], schedules: [], templates: [], triggers: [], settings: {}, today: { count: 0, done: 0, avg: 0 }, user: "" },
     draft: "", filter: "", statusFilter: "", open: {}, lastState: "", attachments: [], answers: {}, dragging: false, menuOpen: false,
-    custom: { catalog: [], installed: {}, skills: [] }, customTab: "plugins", pluginEnv: {}, pluginTest: {}, pluginQuery: "",
+    custom: { catalog: [], installed: {}, skills: [], workshop: [] }, customTab: "plugins", pluginEnv: {}, pluginTest: {}, pluginQuery: "", workshopNote: {},
     skill: { name: "", instructions: "" }, skillMsg: "",
     // unread tracking: replies that finish after dividerAt get the "New" line; it stops moving while you're away
     dividerAt: 0, dividerLocked: false, seenPending: false, watchedId: "", lastInput: Date.now(), ready: false,
@@ -2155,6 +2201,12 @@ function agent() {
     // ----- customize -----
     post,
     async loadCustomize() { if (!REMOTE) this.custom = await (await fetch("/api/customize")).json(); },  // the phone doesn't manage plugins
+    async workshopDo(w, action) {  // a tool IO built: on, off, open its folder, remove (to the Recycle Bin)
+      const r = await post(`/api/workshop/${w.id}`, { action });
+      this.workshopNote = { ...this.workshopNote, [w.id]: r.error || "" };
+      if (r.workshop) this.custom = { ...this.custom, workshop: r.workshop };
+      else if (r.error) this.loadCustomize();
+    },
     get pluginCategories() { return [...new Set(this.filteredPlugins.map((p) => p.category || "Other"))]; },
     get filteredPlugins() {
       const q = this.pluginQuery.toLowerCase();

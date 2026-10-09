@@ -18,6 +18,8 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+import workshop
+
 HERE = Path(__file__).parent
 CATALOG = HERE / "catalog.json"
 STATE = HERE / "data" / "plugins.json"
@@ -182,17 +184,22 @@ def _tool_name(pid: str, name: str) -> str:
 
 async def _start(stack: AsyncExitStack, entry: dict, settings: dict) -> tuple[ClientSession, list]:
     """Starts one plugin on its own stack (closed again if it fails) and lists its tools."""
+    session, tools = await _start_params(stack, _params(entry, settings))
+    allow = entry.get("tools")  # optional allowlist in the catalog, for servers with many tools
+    return session, [t for t in tools if not allow or t.name in allow]
+
+
+async def _start_params(stack: AsyncExitStack, params: StdioServerParameters) -> tuple[ClientSession, list]:
     ps = await stack.enter_async_context(AsyncExitStack())
     try:
-        r, w = await ps.enter_async_context(stdio_client(_params(entry, settings), errlog=sys.stderr))
+        r, w = await ps.enter_async_context(stdio_client(params, errlog=sys.stderr))
         session = await ps.enter_async_context(ClientSession(r, w, read_timeout_seconds=START_TIMEOUT))
         await session.initialize()
         tools = list((await session.list_tools()).tools)
     except Exception:
         await ps.aclose()
         raise
-    allow = entry.get("tools")  # optional allowlist in the catalog, for servers with many tools
-    return session, [t for t in tools if not allow or t.name in allow]
+    return session, tools
 
 
 async def start_enabled(stack: AsyncExitStack, log=print) -> list[tuple[str, ClientSession, object]]:
@@ -218,6 +225,17 @@ async def start_enabled(stack: AsyncExitStack, log=print) -> list[tuple[str, Cli
         except Exception as e:
             _failed[pid] = time.time()
             log(f"plugin {entry['name']} unavailable: {type(e).__name__}: {e}")
+    # tools IO built for itself and the user turned on (workshop.py): each in its own process, like a plugin
+    for w in workshop.enabled(log):
+        key = "workshop:" + w["id"]
+        if time.time() - _failed.get(key, 0) < RETRY_AFTER:
+            continue
+        try:
+            session, tools = await _start_params(stack, workshop.server_params(w["id"]))
+            out += [(_tool_name(w["id"], t.name), session, t) for t in tools]
+        except Exception as e:
+            _failed[key] = time.time()
+            log(f"workshop tool {w.get('name', w['id'])} unavailable: {type(e).__name__}: {e}")
     return out
 
 

@@ -3465,6 +3465,12 @@ def writable(ctx: Ctx, p: Path) -> None:
     if _forbidden(p):
         raise Fail("BLOCKED", f"IO never writes under {p.anchor}{p.parts[1] if len(p.parts) > 1 else ''}", "a path in the user's folders")
     s = str(p).lower()
+    # IO's own program is read-only to IO (it sits under the user's profile, so the rule below would allow it): new
+    # abilities are built in the workshop folder, which is the one place inside it a task may write
+    own = str(_real(HERE)).lower().rstrip("\\")
+    if (s == own or s.startswith(own + "\\")) and not s.startswith(str(_real(HERE / "workshop")).lower() + "\\"):
+        raise Fail("BLOCKED", f"{p} is part of IO's own program, which IO reads but never changes",
+                   "about_io() for how it works; propose_tool(...) for a new ability, built in the workshop")
     allowed = [os.environ.get("USERPROFILE", ""), os.environ.get("TEMP", ""), os.environ.get("TMP", "")]
     if any(a and s.startswith(str(_real(Path(a))).lower().rstrip("\\") + "\\") for a in allowed):
         return
@@ -3771,13 +3777,14 @@ def _log_lines_sync(p: Path, shown: str, tail: int, find: str, budget: int) -> s
         if len(body) > budget:  # the newest lines matter most in a log
             body = "[... older lines cut to fit]\n" + body[-budget:].split("\n", 1)[-1]
         return f"{shown} ({_size(p)}), its last {len(rows)} lines:\n{body}" if rows else f"{shown}: (empty file)"
-    words = [w.lower() for w in re.findall(r"[^\s,]+", find)]
+    # "a|b" and "a, b" are alternatives (models write both, meaning any of them); words inside one must all be on the line
+    alts = [[w.lower() for w in part.split()] for part in re.split(r"[|,]", find) if part.split()]
     hits: list[tuple[int, str]] = []
     total = 0
     with open(p, "r", encoding="utf-8", errors="replace") as f:
         for total, line in enumerate(f, 1):
             low = line.lower()
-            if all(w in low for w in words):
+            if any(all(w in low for w in alt) for alt in alts):
                 hits.append((total, line.rstrip("\r\n")))
                 if len(hits) > 20000:
                     del hits[:10000]  # only the newest are shown anyway
@@ -3785,7 +3792,7 @@ def _log_lines_sync(p: Path, shown: str, tail: int, find: str, budget: int) -> s
         hits = [h for h in hits if h[0] > total - tail]
     scope = f"in its last {tail:,} lines" if tail else f"of {total:,}"
     if not hits:
-        return f"{shown} ({_size(p)}): no line {scope} has all of: {find}"
+        return f"{shown} ({_size(p)}): no line {scope} has " + " or ".join(" and ".join(a) for a in alts)
     shown_rows: list[str] = []
     used = 0
     for i, line in reversed(hits):  # newest first until the budget is spent, then back in file order
@@ -5111,6 +5118,121 @@ async def api_lookup(ctx: Ctx, of: str, type: str = "", find: str = "", python: 
     return ok(text)
 
 
+# ======================================================================================================================
+# IO about itself, and its workshop: what it can do (from its own code), and tools it builds for itself with the
+# user's OK when it hits a wall (workshop.py has the whole flow)
+# ======================================================================================================================
+
+SOURCE_MAP = [
+    ("boss.py", "the agent loop: brains (local Glimmer, NVIDIA race), effort levels, planning, checks, Ultracode helpers, compaction"),
+    ("actions.py", "every action: what it does, its checks and limits, routing of a request to a menu of tools"),
+    ("nim.py", "NVIDIA's models: pacing, health, reasoning switches per model, tests"),
+    ("app.py", "the panel's server: tasks, chats, goals, schedules, triggers, approvals, phone access"),
+    ("panel.html", "the window you and the user see"),
+    ("plugins.py", "MCP plugins and skills, and starting workshop tools"),
+    ("workshop.py", "the workshop: proposing, building, testing and turning on tools IO builds for itself"),
+    ("workshop_host.py", "runs one workshop tool as an MCP server"),
+    ("learned.py", "playbooks IO writes for itself after runs"),
+]
+
+
+@action("about_io", group="END", summary="what IO itself can do: its tools and limits, effort, plugins, its own code",
+        params="""
+        topic s? a word: only the tools about it
+        """, cost=0.1, star=True, top="topic?",
+        limits="IO's program files are read-only to IO: read them, never change them; a missing ability: propose_tool")
+async def about_io(ctx: Ctx, topic: str = "", **_) -> str:
+    """IO's own manual, generated from its code, so it is never out of date with what IO really has."""
+    import workshop  # noqa: PLC0415 - workshop imports nothing of IO's
+    words = [w.lower() for w in re.findall(r"\w{3,}", topic or "")]
+    lines: list[str] = []
+    level = ctx.options.get("effort", "")
+    if not words:
+        lines.append(f"IO: a Windows desktop agent. This task runs at effort {level or '?'} (Low: local only; Medium: hard "
+                     "parts to NVIDIA's models; High: NVIDIA brain, more steps, a check; Max: High plus Ultracode helpers).")
+        lines.append(f"Today is {time.strftime('%Y-%m-%d')}. The models' knowledge comes from their training, which may be a year or "
+                     "more older: check versions on this PC (api_lookup) or the web.\n")
+    for g in GROUPS:
+        acts = [a for a in REGISTRY.values() if a.group == g and "internal" not in a.modes]
+        if words:
+            acts = [a for a in acts if any(w in f"{a.name} {a.summary} {a.limits} {a.desc}".lower() for w in words)]
+        if not acts:
+            continue
+        lines.append(GROUP_HEAD.get(g, g))
+        for a in sorted(acts, key=lambda a: a.name):
+            lines.append(f"  {a.signature()}: {a.summary}" + (f" [{a.limits}]" if a.limits and words else ""))
+    if not words:
+        try:
+            on = [p for p, s in json.loads((HERE / "data" / "plugins.json").read_text(encoding="utf-8")).get("installed", {}).items()
+                  if s.get("enabled", True)]
+        except (OSError, ValueError):
+            on = []
+        lines.append("\nPlugins on: " + (", ".join(on) if on else "none"))
+        built = workshop.public()
+        lines.append("Tools IO built itself (workshop): " + ("; ".join(f"{w['name']} ({w['status']}): {w['does']}" for w in built)
+                                                             if built else "none yet"))
+        lines.append("\nIO's own code (read it with read_file to see how something works; it is read-only to IO):")
+        lines += [f"  {HERE / name}: {what}" for name, what in SOURCE_MAP]
+        lines.append("\nWhen a task needs an ability no tool here gives (not just information or the user's decision), call "
+                     "propose_tool: the user is asked whether IO may build that tool in its workshop.")
+    budget = builtins_max(4000, min(ctx.page_chars or 12000, 16000))
+    text = "\n".join(lines) if lines else f"no tool mentions {topic!r}; about_io() lists everything"
+    return ok(text if len(text) <= budget else text[:budget] + "\n[... more: about_io(topic=...) narrows it]")
+
+
+@action("propose_tool", group="END", summary="ask the user to let IO build a tool it lacks (in its workshop)",
+        params="""
+        name s a short name for the tool
+        does s what it would do, one sentence
+        why s what in this task needed it
+        """, cost=0.1, star=True, top="name,does,why",
+        limits="only for a missing ability, not missing information; the user approves building it, then turning it on")
+async def propose_tool(ctx: Ctx, name: str, does: str, why: str = "", **_) -> str:
+    cb = ctx.options.get("workshop_propose")
+    if cb is None:
+        raise Fail("UNSUPPORTED", "the workshop isn't available in this run", "say in done what tool would have helped")
+    return ok(await cb(str(name), str(does), str(why)))
+
+
+@action("workshop_test", group="PC", summary="check a workshop tool against the rules and run its test_tool.py",
+        params="""
+        tool s the tool's id (its folder name)
+        """, cost=5.0, top="tool", timeout=200, limits="only tools in IO's workshop folder; the test runs up to 120 s")
+async def workshop_test(ctx: Ctx, tool: str, **_) -> str:
+    import workshop  # noqa: PLC0415
+    try:
+        r = await asyncio.to_thread(workshop.test_sync, str(tool).strip())
+    except ValueError as e:
+        raise Fail("BAD_ARGS", str(e), "the id from the build task (the folder's name)") from None
+    names = ", ".join(f"{workshop.prefix(tool)}_{t['name']}{t['signature']}" for t in r.get("tools") or [])
+    if not r["ok"]:
+        raise Fail("FAILED", r["output"], "fix tool.py or test_tool.py, then workshop_test again")
+    return ok(f"passed. Its tools: {names}\n{r['output'][-1500:]}\nNext: tool_ready(tool=\"{tool}\", summary=...)")
+
+
+@action("tool_ready", group="PC", summary="hand a tested workshop tool to the user to turn on",
+        params="""
+        tool s the tool's id
+        summary s what it does and how you tested it
+        """, cost=0.1, top="tool,summary", limits="only after workshop_test passed on the files as they are now")
+async def tool_ready(ctx: Ctx, tool: str, summary: str, **_) -> str:
+    import workshop  # noqa: PLC0415
+    tid = str(tool).strip()
+    try:
+        entry, now = workshop.get(tid), await asyncio.to_thread(workshop.files_hash, tid)
+    except ValueError as e:
+        raise Fail("BAD_ARGS", str(e), "the id from the build task") from None
+    if entry is None:
+        raise Fail("NOT_FOUND", f"no workshop tool {tid}", "about_io() lists them")
+    test = entry.get("test") or {}
+    if not test.get("ok") or test.get("hash") != now:
+        raise Fail("NEEDS", "its last workshop_test didn't pass on the files as they are now", f'workshop_test(tool="{tid}")')
+    cb = ctx.options.get("workshop_ready")
+    if cb is None:
+        raise Fail("UNSUPPORTED", "the workshop isn't available in this run", "say in done that the tool is built and tested")
+    return ok(await cb(tid, str(summary), now))
+
+
 # --- compiler errors in a build's output (dotnet/MSBuild, tsc): each error once, with its source line, and for an error
 # that says a name doesn't exist, the library's real API right in the result
 
@@ -5679,7 +5801,14 @@ async def app_info(ctx: Ctx, name: str = "", filter: str = "", **_) -> str:
     else:
         run = "not running"
     if not res["hits"]:
-        return ok(f"{name} doesn't look installed (no uninstall entry, Start menu item, Store app, program folder or Steam game); {run}; not launched")
+        # a command-line tool (dotnet, git, node, uv) often has no app entry at all: "dotnet doesn't look installed" sent
+        # a build task looking for an SDK that was right there
+        cli = shutil.which(name) if re.fullmatch(r"[\w.+-]+", name) else None
+        if cli and "WindowsApps" not in cli:
+            return ok(f"{name} is installed as a command-line tool: {cli} (on PATH; run_command(\"{name} --version\") gives its version); "
+                      f"{run}; not launched")
+        return ok(f"{name} doesn't look installed (no uninstall entry, Start menu item, Store app, program folder, Steam game or "
+                  f"command on PATH); {run}; not launched")
     return ok(f"{name} is installed: " + "; ".join(res["hits"][:6]) + f"; {run}; not launched")
 
 
@@ -6016,6 +6145,33 @@ async def web_search(ctx: Ctx, query: str, **_) -> str:
     return ok(f"Google results for {query!r} (answer from these, or read_page(url) the best one):\n" + "\n".join(lines))
 
 
+_TEXT_FILE = re.compile(r"\.(txt|md|json|csv|xml|ya?ml|toml|ini|cfg|cs|csproj|props|targets|sln|py|js|mjs|ts|tsx|jsx|java|go|rs|c|h|"
+                        r"cpp|hpp|rb|php|sh|ps1|bat|kt|swift|lua|sql|log|patch|diff)$", re.I)
+
+
+def _raw_url(url: str) -> str | None:
+    """The address of a plain-text file, or None for a web page. GitHub's file pages become their raw files. In the
+    tab, raw.githubusercontent.com pages timed out on every read (five in one task), and a GitHub file page is mostly
+    menus around the code."""
+    u = url.strip() if "://" in url else "https://" + url.strip()
+    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/blob/(.+?)(?:[?#].*)?$", u)
+    if m:
+        return f"https://raw.githubusercontent.com/{m.group(1)}/{m.group(2)}/{m.group(3)}"
+    parts = urllib.parse.urlparse(u)
+    if parts.netloc.lower() in ("raw.githubusercontent.com", "gist.githubusercontent.com") or _TEXT_FILE.search(parts.path):
+        return u
+    return None
+
+
+def _fetch_text_sync(url: str) -> str:
+    import urllib.request  # noqa: PLC0415
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IO"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        if "html" in (r.headers.get("Content-Type") or "").lower():
+            raise ValueError("a web page, not a text file")
+        return r.read(3_000_000).decode("utf-8", "replace")
+
+
 @action("read_page", group="WEB", summary="read a page in IO's tab: text (find= for facts), links, tables",
         params="""
         url s? the address (empty: the page already open)
@@ -6025,6 +6181,16 @@ async def web_search(ctx: Ctx, query: str, **_) -> str:
         modes=frozenset({"single", "director", "local"}), timeout=60, limits="IO's tab only, never the user's own tabs")
 async def read_page(ctx: Ctx, url: str = "", find: str = "", what: str = "text", **_) -> str:
     h = _h()
+    raw = _raw_url(url) if url and what == "text" else None
+    if raw:  # a plain-text file (source code on GitHub, a .json, a .md): fetched directly, not through the tab
+        try:
+            text = await asyncio.to_thread(_fetch_text_sync, raw)
+            n = ctx.page_chars or 6000
+            body = h.find_in_text(text, find) if find else text[:n] + (
+                f"\n[{len(text) - n:,} more characters; use find= to look for something]" if len(text) > n else "")
+            return ok(f"{raw} (a text file, read directly):\n{body}", via="http")
+        except (OSError, ValueError):
+            pass  # not there, or a web page after all: the tab tries it
     _need_browser(ctx)
     if url:
         res = await _navigate(ctx, url)

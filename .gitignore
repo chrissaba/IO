@@ -12,3 +12,4 @@ bench/reports/
 tools/*/bin/
 tools/*/obj/
 tools/*/out/
+workshop/

@@ -214,6 +214,9 @@ FRONTIER_STYLE = """WORKING STYLE
   remember of its API may be from another version. Look up the installed one with api_lookup(of=the project, dll or
   package, type= or find=) before writing calls to it. When a build says a name doesn't exist, its result shows the
   real API: use those names, never another guess. Logs of any size: read_file(path, tail=200) or find="words".
+- What IO itself can do: about_io(topic). Its program files are read-only to you. When the task needs an ability none of
+  your tools give (not information, not the user's decision), call propose_tool(name, does, why) once: the user decides
+  whether IO builds that tool in its workshop. Then carry on with what you can.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
 - State facts only from what your tools returned in this task. If a page didn't show something, look somewhere better
   (a site's own API, another page) or say you couldn't find it; never fill the gap from memory.
@@ -995,7 +998,7 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
             a, b = 0, 200
         else:  # the line before a hit: its end
             a, b = max(0, len(line) - 200), len(line)
-        return ("â€¦" if a > 0 else "") + line[a:b] + ("â€¦" if b < len(line) else "")
+        return ("…" if a > 0 else "") + line[a:b] + ("…" if b < len(line) else "")
 
     keep, used = set(), 0
     for i in sorted(hits, key=lambda i: -score[i]):  # best matches first, each with its neighbours
@@ -1007,7 +1010,7 @@ def find_in_text(text: str, find: str, budget: int = 4000) -> str:
         used += cost
     out, last = [], -2
     for i in sorted(keep):  # shown in page order
-        out.append(("â€¦\n" if i != last + 1 and out else "") + clip(i))
+        out.append(("…\n" if i != last + 1 and out else "") + clip(i))
         last = i
     if len(keep) < len(hits):
         out.append("[more matches cut]")
@@ -1130,7 +1133,7 @@ ULTRA_HELPER_SECS = 240  # a helper's whole budget; the main agent takes over it
 ULTRA_CALLS_PER_TURN = 3  # tool calls a helper may make per reply; the rest are dropped (GLM once sent 54 searches at once)
 ANNOUNCING = re.compile(r"^\s*(i'?ll|i will|let me|i'?m going to|i am going to|first,? i|next,? i|now,? i)\b", re.I)
 # what a sub-agent may run: its own hidden browser and read-only file and PC facts; never the mouse, keyboard or windows
-ULTRA_SUB_TOOLS = ["web_search", "read_page", "list_files", "find_file", "read_file", "pc_info", "app_info", "calc"]
+ULTRA_SUB_TOOLS = ["web_search", "read_page", "list_files", "find_file", "read_file", "pc_info", "app_info", "calc", "api_lookup", "about_io"]
 ULTRA_PLAN = """You plan for IO, an AI agent on a Windows PC, in Ultracode mode: helpers work on separate parts of a request
 at the same time, then the main agent finishes it.
 Split the user's request into subtasks. Each has a kind:
@@ -1148,7 +1151,9 @@ while other helpers do theirs. You have a hidden browser of your own (web_search
 can't use the mouse, keyboard or windows and can't ask the user. Work quickly: a few calls, then done(summary) with the
 facts you found (names, numbers, dates, file paths, page addresses), complete enough that the main agent can use them
 without redoing your work. If Google asks for a check, don't search again: read_page a source you know instead (the
-official site, or https://en.wikipedia.org/wiki/<Topic>). If part of it needs the desktop or the user's OK, say so in done."""
+official site, or https://en.wikipedia.org/wiki/<Topic>). If part of it needs the desktop or the user's OK, say so in done.
+For a library, SDK or plugin API installed on this PC, api_lookup(of=its project, dll or package) reads the real API of
+the installed version: trust it over web docs and examples, which are often for another version."""
 ULTRA_DONE = {"type": "function", "function": {
     "name": "done", "description": "Finish your subtask with what you found.",
     "parameters": {"type": "object", "properties": {"summary": {"type": "string", "description": "The facts found, with sources"}},
@@ -1385,7 +1390,7 @@ def usable_expect(expect: str) -> str:
     A description of success ('Notepad is open and focused') is dropped: the action's own check covers it, and checked
     literally it would fail a step that worked."""
     # quotes, not apostrophes: "Notepad's title shows 'eggs'" quotes eggs, not "s title shows "
-    quoted = re.findall(r"\"([^\"]{2,80})\"|â€œ([^â€]{2,80})â€|(?<!\w)['â€˜]([^'â€™]{2,80})['â€™](?!\w)", expect or "")
+    quoted = re.findall(r"\"([^\"]{2,80})\"|“([^”]{2,80})”|(?<!\w)['‘]([^'’]{2,80})['’](?!\w)", expect or "")
     if quoted:
         return next(q for q in quoted[0] if q)
     e = re.sub(r"\s+(dialog|window|box|popup|page|tab|screen)\W*$", "", (expect or "").strip(), flags=re.I)  # "Save As dialog": title "Save As"
@@ -1478,7 +1483,7 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, budgets: di
                 n += len(block) + 2
             return "\n\n".join(out)
         if k == "goal":  # the start of the task says what to do
-            return v if len(v) <= budgets[k] else v[:budgets[k]].rsplit(" ", 1)[0] + " â€¦(cut)"
+            return v if len(v) <= budgets[k] else v[:budgets[k]].rsplit(" ", 1)[0] + " …(cut)"
         lines, out, n = v.splitlines(), [], 0
         for line in (reversed(lines) if k == "history" else lines):
             if n + len(line) > budgets[k]:
@@ -1505,7 +1510,7 @@ def fit_director_prompt(limit: int, template: str = DIRECTOR_PROMPT, budgets: di
                 budgets[k] = int(budgets[k] * 0.75)
     # never cut the end: the catalog and "Next JSON." are what make the reply usable
     tail = prompt[-600:]
-    return prompt[:limit - len(tail) - 2] + "\nâ€¦" + tail if len(prompt) > limit else prompt
+    return prompt[:limit - len(tail) - 2] + "\n…" + tail if len(prompt) > limit else prompt
 
 
 _JSON_STR = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
@@ -2736,6 +2741,32 @@ def local_chat(system: str, user: str, max_tokens: int = 300, think: bool | str 
                          max_tokens=max_tokens, extra_body=None if think is True else local_reasoning(think or "off"),
                          messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
+
+
+WALL_SYSTEM = """You look at a task an assistant on a Windows PC didn't get done, and say what stopped it.
+- "tool": it needed an ability none of its tools give: reading a kind of file or data it can't open, reaching a program,
+  device or service it has no way to talk to, a conversion or calculation it can't do. A small Python program could give it.
+- "info": it needed facts, a login, access or a choice that only the user has.
+- "other": anything else: an app or site misbehaving or blocking it, the user's own limits, or it ran out of steps on work
+  its tools can do.
+Its tools: {tools}
+Reply with JSON only: {{"kind": "tool" or "info" or "other", "name": "a short name for the tool", "does": "what the tool would do, one sentence", "why": "what in the task needed it"}}"""
+
+
+def wall_check(request: str, answer: str, steps: list[str]) -> dict | None:
+    """After a task that didn't get done: was the wall a missing tool? {"name", "does", "why"} if so, else None. Asked of
+    the local model (free and private), briefly: it only sorts the wall, IO's workshop and the user do the rest."""
+    names = ", ".join(sorted(n for n, a in actions.REGISTRY.items() if "internal" not in a.modes))
+    user = (f"Task: {request[:1500]}\n\nWhat it did, last steps:\n" + ("\n".join(steps[-10:]) or "(no tool calls)") +
+            f"\n\nIts answer: {clean_summary(answer)[:1500]}")
+    try:
+        v = loose_json(local_chat(WALL_SYSTEM.format(tools=names), user, max_tokens=700, think="low"))
+    except Exception as e:  # the local model busy or down: no proposal this time
+        print("wall check:", type(e).__name__, e, file=sys.stderr)
+        return None
+    if isinstance(v, dict) and v.get("kind") == "tool" and v.get("name") and v.get("does"):
+        return {"name": str(v["name"])[:60], "does": str(v["does"])[:400], "why": str(v.get("why") or "")[:400]}
+    return None
 
 
 RESOLVE_SYSTEM = """You turn the user's latest chat message into a standalone request, using the conversation before it.

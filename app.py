@@ -45,6 +45,7 @@ import overlay
 import plugins
 import triggers
 import webpush
+import workshop
 
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("BOSS_APP_PORT", "8765"))
@@ -418,6 +419,8 @@ async def worker() -> None:
         options["approve_later"] = approve_later_for(task)
         options["preapproved"] = list(task.get("preapproved") or [])
         options["add_goal"] = add_goal  # "keep an eye on X": the brain turns ongoing asks into goals
+        options["workshop_propose"] = workshop_proposer(task)  # a missing ability: ask to build it (workshop.py)
+        options["workshop_ready"] = workshop_ready_for(task)
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -443,6 +446,8 @@ async def worker() -> None:
         current.update(task=None, job=None)
         overlay.hide()
         save_state()
+        if wall_worthy(task):
+            asyncio.create_task(wall_check_after(task))  # in the background: the next task doesn't wait for it
         for listener in finished_listeners:
             try:
                 listener(task)
@@ -668,6 +673,140 @@ def approve_later_for(task: dict):
     return approve_later
 
 
+def add_approval(item: dict, task: dict) -> None:
+    """Something waits for the user's OK: kept in Approvals, and the desktop and phones are told."""
+    state["approvals"].append(item)
+    state["approvals"] = state["approvals"][-200:]
+    save_state()
+    for listener in question_listeners:
+        try:
+            listener({**task, "question": f"Approval needed: {item['reason']}", "approval": item["id"]})
+        except Exception as e:
+            print("question listener failed:", e)
+
+
+# ---------- the workshop: tools IO builds for itself (workshop.py) ----------
+
+def propose_tool_now(task: dict, name: str, does: str, why: str, source: str) -> str:
+    """A missing ability becomes "IO can't do X yet; may it build a tool that does Y?" in Approvals (once per idea)."""
+    entry, new = workshop.propose(name, does, why, task_id=task.get("id", ""), source=source)
+    if not new:
+        st = entry.get("status")
+        if st == "enabled":
+            return f"IO already has a tool for this, {entry['name']}: its tools are named {workshop.prefix(entry['id'])}_..."
+        if st == "declined":
+            return f"The user declined a tool like this ({entry['name']}) recently: don't ask again; do what you can without it."
+        return f"A tool like this ({entry['name']}) is already {st}; nothing new to ask. Do what you can without it."
+    item = {"id": uuid.uuid4().hex[:6], "created": time.time(), "task_id": task.get("id", ""), "goal": task.get("goal", ""),
+            "source": source, "name": "build_tool", "status": "pending", "reason": f"build a new tool: {entry['name']}",
+            "args": {"tool": entry["id"], "name": entry["name"], "does": entry["does"], "why": entry["why"]}}
+    add_approval(item, task)
+    return (f"Asked the user whether IO may build \"{entry['name']}\" in its workshop (Approvals #{item['id']}). Carry on "
+            "with what you can without it, and mention it in done.")
+
+
+def workshop_proposer(task: dict):
+    async def propose(name: str, does: str, why: str) -> str:
+        return propose_tool_now(task, name, does, why, source="asked by IO")
+    return propose
+
+
+def workshop_ready_for(task: dict):
+    async def ready(tid: str, summary: str, files: str) -> str:
+        entry = workshop.update(tid, status="built", summary=summary[:600])
+        test = entry.get("test") or {}
+        item = {"id": uuid.uuid4().hex[:6], "created": time.time(), "task_id": task["id"], "source": "workshop",
+                "name": "enable_tool", "status": "pending", "reason": f"turn on IO's new tool: {entry.get('name', tid)}",
+                "args": {"tool": tid, "name": entry.get("name", tid), "does": entry.get("does", ""), "summary": summary[:600],
+                         "hash": files, "folder": str(workshop.folder(tid)), "test": (test.get("output") or "")[-1500:],
+                         "tools": [f"{workshop.prefix(tid)}_{t['name']}{t['signature']}" for t in test.get("tools") or []]}}
+        add_approval(item, task)
+        return (f"Handed to the user to turn on (Approvals #{item['id']}). In done, say what the tool does and that it waits "
+                "for their OK in Approvals.")
+    return ready
+
+
+def wall_worthy(task: dict) -> bool:
+    """A task worth asking "was a missing tool the wall?" about: one that didn't get done, and isn't a loop, a workshop
+    build, or a task that already proposed a tool."""
+    if task.get("loop") or task.get("workshop_build") or task.get("source") in ("workshop", "approval") or task.get("learn") is False:
+        return False
+    if any(e.get("event") == "tool" and e.get("name") == "propose_tool" for e in task.get("events", [])):
+        return False
+    if task["status"] == "error":
+        return True
+    return task["status"] == "done" and bool(boss.NOT_DONE.search(boss.clean_summary(task.get("summary") or "")[:800]))
+
+
+async def wall_check_after(task: dict) -> None:
+    steps = [f"{e.get('name')}({json.dumps(e.get('args', {}), ensure_ascii=False)[:120]}) -> {str(e.get('result', ''))[:160]}"
+             for e in task.get("events", []) if e.get("event") == "tool"]
+    try:
+        found = await asyncio.to_thread(boss.wall_check, task["text"], task.get("summary") or "", steps)
+    except Exception as e:
+        print("wall check failed:", e, file=sys.stderr)
+        return
+    if found:
+        propose_tool_now(task, found["name"], found["does"], found["why"], source="wall check")
+
+
+def workshop_decision(item: dict, decision: str) -> None:
+    """build_tool approved: a task builds and tests it in the workshop. enable_tool approved: it's on from the next task,
+    pinned to exactly the files that were tested."""
+    tid = item["args"]["tool"]
+    entry = workshop.get(tid)
+    item["decided"] = time.time()
+    if entry is None:
+        item["status"], item["result"] = "failed", "that tool was removed"
+        return
+    if decision == "reject":
+        item["status"] = "rejected"
+        workshop.update(tid, status="declined" if item["name"] == "build_tool" else "built", decided=time.time())
+        return
+    if item["name"] == "build_tool":
+        origin = next((t for t in state["tasks"] if t["id"] == item["task_id"]), {})
+        t = new_task(workshop.build_text(entry), source="workshop", chat_id=origin.get("chat_id", ""))
+        t["effort"] = "high"  # writing and testing code is the NVIDIA brain's work (without a key, task_effort makes it Low)
+        t["workshop_build"] = tid
+        chat = next((c for c in state["chats"] if c["id"] == origin.get("chat_id")), None)
+        if chat:
+            chat["messages"].append({"task_id": t["id"], "at": time.time()})
+        workshop.update(tid, status="building", task_id=t["id"], decided=time.time())
+        item["status"], item["result"] = "approved", f"building it as task {t['id']}"
+        return
+    now = workshop.files_hash(tid)
+    test = entry.get("test") or {}
+    if now != item["args"].get("hash") or not test.get("ok") or test.get("hash") != now:
+        item["status"], item["result"] = "failed", "its files changed after the test: ask IO to test it again"
+        return
+    workshop.update(tid, status="enabled", approved_hash=now, enabled_at=time.time())
+    item["status"], item["result"] = "applied", "on from the next task"
+
+
+async def workshop_action(request: Request) -> JSONResponse:
+    """Settings for a tool IO built: off, on (only as approved: same files), open its folder, remove (Recycle Bin)."""
+    tid = request.path_params["id"]
+    entry = workshop.get(tid)
+    if entry is None:
+        return JSONResponse({"error": "no such tool"}, status_code=404)
+    act = (await request.json()).get("action")
+    if act == "off":
+        workshop.update(tid, status="off")
+    elif act == "on":
+        if not entry.get("approved_hash") or entry["approved_hash"] != await asyncio.to_thread(workshop.files_hash, tid):
+            return JSONResponse({"error": "its files aren't the ones you approved: ask IO to test it again, then approve it"}, status_code=409)
+        workshop.update(tid, status="enabled")
+    elif act == "open":
+        d = workshop.folder(tid)
+        if d.is_dir():
+            os.startfile(d)
+    elif act == "remove":
+        await asyncio.to_thread(workshop.remove, tid)
+    else:
+        return JSONResponse({"error": "action must be on, off, open or remove"}, status_code=400)
+    return JSONResponse({"workshop": workshop.public()})
+
+
 async def decide_approval(request: Request) -> JSONResponse:
     """approve: a sandbox run's changes are copied into the real folder; any other step runs as a new task, in the same
     chat, allowed to do exactly that one thing. reject: discarded."""
@@ -675,6 +814,14 @@ async def decide_approval(request: Request) -> JSONResponse:
     if item is None or item["status"] != "pending":
         return JSONResponse({"error": "no pending approval with that id"}, status_code=404)
     decision = (await request.json()).get("decision")
+    if item["name"] in ("build_tool", "enable_tool"):
+        if remote.is_remote(request.scope):
+            return JSONResponse({"error": "IO's own new tools are approved on the PC"}, status_code=403)
+        if decision not in ("approve", "reject"):
+            return JSONResponse({"error": "decision must be approve or reject"}, status_code=400)
+        workshop_decision(item, decision)
+        save_state()
+        return JSONResponse(item)
     item["decided"] = time.time()
     if decision == "reject":
         item["status"] = "rejected"
@@ -1275,7 +1422,7 @@ def public_trigger(t: dict) -> dict:
 
 
 async def get_customize(_request: Request) -> JSONResponse:
-    return JSONResponse(plugins.public())
+    return JSONResponse({**plugins.public(), "workshop": await asyncio.to_thread(workshop.public)})
 
 
 async def install_plugin(request: Request) -> JSONResponse:
@@ -1487,7 +1634,7 @@ ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 # devices, the browser bridge, tool checks). Everything about using IO (chats, runs, goals, approvals) works.
 REMOTE_DENY = ("/api/remote/", "/api/keys/", "/api/plugins/", "/api/settings", "/api/browser", "/api/skills", "/api/toolcheck",
                "/api/learned/", "/api/nim/", "/api/open",  # /api/open: a tapped path would open on the PC's screen
-               "/api/quit", "/api/show", "/api/customize")  # quitting would leave the phone nothing to reach
+               "/api/quit", "/api/show", "/api/customize", "/api/workshop/")  # quitting would leave the phone nothing to reach
 
 
 class SameOriginOnly:
@@ -1589,6 +1736,7 @@ app = Starlette(
         Route("/api/goals", save_goal, methods=["POST"]),
         Route("/api/goals/{id}/{action}", goal_action, methods=["POST"]),
         Route("/api/approvals/{id}", decide_approval, methods=["POST"]),
+        Route("/api/workshop/{id}", workshop_action, methods=["POST"]),
         Route("/api/paths", existing_paths, methods=["POST"]),
         Route("/api/memory", get_memory, methods=["GET"]),
         Route("/api/memory", add_memory, methods=["POST"]),
