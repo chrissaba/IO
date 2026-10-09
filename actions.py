@@ -94,7 +94,7 @@ class UiaTimeout(Exception):
 
 
 ALL_MODES = frozenset({"single", "loop", "director", "local"})
-GROUPS = ["WIN", "READ", "ACT", "SEE", "FILE", "PC", "WEB", "DO", "GAME", "END", "RAW"]
+GROUPS = ["WIN", "READ", "ACT", "SEE", "FILE", "PC", "WEB", "DO", "GAME", "PHONE", "END", "RAW"]
 GROUP_HEAD = {
     "WIN": "WIN (windows and apps; exact, under 0.2s unless launching)",
     "READ": "READ (no side effects; UI Automation text, vision only in read_region/check_screen)",
@@ -105,6 +105,7 @@ GROUP_HEAD = {
     "WEB": "WEB (IO's own browser tab only; always Google)",
     "DO": "DO (whole jobs in one action; on failure says at which step)",
     "GAME": "GAME (loop window only; never Esc/Back; never ads or purchases)",
+    "PHONE": "PHONE (the iPhone simulator on the Mac, over SSH: look first, then tap/type/swipe; never purchases or sign-ins)",
     "END": "END",
     "RAW": "RAW (low level; coordinates only from list_controls/find_on_screen)",
 }
@@ -5872,6 +5873,118 @@ R_VAGUE = re.compile(r"\b(the|that|my)\s+(document|file|doc|project|thing|spread
                      r"\bmy\s+(last|latest|recent|previous)\s+(document|file|doc|project)\b", re.I)
 R_APP_ACT = re.compile(r"\b(open|launch|start|close|switch to|maximi[sz]e|minimi[sz]e|type|write|click|press|save)\b.*\b(" + APP_WORDS + r")\b|"
                        r"\b(" + APP_WORDS + r")\b.*\b(open|launch|start|close|maximi[sz]e|minimi[sz]e|type|write|click|press|save)\b", re.I)
+# ======================================================================================================================
+# PHONE · the iPhone simulator on the Mac (iphone.py): IO looks at its screen and taps, types and swipes on it over SSH
+# ======================================================================================================================
+
+def _phone():
+    import iphone
+    if not iphone.configured():
+        raise Fail("NEEDS", "no iPhone simulator is set up (data/iphone.json: the Mac's host, user, SSH key and simulator udid)",
+                   "ask_user(...)")
+    return iphone
+
+
+async def _phone_call(fn, *args, timeout: float = 120):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout)
+    except LookupError as e:
+        raise Fail("NOT_FOUND", str(e), 'phone_look("what apps are on the screen?")')
+    except (RuntimeError, OSError, asyncio.TimeoutError, subprocess.TimeoutExpired) as e:
+        raise Fail("FAILED", f"the iPhone simulator: {e or 'no answer'}", "try again, or ask_user if the Mac is off")
+
+
+def _phone_ready_sync():
+    ph = _phone()
+    ph.ensure_booted()
+    return ph
+
+
+async def _phone_shot(ctx: Ctx) -> tuple:
+    """(the simulator's screen as a PIL image, its data URL sized for the eyes)."""
+    from PIL import Image
+    ph = await _phone_call(_phone_ready_sync, timeout=320)
+    png = await _phone_call(ph.screenshot)
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    h = _h()
+    iw, ih = h.smart_size(img.width, img.height)
+    buf = io.BytesIO()
+    img.resize((iw, ih)).save(buf, format="PNG")
+    return img, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+@action("phone_look", group="PHONE", summary="what the iPhone simulator's screen shows, or answer a question about it",
+        params="question s? what you want to know (else: describe the screen)",
+        cost=8.0, tier="vision", star=True, top="question", fallback="ask_user(...)", limits="vision: can misread small text",
+        timeout=360.0)
+async def phone_look(ctx: Ctx, question: str = "", **_) -> str:
+    from openai import OpenAI
+    _img, url = await _phone_shot(ctx)
+    h = _h()
+    text = ("This is a screenshot of an iPhone. " + (question or "Describe what is on the screen: which app or screen is open, "
+            "the exact text of the buttons and items that matter, and where they are."))
+    r = await asyncio.to_thread(h.local_create, OpenAI(base_url=h.EVO_URL, api_key="local", max_retries=1, timeout=120), h.EVO_MODEL,
+                                _purpose="look at the iPhone", temperature=0.2, max_tokens=1100, extra_body=h.EVO_THINK_LONG,
+                                messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
+                                                                        {"type": "text", "text": text}]}])
+    answer = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
+    return ok(answer or "(the eyes said nothing)")
+
+
+@action("phone_tap", group="PHONE", summary="tap something on the iPhone simulator, found by how it looks",
+        params="target s what to tap, e.g. the Wi-Fi row, the blue Continue button",
+        cost=8.0, tier="vision", star=True, top="target", fallback="phone_look(question)", limits="vision: can miss; look again after",
+        timeout=360.0)
+async def phone_tap(ctx: Ctx, target: str, **_) -> str:
+    _img, url = await _phone_shot(ctx)
+    h = _h()
+    frac = await asyncio.to_thread(h.evo_point, eyes(ctx).client, url, target)
+    if frac is None:
+        raise Fail("NOT_FOUND", f"the eyes don't see {target!r} on the iPhone's screen", 'phone_look("what is on the screen?") or phone_swipe("up")')
+    ph = _phone()
+    x, y = await _phone_call(ph.tap, *frac)
+    await asyncio.sleep(1.0)
+    return ok(f"tapped {target} at ({x}, {y}) points", now="phone_look() to see what changed")
+
+
+@action("phone_type", group="PHONE", summary="type text into the focused field on the iPhone simulator",
+        params="text s what to type", cost=2.0, star=True, top="text", fallback="phone_tap(the key)", limits="tap the field first")
+async def phone_type(ctx: Ctx, text: str, **_) -> str:
+    ph = await _phone_call(_phone_ready_sync, timeout=320)
+    await _phone_call(ph.type_text, text)
+    return ok(f"typed {len(text)} characters")
+
+
+@action("phone_swipe", group="PHONE", summary="swipe the iPhone simulator's screen: up (scrolls down), down, left, right",
+        params="direction s up|down|left|right", cost=2.0, top="direction", fallback="phone_tap(...)")
+async def phone_swipe(ctx: Ctx, direction: str, **_) -> str:
+    d = str(direction).lower().strip()
+    if d not in ("up", "down", "left", "right"):
+        raise Fail("BAD_ARGS", f"direction must be up, down, left or right, not {direction!r}", 'phone_swipe("up")')
+    ph = await _phone_call(_phone_ready_sync, timeout=320)
+    await _phone_call(ph.swipe, d)
+    await asyncio.sleep(0.6)
+    return ok(f"swiped {d}", now="phone_look() to see the screen")
+
+
+@action("phone_open", group="PHONE", summary="open an app (by name) or a link on the iPhone simulator",
+        params="target s an app name (Settings, Safari, Photos) or a link (https://..., tel:...)",
+        cost=4.0, star=True, top="target", fallback="phone_home() then phone_tap(the app icon)", timeout=360.0)
+async def phone_open(ctx: Ctx, target: str, **_) -> str:
+    ph = await _phone_call(_phone_ready_sync, timeout=320)
+    said = await _phone_call(ph.open_target, target)
+    await asyncio.sleep(1.5)
+    return ok(said, now="phone_look() to see it")
+
+
+@action("phone_home", group="PHONE", summary="press the iPhone simulator's Home button", cost=1.5, fallback="phone_swipe(\"up\")")
+async def phone_home(ctx: Ctx, **_) -> str:
+    ph = await _phone_call(_phone_ready_sync, timeout=320)
+    await _phone_call(ph.home)
+    return ok("pressed Home")
+
+
+R_PHONE = re.compile(r"\b(iphone|ipad|ios|simulator|sim)\b", re.I)
 R_SCREEN = re.compile(r"on (my|the) (main |primary |second |other |left |right )?(screen|monitor|display)|what do you see|"
                       r"look at (my|the) screen|is .* (open|visible) on|what'?s on screen", re.I)
 R_SETTINGS = re.compile(r"settings?\b|dark mode|night light|bluetooth|wallpaper|resolution|brightness|notifications|default app", re.I)
@@ -5899,6 +6012,8 @@ ROUTES = {
     "pc_facts": Route("pc_facts", ["pc_info", "app_info", "list_windows", "calc", "find_file", "read_file", "PowerShell", "done"],
                       ["PC"], "local", 2, "no"),
     "web": Route("web", ["web_answer", "web_search", "read_page", "web_click", "web_fill", "research", "done"], ["WEB"], "local", 2, "if_director_off"),
+    "phone": Route("phone", ["phone_look", "phone_tap", "phone_type", "phone_swipe", "phone_open", "phone_home", "done"],
+                   ["PHONE"], "director", 0, "if_director_off"),
     "app": Route("app", ["open_app", "click", "type_into", "read_window", "select_menu", "hotkeys", "write_in_app", "save_file_as", "close_window",
                          "calculator", "list_controls", "window_state", "open_path", "done"], ["WIN", "ACT", "DO"], "director", 0, "if_director_off"),
     # a request that doesn't say which file, window or thing ("open the document I was working on"): the local model asks
@@ -5931,6 +6046,8 @@ def route_of(text: str, loop: bool = False, images: bool = False) -> Route:
     app_act = bool(R_APP_ACT.search(t)) or bool(R_WINDOW_THING.search(t))
     if (R_PATH.search(t) or (R_FILEWORDS.search(t) and not R_IN_APP.search(t))) and not app_act:
         return ROUTES["files"]
+    if R_PHONE.search(t):
+        return ROUTES["phone"]
     if R_SCREEN.search(t):
         return ROUTES["screen"]
     if R_SETTINGS.search(t):

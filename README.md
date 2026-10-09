@@ -108,6 +108,20 @@ By default IO browses in a separate Edge window. To use your Chrome instead, wit
 2. Click IO's icon in Chrome, copy its token, and paste it in Settings > Browser with "Your Chrome" selected.
 3. Press **Test**. A tab opens in a group called IO.
 
+### An iPhone for IO (optional)
+
+IO can use the iOS Simulator on a Mac as its own iPhone: it opens apps and links, looks at the screen, and taps,
+types and swipes there (phone_open, phone_look, phone_tap, phone_type, phone_swipe, phone_home), with nothing on any
+monitor. It reaches the Mac over SSH (Tailscale works anywhere); EvoCUA finds what to tap on the simulator's screenshot.
+
+1. On the Mac: install Xcode (with the iOS simulator) and turn on System Settings > General > Sharing > Remote Login.
+2. Add IO's SSH public key to the Mac's `~/.ssh/authorized_keys`, and put Meta's
+   [idb](https://fbidb.io) companion and client on it (`~/io-tools`; no Homebrew needed).
+3. Tell IO where it is in `data/iphone.json`: `{"host": "...", "user": "...", "key": "C:/Users/you/.ssh/io_mac", "udid": "<simulator udid>"}`
+   (`xcrun simctl list devices` shows the udids).
+
+Then ask for anything "on the iPhone" or "in the simulator".
+
 ### Use IO from your phone (optional)
 
 IO can be an app on your phone: chat with it, watch runs and goals, and answer approvals from anywhere. It goes
