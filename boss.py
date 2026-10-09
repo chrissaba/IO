@@ -3132,6 +3132,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     if getattr(e, "status_code", 0) == 404:  # not found: skip it for 10 minutes, not 2 (it can be a blip)
                         nim.note(model, 0, False, gone=True)
                     log("warning", text=f"{nim.label(model)} failed ({type(e).__name__}): {nim.scrub(str(e))[:160]}; trying the next model")
+                    level = kw.get("_level") or ("medium" if role == "helper step" else eff["api_reason"])
+                    if "Timeout" in type(e).__name__ and level in ("max", "high"):
+                        # it was still thinking when its time ran out: the next try thinks a notch less (at Max, GLM and
+                        # then Kimi each spent 240 s on replacing one constructor, and the step took 8 minutes)
+                        kw["_level"] = {"max": "high", "high": "medium"}[level]
+                        log("warning", text=f"thinking at {kw['_level']} for this step after the timeout")
                     if getattr(e, "status_code", 0) == 429 and (stop.wait(3) if stop is not None else time.sleep(3)):
                         raise RuntimeError("stopped")  # too many requests: a moment before the next model
             if not local_fallback:
