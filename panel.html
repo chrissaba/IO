@@ -268,8 +268,11 @@
   .agent-chip { font-size: 11px; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; margin-right: 7px; white-space: nowrap; }
   .ckdetail .ck { padding: 2px 0; font-size: 12.5px; color: var(--muted); }
   .ckdetail .found { margin-top: 4px; color: var(--text); } .ckdetail .found .secs { color: var(--faint); }
-  .ultratag { font-size: 11.5px; color: var(--accent-text); display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
-  .ultratag svg.lucide { width: 13px; height: 13px; }
+  /* the effort an answer ran at, in its footer: "High", or "Medium → High" when a Medium task was handed up */
+  .efforttag { font-size: 11.5px; color: var(--faint); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .efforttag svg.lucide { width: 13px; height: 13px; }
+  .efforttag.max { color: var(--accent-text); }
+  .msgfoot .meta + .efforttag { margin-left: 6px; }
   .debug { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 6px 10px; margin: 0 0 12px; font-size: 12px; }
   .debughead { cursor: pointer; color: var(--muted); user-select: none; }
   .dbg { width: 100%; border-collapse: collapse; margin-top: 6px; font: 11.5px "Geist Mono", ui-monospace, monospace; }
@@ -376,16 +379,29 @@
   .underbar .status { margin-left: auto; display: flex; gap: 12px; align-items: center; }
   .underbar .status span { display: inline-flex; align-items: center; gap: 5px; }
   .underbar .paused { color: var(--warn); }
-  /* model switcher, bottom right under the send button like Claude's */
-  .modelpick { position: relative; }
-  .modelpick > button { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
-                        padding: 3px 6px; border-radius: 6px; cursor: pointer; }
-  .modelpick > button:hover { background: var(--hover); color: var(--text); }
-  .menu.modelmenu { left: auto; right: 0; bottom: calc(100% + 4px); width: 320px; }
-  .modelmenu button { align-items: flex-start; }
-  .modelmenu .opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; white-space: normal; }
-  .modelmenu .opt small { color: var(--faint); font-size: 11.5px; }
-  .modelmenu .tick { margin-left: auto; color: var(--accent-text); }
+  /* effort picker, bottom right under the send button like Claude's model picker */
+  .effortpick { position: relative; flex: none; }
+  .effortpick > button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px;
+                         padding: 3px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .effortpick > button:hover { background: var(--hover); color: var(--text); }
+  .effortpick > button.over { color: var(--accent-text); }  /* this session's level isn't the default */
+  .menu.effortmenu { left: auto; right: 0; bottom: calc(100% + 4px); width: 340px; max-width: calc(100vw - 24px); }
+  .effortmenu button, .levels button { align-items: flex-start; }
+  .effortmenu .opt, .levels .opt { display: flex; flex-direction: column; gap: 1px; min-width: 0; white-space: normal; }
+  .effortmenu .opt small, .levels .opt small { color: var(--faint); font-size: 11.5px; line-height: 1.4; }
+  .effortmenu .opt small.need, .levels .opt small.need { color: var(--warn); }
+  .effortmenu .tick, .levels .tick { margin-left: auto; margin-top: 2px; color: var(--accent-text); }
+  .effortmenu button > .ic:first-child, .levels button > .ic:first-child { margin-top: 2px; color: var(--muted); }
+  .effortmenu button:disabled { cursor: default; background: none; color: var(--faint); }
+  .effortmenu button.mkdef { align-items: center; color: var(--muted); font-size: 12.5px; }
+  .effortmenu button.mkdef:hover { color: var(--text); }
+  /* Settings > Effort: the four levels, one row each */
+  .levels { display: flex; flex-direction: column; gap: 3px; flex-basis: 100%; }
+  .levels button { display: flex; gap: 10px; width: 100%; border: 1px solid transparent; background: none; padding: 7px 10px; border-radius: 9px; cursor: pointer;
+                   text-align: left; font-size: 13.5px; }
+  .levels button:hover:not(:disabled) { background: var(--hover); }
+  .levels button.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong)); background: color-mix(in srgb, var(--accent-soft) 50%, transparent); }
+  .levels button:disabled { cursor: default; color: var(--faint); }
   .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
   .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
 
@@ -448,6 +464,9 @@
     .rail { display: none; position: fixed; inset: 0 auto 0 0; width: 236px; z-index: 30; box-shadow: var(--shadow); }
     .app.railopen .rail { display: flex; }
     .grid2, .prow { grid-template-columns: 1fr; } .ptest { padding-left: 0; }
+    /* a long PC name gives way before the effort picker does */
+    .underbar .pcbadge { min-width: 0; overflow: hidden; }
+    .underbar .pcbadge > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   /* the phone (through Tailscale): room for the notch and the home bar, text big enough that iOS doesn't zoom in when
      you tap a box, and finger-sized buttons */
@@ -464,6 +483,8 @@
     html.remote .navbtn, html.remote .chatitem { min-height: 40px; }
     html.remote .chatitem .acts { display: none; }  /* no hover on a phone: pin and delete are in the chat's title menu */
     html.remote .composerwrap { padding-left: 10px; padding-right: 10px; }
+    html.remote .effortpick > button { padding: 7px 8px; }
+    html.remote .effortmenu button { padding: 8px; }
   }
 </style>
 </head>
@@ -648,8 +669,6 @@
             <input type="file" accept="image/*" multiple x-ref="file" style="display:none" @change="addFiles($event.target.files); $event.target.value = ''">
             <button class="iconbtn" :class="loopNext && 'on'" @click="loopNext = !loopNext; focusComposer()"
                     :title="loopNext ? 'Loop on: IO will keep working on this until you press Stop' : 'Loop: keep working on a goal until you press Stop'"><span class="ic" x-html="ic('repeat')"></span></button>
-            <button class="iconbtn" x-show="s.settings.ask_gemini && s.nim_key_set" :class="ultraOn() && 'on'" @click="ultraNext = !ultraOn(); focusComposer()"
-                    :title="ultraOn() ? 'Ultracode on: a plan first, then up to 5 helpers work on its parts at once' : 'Ultracode: plan first, then up to 5 helpers work in parallel'"><span class="ic" x-html="ic('git-fork')"></span></button>
             <div style="margin-right:auto"></div>
             <button class="iconbtn" x-show="draft.trim()" @click="saveTemplate()" title="Save as a quick start"><span class="ic" x-html="ic('bookmark-plus')"></span></button>
             <button class="send stop" x-show="chatBusy && !draft.trim() && !attachments.length" @click="stopChat()" title="Stop"><span class="ic" x-html="ic('square')"></span></button>
@@ -672,18 +691,24 @@
             <span :title="'Boss: ' + s.status.boss"><i class="dot" :class="dot(s.status.boss)"></i>Boss</span>
             <span :title="'Eyes: ' + s.status.eyes"><i class="dot" :class="dot(s.status.eyes)"></i>Eyes</span>
           </span>
-          <span class="ultratag" x-show="ultraOn() && s.settings.ask_gemini && s.nim_key_set"><span class="ic" x-html="ic('git-fork', 'sm')"></span>Ultracode</span>
-          <div class="modelpick" @mousedown.outside="modelOpen = false">
-            <div class="menu modelmenu" x-show="modelOpen" x-transition.opacity.duration.100ms>
-              <template x-for="m in MODELS" :key="m.id">
-                <button @click="pickModel(m.id)">
-                  <span class="opt"><span x-text="m.name"></span><small x-text="m.about"></small></span>
-                  <span class="ic tick" x-show="s.settings.model_mode === m.id" x-html="ic('check', 'sm')"></span>
+          <!-- effort: the level for messages sent from here (the Settings default until you pick one, then it sticks) -->
+          <div class="effortpick" @mousedown.outside="effortOpen = false">
+            <div class="menu effortmenu" x-show="effortOpen" x-transition.opacity.duration.100ms>
+              <div class="menuhead" x-text="'Effort · your default is ' + effortInfo(effortDefault()).name"></div>
+              <template x-for="e in EFFORTS" :key="e.id">
+                <button @click="pickEffort(e.id)" :disabled="!effortUsable(e.id)" role="menuitemradio" :aria-checked="effortNow() === e.id">
+                  <span class="ic" x-html="ic(e.icon)"></span>
+                  <span class="opt"><span x-text="e.name"></span><small x-text="e.about"></small>
+                    <small class="need" x-show="!effortUsable(e.id)">needs an NVIDIA key (Settings &gt; Brain)</small></span>
+                  <span class="ic tick" x-show="effortNow() === e.id" x-html="ic('check', 'sm')"></span>
                 </button>
               </template>
+              <template x-if="!remote && effortPicked()">
+                <div><hr><button class="mkdef" @click="setEffortDefault(effortNow())"><span class="ic" x-html="ic('pin', 'sm')"></span><span x-text="'Make ' + effortInfo(effortNow()).name + ' the default'"></span></button></div>
+              </template>
             </div>
-            <button @click="modelOpen = !modelOpen" :title="'Model: ' + modelName() + (s.status.boss === 'ready' ? '' : ' (' + s.status.boss + ')')">
-              <span x-text="modelName()"></span><span class="ic" x-html="ic('chevron-down', 'sm')"></span>
+            <button :class="effortPicked() && 'over'" @click="effortOpen = !effortOpen" :title="effortTitle()" aria-haspopup="menu" :aria-expanded="effortOpen">
+              <span class="ic" x-html="ic(effortInfo(effortNow()).icon, 'sm')"></span><span x-text="effortInfo(effortNow()).name"></span><span class="ic" x-html="ic('chevron-down', 'sm')"></span>
             </button>
           </div>
         </div>
@@ -929,11 +954,11 @@
 
     <!-- ===== settings ===== -->
     <div class="page" x-show="view === 'settings'">
-      <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, and which AI does the thinking.</p></div>
+      <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, how hard I work, and which AI does the thinking.</p></div>
       <h2>Permissions</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Max steps per message</div><div>I stop and report back after this many actions.</div></div>
-          <input type="number" min="5" max="100" style="width:76px" x-model.number="s.settings.max_steps" @change="saveSettings()"></div>
+        <div class="setting"><div class="txt"><div>Most steps per task</div><div>An upper limit. Each effort level takes its own number of steps (High and Max the most), never more than this; then I stop and report back.</div></div>
+          <input type="number" min="5" max="200" style="width:76px" x-model.number="s.settings.max_steps" @change="saveSettings()"></div>
         <div class="setting"><div class="txt"><div>Ask before risky actions</div><div>Deleting or moving files, closing programs, shutting down and similar need your OK.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.confirm_risky" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>PowerShell</div><div>Run commands on your PC. Off means click-and-type only.</div></div>
@@ -957,15 +982,29 @@
         <div class="setting"><div class="txt"><div>Files and web pages</div><div>Read and write files, and read web pages as text.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.files" @change="saveSettings()"><span></span></label></div>
       </div>
+      <h2>Effort</h2>
+      <div class="card">
+        <div class="setting" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>Default effort</div>
+            <div>How hard I work on a new message: how much I think, how many steps I take, and which models do the work. The picker under the message box changes it for the messages you send from there.</div></div>
+          <div class="levels" role="radiogroup" aria-label="Default effort">
+            <template x-for="e in EFFORTS" :key="e.id">
+              <button role="radio" :aria-checked="effortDefault() === e.id" :class="effortDefault() === e.id && 'on'" :disabled="!effortUsable(e.id)" @click="setEffortDefault(e.id)">
+                <span class="ic" x-html="ic(e.icon)"></span>
+                <span class="opt"><span x-text="e.name"></span><small x-text="e.about"></small>
+                  <small class="need" x-show="!effortUsable(e.id)">needs an NVIDIA key (Settings &gt; Brain)</small></span>
+                <span class="ic tick" x-show="effortDefault() === e.id" x-html="ic('check', 'sm')"></span>
+              </button>
+            </template>
+          </div>
+          <div class="note" style="flex-basis:100%" x-show="!effortUsable(effortDefault())" x-text="'Until an NVIDIA key is saved, messages run at Low instead of ' + effortInfo(effortDefault()).name + '.'"></div>
+        </div>
+      </div>
       <h2>Brain</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Who does the thinking</div>
-            <div x-show="s.settings.ask_gemini">NVIDIA: a frontier model on NVIDIA's API runs each task with IO's tools, the way Claude does. Your local models stay as its eyes and the last fallback. No web chat AIs are used, and research goes through Google.</div>
-            <div x-show="!s.settings.ask_gemini">Local only: everything stays on this PC, and the local models below decide and act.</div></div>
-          <select :value="s.settings.ask_gemini ? 'nim' : 'local'" @change="s.settings.ask_gemini = $event.target.value === 'nim'; saveSettings()"><option value="nim">NVIDIA (recommended)</option><option value="local">Local only</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
-          <div class="txt" style="flex-basis:100%"><div>Models, in order</div>
-            <div>Each step starts with the model that answered last; if one fails or turns slow, the next takes over. Models that can't see pictures get the screen described instead. Test a model to see if it takes screenshots and calls tools, and how fast its queue is.</div></div>
+        <div class="setting" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>NVIDIA models, in order</div>
+            <div>Used from Medium up: at Medium for hard tasks and goals, at High and Max for every task. Low never uses them. Each step starts with the model that answered last; if one fails or turns slow, the next takes over. Models that can't see pictures get the screen described instead. Test a model to see if it takes screenshots and calls tools, and how fast its queue is.</div></div>
           <template x-for="(m, i) in (s.settings.brain_models || [])" :key="m">
             <div class="modelrow">
               <span class="num" x-text="i + 1"></span>
@@ -990,36 +1029,33 @@
           </div>
           <div class="note" style="flex-basis:100%" x-show="modelNote" x-text="modelNote"></div>
         </div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>How a model is chosen</div>
+        <div class="setting"><div class="txt"><div>How a model is chosen</div>
             <div x-show="!(s.settings.race_width >= 2)">In turn: the model that answered last goes first; the next one only if it fails.</div>
             <div x-show="s.settings.race_width >= 2">Race: each step goes to the first models above at once (skipping any that just failed, and DeepSeek's slow queue); the fastest good answer is used and the others are cut off. Uses more of NVIDIA's 40 requests a minute.</div></div>
           <select :value="String(s.settings.race_width || 0)" @change="s.settings.race_width = +$event.target.value; saveSettings()">
             <option value="0">In turn</option><option value="2">Race 2 at once</option><option value="3">Race 3 at once</option>
             <option value="4">Race 4 at once</option><option value="5">Race 5 at once</option></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Looks at the screen</div>
-            <div>The model look_at_screen asks first, for close looks the brain asks for. A quick one (like Nemotron Omni) keeps those short.</div></div>
+        <div class="setting"><div class="txt"><div>Looks at the screen</div>
+            <div>From Medium up, the model look_at_screen asks first, for close looks the NVIDIA models ask for. A quick one (like Nemotron Omni) keeps those short.</div></div>
           <select x-model="s.settings.vision_model" @change="saveSettings()"><option value="">The brain's first model that sees</option>
             <template x-for="m in (s.settings.brain_models || []).filter((m) => info(m).vision)" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.vision_model === m"></option></template></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Ultracode helpers start on</div>
-            <div>Helpers do simple searches and reads, so a fast model suits them; they fall back to the others in order.</div></div>
+        <div class="setting"><div class="txt"><div>Ultracode helpers start on</div>
+            <div>At Max, helpers work on parts of a task at once. They do simple searches and reads, so a fast model suits them; they fall back to the others in order.</div></div>
           <select x-model="s.settings.helper_model" @change="saveSettings()"><option value="">The brain's first model</option>
             <template x-for="m in (s.settings.brain_models || [])" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.helper_model === m"></option></template></select></div>
-        <div class="setting" x-show="s.settings.ask_gemini" style="flex-wrap:wrap">
+        <div class="setting" style="flex-wrap:wrap">
           <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
-            <div>Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
+            <div>Medium, High and Max need it. Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
           <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
           <button class="btn sm" @click="saveNimKey()">Save</button>
           <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
-          <div class="note" style="flex-basis:100%" x-show="nimNote || !s.nim_key_set" x-text="nimNote || 'No key saved yet: IO works on the local models until you add one.'"></div>
+          <div class="note" style="flex-basis:100%" x-show="nimNote || !s.nim_key_set" x-text="nimNote || 'No key saved yet: IO works at Low, on this PC only, until you add one.'"></div>
         </div>
-        <div class="setting" x-show="s.settings.ask_gemini"><div class="txt"><div>Ultracode by default</div>
-            <div>For bigger jobs the brain writes a plan first, then up to 5 helpers work on its parts at the same time, each with a hidden browser of its own. Helpers search, read pages and read files; anything that needs your mouse and keyboard still happens one step at a time. Switch it per message with the fork button next to Loop.</div></div>
-          <label class="switch"><input type="checkbox" x-model="s.settings.ultracode" :disabled="!s.nim_key_set" @change="saveSettings(); ultraNext = s.settings.ultracode"><span></span></label></div>
       </div>
       <h2>Skills IO taught itself</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Learned skills</div>
-            <div>After a task, and every 25 actions in a loop, the NVIDIA brain writes down what worked (where things are, what to do first, what to avoid). The next similar task starts with that playbook.</div></div></div>
+            <div>After a task, and every 25 actions in a loop, IO writes down what worked (where things are, what to do first, what to avoid). The next similar task starts with that playbook.</div></div></div>
         <div class="setting" x-show="!(s.learned || []).length"><div class="txt"><div style="color:var(--muted)">Nothing learned yet.</div></div></div>
         <template x-for="k in (s.learned || [])" :key="k.name">
           <div class="setting" style="flex-wrap:wrap">
@@ -1032,12 +1068,7 @@
       </div>
       <h2>Local models</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Local models</div>
-            <div x-show="s.settings.ask_gemini && s.nim_key_set">The NVIDIA brain decides; these find where to click, and take a step only if NVIDIA can't answer.</div>
-            <div x-show="!['smart', 'balanced'].includes(s.settings.model_mode)">Fast: Gemma 4 E4B thinks, UI-TARS finds where to click. Quickest.</div>
-            <div x-show="s.settings.model_mode === 'smart'">Smart: Qwen 3.8 27B does everything, including seeing and clicking. Several times slower.</div>
-            <div x-show="s.settings.model_mode === 'balanced'">Balanced: Muse Glimmer 30B thinks and uses tools; EvoCUA-8B, a model trained for computer use, sees and clicks.</div></div>
-          <select x-model="s.settings.model_mode" @change="saveSettings()"><option value="fast">Fast (Gemma + UI-TARS)</option><option value="balanced">Balanced (Muse Glimmer + EvoCUA)</option><option value="smart">Smart (Qwen 3.8 27B)</option></select></div>
+        <div class="setting"><div class="txt"><div>Local models</div><div>Muse Glimmer 30B thinks; EvoCUA-8B sees and clicks.</div></div></div>
         <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
       </div>
@@ -1234,7 +1265,22 @@ document.addEventListener("click", async (ev) => {
 const cleanAnswer = (s) => String(s ?? "").replace(/\s*done\s*[({]\s*summary\s*[=:]\s*(<\|"\|>|["'])([\s\S]*?)\1\s*[)}]\s*/g, "")
   .replace(/\s*\[actions taken:[\s\S]*?\]\s*$/, "").trim() || String(s ?? "");
 const BUSY = ["queued", "running", "waiting"];
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// how hard IO works on a message. Medium and up need an NVIDIA key; without one everything runs at Low.
+const EFFORTS = [
+  { id: "low", name: "Low", icon: "signal-low", about: "Everything on this PC. Muse Glimmer thinks briefly; EvoCUA clicks. Nothing leaves the PC." },
+  { id: "medium", name: "Medium", icon: "signal-medium", about: "Glimmer does the work and thinks more. Hard tasks and goals go to the NVIDIA models." },
+  { id: "high", name: "High", icon: "signal-high", about: "NVIDIA's models run the task and think hard, with more steps and a double check before finishing." },
+  { id: "max", name: "Max", icon: "signal", about: "High, plus Ultracode helpers working on parts of the task at once. Deepest reasoning." },
+];
+// under an answer: the level it ran at ("High"), or "Medium → High" when a Medium task was handed up
+function effortTag(t) {
+  const e = EFFORTS.find((x) => x.id === t.effort);
+  if (!e) return "";
+  const up = t.escalated && e.id !== "medium";
+  const title = up ? `Effort: started at Medium, moved up to ${e.name}` : `Effort: ${e.name}`;
+  return `<span class="efforttag${e.id === "max" ? " max" : ""}" title="${esc(title)}">${ic(e.icon, "sm")}${up ? "Medium → " : ""}${esc(e.name)}</span>`;
+}
+const plural =(n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const short = (v, n = 48) => { const x = String(v ?? "").replace(/\s+/g, " ").trim(); return x.length > n ? x.slice(0, n) + "…" : x; };
 
 const iconCache = {};
@@ -1462,7 +1508,7 @@ function agent() {
         if (this.dialog) { if (e.key === "Escape") this.closeDialog(false); return; }
         if (e.ctrlKey && e.key === ",") { e.preventDefault(); this.go("settings"); }
         if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") { e.preventDefault(); this.toggleRail(); }
-        if (e.key === "Escape") { this.menuOpen = false; this.titleMenu = false; }
+        if (e.key === "Escape") { this.menuOpen = false; this.titleMenu = false; this.effortOpen = false; }
       });
       if (this.chat) this.lockDividerIfUnseen(); else this.chatId = "";
       this.ready = true;
@@ -1650,8 +1696,30 @@ function agent() {
       this.s.settings.brain_models = [...(this.s.settings.brain_models || []), m];
       await this.saveSettings(); await this.testModel(m);
     },
-    ultraNext: null,  // the composer's Ultracode switch: null follows the Settings default, then it sticks for the session
-    ultraOn() { return this.ultraNext === null ? !!this.s.settings.ultracode : this.ultraNext; },
+    // ----- effort: Settings holds the default; the picker under the box overrides it for what you send from here -----
+    EFFORTS, effortOpen: false,
+    effortNext: null,  // the picker's level: null follows the Settings default, then it sticks for the session
+    effortInfo(id) { return EFFORTS.find((e) => e.id === id) || EFFORTS[0]; },
+    effortUsable(id) { return id === "low" || !!this.s.nim_key_set; },
+    effortDefault() { const d = this.s.settings.effort; return EFFORTS.some((e) => e.id === d) ? d : "high"; },
+    effortNow() { const e = this.effortNext ?? this.effortDefault(); return this.effortUsable(e) ? e : "low"; },  // what a message is sent at
+    effortPicked() { return this.effortNext !== null && this.effortNow() === this.effortNext && this.effortNext !== this.effortDefault(); },
+    effortTitle() {
+      const now = this.effortInfo(this.effortNow()).name, def = this.effortInfo(this.effortDefault()).name;
+      if (this.effortNow() === this.effortDefault()) return `Effort: ${now}`;
+      return this.effortUsable(this.effortDefault()) ? `Effort: ${now} for messages you send from here (your default is ${def})`
+        : `Effort: ${now} (your default, ${def}, needs an NVIDIA key)`;
+    },
+    pickEffort(id) {
+      if (!this.effortUsable(id)) return;
+      this.effortNext = id; this.effortOpen = false;
+      this.focusComposer();
+    },
+    setEffortDefault(id) {  // "Make default" in the picker, and Settings > Effort
+      if (!this.effortUsable(id)) return;
+      this.s.settings.effort = id; this.effortNext = null; this.effortOpen = false;
+      this.saveSettings();
+    },
     get loopTask() { return this.chat ? this.chatTasks(this.chat).find((t) => t.loop && BUSY.includes(t.status)) || null : null; },
     loopSteps(t) {
       const ev = t.events || [];
@@ -1822,7 +1890,7 @@ function agent() {
           try { localStorage.setItem("chatId", c.id); } catch {}
         }
         this.dividerLocked = false;  // replying means you've caught up
-        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext, ultracode: this.ultraOn() }) });
+        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext, effort: this.effortNow() }) });
         this.loopNext = false;
         if (!r.ok) { const d = await r.json().catch(() => ({})); return restore(d.error || "Couldn't send that. Try again."); }
       } catch { return restore("Couldn't reach IO. Try again."); }
@@ -1879,7 +1947,8 @@ function agent() {
       const meta = !busy && secs ? `<div class="meta">${t.status === "cancelled" ? "Stopped after" : t.status === "error" ? "Failed after" : "Took"} ${secs}s</div>` : "";
       const done = this.copied === t.id;
       const copy = answer && !busy ? `<button class="copy ${done ? "done" : ""}" onclick="copyAnswer('${t.id}')" title="${done ? "Copied" : "Copy"}">${ic(done ? "check" : "copy")}</button>` : "";
-      const foot = copy || meta ? `<div class="msgfoot">${meta}${copy}</div>` : "";
+      const tag = effortTag(t);
+      const foot = copy || meta || tag ? `<div class="msgfoot">${meta}${tag}${copy}</div>` : "";
       const last = this.chat && i === this.chat.messages.length - 1;
       const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
       const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
@@ -1906,19 +1975,6 @@ function agent() {
       return post("/api/settings", this.s.settings);
     },
     isDark() { const t = this.s.settings.theme; return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches); },
-    MODELS: [
-      { id: "fast", name: "Fast", about: "Gemma 4 + UI-TARS. Quickest for everyday tasks." },
-      { id: "balanced", name: "Balanced", about: "Muse Glimmer 30B thinks, EvoCUA-8B clicks." },
-      { id: "smart", name: "Smart", about: "Qwen 3.8 27B. Most careful, several times slower." },
-    ],
-    modelOpen: false,
-    modelName() { return (this.MODELS.find((m) => m.id === (this.s.settings.model_mode || "fast")) || this.MODELS[0]).name; },
-    pickModel(id) {
-      this.modelOpen = false;
-      if (this.s.settings.model_mode === id) return;
-      this.s.settings.model_mode = id;
-      this.saveSettings();
-    },
     async saveChromeToken() {
       if (!this.chromeToken.trim()) return;
       await post("/api/browser", { token: this.chromeToken });
@@ -1929,7 +1985,10 @@ function agent() {
       if (!this.nimKey.trim() && !this.s.nim_key_set) return;
       const r = await post("/api/keys/nim", { key: this.nimKey });
       this.nimKey = "";
-      this.nimNote = r.nim_key_set ? "Key saved." + (r.brain_on ? " The NVIDIA brain is on." : "") : "Key removed.";
+      this.s.nim_key_set = !!r.nim_key_set;
+      if (r.nim_key_set && EFFORTS.some((e) => e.id === r.effort)) this.s.settings.effort = r.effort;  // the first key moves the default up
+      this.nimNote = r.nim_key_set ? `Key saved. Medium, High and Max can be used now; new messages run at ${this.effortInfo(this.effortNow()).name}.`
+        : "Key removed. IO works at Low, on this PC only, until you add one.";
       this.refresh();
     },
     async testBrowser() {

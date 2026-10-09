@@ -1388,13 +1388,12 @@ def _jpeg(img, side: int = 1600) -> str:
 
 
 def vlm(img, prompt: str, max_tokens: int = 200) -> str:
-    """One no-thinking question about an image to the boss model, or in Balanced mode to EvoCUA, since Glimmer runs
-    without its vision part there (blocking: run it in a thread)."""
+    """One quick question about an image to EvoCUA, the eyes (Glimmer runs without its vision part). It always thinks
+    first, so its thinking is capped and the answer still gets max_tokens of room (blocking: run it in a thread)."""
     from openai import OpenAI
     h = _h()
-    url, model = (h.BOSS_URL, h.BOSS_MODEL) if h.BOSS_SEES[0] else (h.EVO_URL, h.EVO_MODEL)
-    reply = OpenAI(base_url=url, api_key="local", max_retries=1, timeout=90).chat.completions.create(
-        model=model, temperature=0, max_tokens=max_tokens, extra_body=h.NO_THINKING,
+    reply = OpenAI(base_url=h.EVO_URL, api_key="local", max_retries=1, timeout=90).chat.completions.create(
+        model=h.EVO_MODEL, temperature=0, max_tokens=max_tokens + h.EVO_THINK["thinking_budget_tokens"] + 50, extra_body=h.EVO_THINK,
         messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": _jpeg(img)}}, {"type": "text", "text": prompt}]}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
@@ -1416,7 +1415,7 @@ def _area_rect(ctx: Ctx, w: W | None, display: int = 0) -> tuple:
 
 def eyes(ctx: Ctx):
     if ctx.eyes is None:
-        ctx.eyes = _h().Eyes(ctx.options.get("model_mode", "fast"))
+        ctx.eyes = _h().Eyes()
     return ctx.eyes
 
 
@@ -2434,37 +2433,13 @@ def _name_at_sync(x: int, y: int) -> tuple[str, str]:
 def _ground_on(ctx: Ctx, img, target: str) -> tuple[float, float] | None:
     """The eyes model on an image IO cut itself (the zoomed crop of careful=true): a point as fractions, or None."""
     h, e = _h(), eyes(ctx)
-    smart = e.mode == "smart"
-    if e.mode == "evo":  # EvoCUA, asked the way it was trained
-        buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="PNG")
-        return h.evo_point(e.client, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), target)
-    if smart:
-        iw, ih = img.width, img.height
-        send = img
-    else:
-        iw, ih = h.smart_size(img.width, img.height)
-        send = img.resize((iw, ih))
     buf = io.BytesIO()
-    send.convert("RGB").save(buf, format="PNG")
-    url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-    reply = e.client.chat.completions.create(
-        model=e.model, temperature=0, max_tokens=400 if smart else 60, extra_body=h.NO_THINKING if smart else None,
-        messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}},
-                                               {"type": "text", "text": (h.QWEN_POINT_PROMPT if smart else h.EYES_PROMPT).format(target=target)}]}],
-    ).choices[0].message.content or ""
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
-    if smart:
-        m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", reply)
-        if not m or not (0 <= float(m.group(1)) <= 1000 and 0 <= float(m.group(2)) <= 1000):
-            return None
-        return float(m.group(1)) / 1000, float(m.group(2)) / 1000
-    m = re.search(r"\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", reply)
-    return (float(m.group(1)) / iw, float(m.group(2)) / ih) if m else None
+    img.convert("RGB").save(buf, format="PNG")
+    return h.evo_point(e.client, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), target)
 
 
 async def vision_point(ctx: Ctx, w: W | None, target: str, careful: bool = False) -> tuple[tuple[int, int], str]:
-    """(point, rung): eyes.find, then the UIA cross-check (fast mode) and the zoomed re-ground when careful."""
+    """(point, rung): eyes.find, then the UIA cross-check and the zoomed re-ground when careful."""
     e = eyes(ctx)
     title = (ctx.focus if ctx.loop and ctx.focus else w.title) if w else ""
     got = await asyncio.to_thread(e.find, target, 0, title)
@@ -2473,9 +2448,9 @@ async def vision_point(ctx: Ctx, w: W | None, target: str, careful: bool = False
                    f'read_window("{title[:30]}") or check_screen("is {target[:40]} visible?")')
     pt, rung = (int(got["x"]), int(got["y"])), "vision"
     textlike = target.strip()[:1] in "\"'" or len(target.split()) <= 3
-    if e.mode == "fast" and textlike and not careful:
-        # UI-TARS always answers with a point; where the window has a UIA tree, the name at that point says whether it
-        # is plausibly the target
+    if textlike and not careful:
+        # the eyes can point at a near miss; where the window has a UIA tree, the name at that point says whether it is
+        # plausibly the target (a mismatch means a closer, zoomed look)
         try:
             name, _k2 = await on_uia(_name_at_sync, *pt, timeout=1.5)
         except Exception:
@@ -2489,8 +2464,7 @@ async def vision_point(ctx: Ctx, w: W | None, target: str, careful: bool = False
         img = img.resize((img.width * 2, img.height * 2))
         frac = await asyncio.to_thread(_ground_on, ctx, img, target)
         if frac is None:
-            if e.mode in ("smart", "evo"):
-                raise Fail("NOT_FOUND", f"vision says {target!r} isn't there on a closer look", "check_screen(...) or another description")
+            raise Fail("NOT_FOUND", f"vision says {target!r} isn't there on a closer look", "check_screen(...) or another description")
         else:
             new = (int(l + frac[0] * 640), int(t + frac[1] * 640))
             if abs(new[0] - pt[0]) + abs(new[1] - pt[1]) > 80:
@@ -3358,16 +3332,14 @@ async def wait_until(ctx: Ctx, cond: str, target: str = "", window: str = "", ti
 # L2 · SEE: vision, several targets
 # ======================================================================================================================
 
-@action("find_all", group="SEE", summary="every place something appears on screen, as points (Qwen modes)",
+@action("find_all", group="SEE", summary="every place something appears on screen, as points",
         params="""
         description s what to find
         window s? part of the window title
         max i? most points (10)
         """, cost=5.0, tier="vision", top="description", fallback="find_on_screen(description)",
-        limits="balanced/smart modes only: UI-TARS gives one point and can't say none")
+        limits="slower than find_on_screen: use it when there are several")
 async def find_all(ctx: Ctx, description: str, window: str = "", max: int = 10, **_) -> str:
-    if eyes(ctx).mode == "fast":
-        raise Fail("UNSUPPORTED", "UI-TARS gives one point and can't say none", f'click_on("{description[:40]}") or tap_repeatedly("{description[:40]}")')
     w = resolve(ctx, window) if (window or ctx.focus) else None
     if w is not None:
         guard_read(ctx, w)
@@ -5757,7 +5729,7 @@ external("find_on_screen", group="SEE", summary="where something is on screen, a
          params="""
          description s what to find
          window s? part of the window title
-         """, cost=3.0, tier="vision", limits="UI-TARS always answers with a point, even if it isn't there")
+         """, cost=3.0, tier="vision", limits="the eyes can point at a near miss; check the result")
 external("click_on", group="SEE", summary="find something by how it looks and click it (vision)",
          params="""
          description s what to click
@@ -6409,7 +6381,7 @@ async def _selftest(desktop: bool = True, vision: bool = False, recycle: bool = 
         results.append((name, bool(passed), str(evidence)[:300]))
         print(f"{'PASS' if passed else 'FAIL'}  {name}: {str(evidence)[:200]}".encode("ascii", "replace").decode(), flush=True)
 
-    ctx = Ctx(options={"model_mode": "fast"}, request="IO action selftest")
+    ctx = Ctx(options={}, request="IO action selftest")
     form = lambda r: bool(isinstance(r, str) and RESULT.match(r))
 
     # --- contract ---
@@ -6579,8 +6551,6 @@ async def _selftest(desktop: bool = True, vision: bool = False, recycle: bool = 
     check("web without a browser -> NEEDS", r.startswith("error:NEEDS"), r[:100])
     r = await call("game_state", {}, ctx)
     check("game without a loop -> NEEDS", r.startswith("error:NEEDS"), r[:100])
-    r = await call("find_all", {"description": "x"}, ctx)
-    check("find_all in fast mode -> UNSUPPORTED", r.startswith("error:UNSUPPORTED"), r[:100])
 
     if desktop:
         await _selftest_notepad(check, vision)
@@ -6625,7 +6595,7 @@ async def _selftest_notepad(check, vision: bool) -> None:
         return
     sandbox = Path(os.environ["TEMP"]) / f"io-actions-notepad-{os.getpid()}"
     sandbox.mkdir(parents=True, exist_ok=True)
-    ctx = Ctx(options={"model_mode": "fast"}, request=f"selftest: notepad, save to {sandbox}")
+    ctx = Ctx(options={}, request=f"selftest: notepad, save to {sandbox}")
     t_start = time.time()
     w = None
     theirs: list = []
@@ -6693,7 +6663,7 @@ async def _selftest_calculator(check) -> None:
     if any(w.exe == "calculatorapp.exe" or w.title == "Calculator" for w in windows()):
         check("calculator round trip", True, "skipped: Calculator is already open")
         return
-    ctx = Ctx(options={"model_mode": "fast"}, request="selftest: calculator")
+    ctx = Ctx(options={}, request="selftest: calculator")
     t_start = time.time()
     w = None
     try:
@@ -6739,7 +6709,7 @@ async def _selftest_web(check) -> None:
             r, w = await stack.enter_async_context(stdio_client(params, errlog=open(os.devnull, "w")))
             s = await stack.enter_async_context(ClientSession(r, w, read_timeout_seconds=60))
             await s.initialize()
-            ctx = Ctx(options={"model_mode": "fast"}, browser=s, browser_mode="edge", request="selftest: example.com, click More information")
+            ctx = Ctx(options={}, browser=s, browser_mode="edge", request="selftest: example.com, click More information")
             res = await call("read_page", {"url": "example.com"}, ctx)
             check("web read_page", res.startswith("ok:") and "Example Domain" in res, res[:120])
             res = await call("read_page", {"what": "links"}, ctx)
@@ -6770,7 +6740,7 @@ async def _selftest_apps(check) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for i in range(30):
         (folder / f"file-{i:02d}.txt").write_text("x" * (i + 1))
-    ctx = Ctx(options={"model_mode": "fast"}, request=f"selftest in {sandbox}; open the display settings; write in Notepad")
+    ctx = Ctx(options={}, request=f"selftest in {sandbox}; open the display settings; write in Notepad")
     before = {w.hwnd for w in windows()}
     try:
         res = await call("open_path", {"path": str(folder)}, ctx)
@@ -6814,11 +6784,11 @@ async def _selftest_apps(check) -> None:
 
 
 async def _selftest_vision(check) -> None:
-    """Two model calls on a Calculator opened here: the vision click rung (UI-TARS in fast mode) and check_screen."""
+    """Two model calls on a Calculator opened here: the vision click rung (EvoCUA) and check_screen."""
     if any(w.exe == "calculatorapp.exe" or w.title == "Calculator" for w in windows()):
         check("vision", True, "skipped: Calculator is already open")
         return
-    ctx = Ctx(options={"model_mode": "fast"}, request="selftest: calculator vision")
+    ctx = Ctx(options={}, request="selftest: calculator vision")
     await call("open_app", {"name": "Calculator"}, ctx)
     w = next((x for x in windows() if x.hwnd in ctx.opened), None)
     if w is None:

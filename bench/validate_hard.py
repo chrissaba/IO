@@ -89,7 +89,7 @@ def checks_pass(t: dict, answer: str, env: dict) -> tuple[bool, list[str]]:
     run_bench.SANDBOX = SANDBOX
     notes, ok = [], True
     for c in t["checks"]:
-        passed, seen = run_bench.check(c, {"answer": answer, "events_full": [], "status": "done", "secs": 1}, {"mode": "current"})
+        passed, seen = run_bench.check(c, {"answer": answer, "events_full": [], "status": "done", "secs": 1}, {"effort": "high"})
         ok = ok and passed
         notes.append(f"{c['type']}: {'pass' if passed else 'FAIL'} ({seen[:120]})")
     return ok, notes

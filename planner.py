@@ -61,7 +61,8 @@ tool, or plan done explaining what blocked it.
 Output only the plan."""
 
 
-def plan_local(task: str, context: str, base_url: str, model: str, history: str = "", tools_text: str = "") -> str:
+def plan_local(task: str, context: str, base_url: str, model: str, history: str = "", tools_text: str = "",
+               reasoning: dict | None = None) -> str:
     """A plan from the local boss model. "" when it says NO_PLAN. history: recent actions, when replanning.
     tools_text: the agent's tool paragraph from the action registry (replaces the hand-written one)."""
     system = SYSTEM_ACTIONS.format(tools=tools_text) if tools_text else SYSTEM
@@ -74,8 +75,10 @@ def plan_local(task: str, context: str, base_url: str, model: str, history: str 
         user += (f"\n\nWhat the agent has done so far, with the results:\n{history}\n\nPlan only what "
                  "is left: anything these results already show (facts found, folders made, files written) is done, so never "
                  "plan it again, and use the facts found as they are.")
-    client = OpenAI(base_url=base_url, api_key="local", max_retries=1, timeout=60)
-    reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=400,
+    client = OpenAI(base_url=base_url, api_key="local", max_retries=1, timeout=90)
+    # reasoning: the llama-server fields for the model's thinking (boss passes Glimmer's, low); its thinking counts
+    # against max_tokens, which is why there is room for it above the plan's own few hundred tokens
+    reply = client.chat.completions.create(model=model, temperature=0.2, max_tokens=1600 if reasoning else 400, extra_body=reasoning or None,
                                            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     text = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
     return "" if text.upper().startswith("NO_PLAN") else text

@@ -49,30 +49,22 @@ import webpush
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("BOSS_APP_PORT", "8765"))
 STUDIO_URL = "http://127.0.0.1:8888"
-STUDIO_EXE = Path(os.environ.get("LOCALAPPDATA", "")) / "Unsloth Studio (Desktop)" / "unsloth-studio.exe"
 STORE = HERE / "data" / "store.json"
 UPLOADS = HERE / "data" / "uploads"
 UPLOADS.mkdir(parents=True, exist_ok=True)
 MAX_IMAGES = 6
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
-EYES_LOAD = {
-    "model_path": boss.EYES_MODEL,
-    "gguf_variant": "Q8_0",
-    "max_seq_length": 32768,
-    "n_parallel": 1,
-    "speculative_type": "off",
-}
 MAX_EVENTS_PER_TASK = 1500  # an Ultracode task logs for up to 5 helpers at once, plus a timing record per model call
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
-    "max_steps": 30, "allow_powershell": True, "notify": True, "hotkeys": True,
+    "max_steps": 200, "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, "keep_awake": True,
     "remote_access": False, "wake_url": "",
-    "browser_mode": "edge", "model_mode": "fast", "focus_glow": True, "theme": "system",
-    # the brain: ask_gemini on = the NVIDIA brain (GLM-5.3 Flash, DeepSeek V4.1 Flash, Kimi K3) runs tasks once a key is
-    # saved; off = the local models alone. (The name is from when the remote AI was Gemini; boss.py and the bench read it.)
-    "ask_gemini": True, "gemini_mode": "nim",
-    "ultracode": False,  # by default: a plan first, then up to 5 helpers work on its parts at once (per message too)
+    "browser_mode": "edge", "focus_glow": True, "theme": "system",
+    # how hard IO works, by default (a message can pick its own): low = everything on this PC; medium = the local model,
+    # with hard tasks and goals going to the NVIDIA models; high = the NVIDIA brain runs the task; max = high plus
+    # Ultracode helpers. Each level also sets how much the models reason (boss.EFFORT). Medium and up need a key.
+    "effort": "high",
     "brain_models": list(nim.BRAIN_MODELS),  # the NVIDIA models the brain goes round, in order
     "vision_model": "",  # the one look_at_screen asks first ("" = the brain's first vision model)
     "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
@@ -110,23 +102,30 @@ def load_state() -> None:
     # from when IO had a cloud planner, then web chat AIs (Duck.ai, Gemini) as a director with a role and an order
     for old in ("planner_mode", "share_context", "advisor_role", "director_order"):
         s.pop(old, None)
-    if s.get("gemini_mode") != "nim":  # no web chat AIs any more: the remote brain is NVIDIA's
-        s["gemini_mode"] = "nim"
     if not s.get("brain_v2"):  # once: the NVIDIA brain is on whenever a key is saved (it used to hide behind a toggle)
         if nim.nim_key():
             s["ask_gemini"] = True
         s["brain_v2"] = True
+    if "effort" not in saved.get("settings", {}):  # from the local-model modes and the brain/Ultracode toggles to one scale
+        s["effort"] = ("max" if s.get("ultracode") else "high") if s.get("ask_gemini") and nim.nim_key() else "low"
+        s["max_steps"] = DEFAULT_SETTINGS["max_steps"]  # was the step count itself (30 by default); now a cap over each level's
+    for old in ("model_mode", "ask_gemini", "gemini_mode", "ultracode"):
+        s.pop(old, None)
+    if s.get("effort") not in boss.EFFORT:
+        s["effort"] = DEFAULT_SETTINGS["effort"]
     for task in state["tasks"]:  # anything mid-flight when the app closed didn't finish
         if task["status"] in ("queued", "running", "waiting"):
             task.update(status="cancelled", summary="app was closed")
 
 
 def use_nim_once() -> bool:
-    """The first key saved switches the NVIDIA brain on (once: turning it off in Settings afterwards sticks)."""
+    """The first key saved moves the default effort from Low to High (once: a level picked afterwards sticks)."""
     s = state["settings"]
     if s.get("glm_switched") or not nim.nim_key():
         return False
-    s["gemini_mode"], s["ask_gemini"], s["glm_switched"] = "nim", True, True
+    if s.get("effort") == "low":
+        s["effort"] = "high"
+    s["glm_switched"] = True
     return True
 
 
@@ -177,12 +176,12 @@ def boss_up() -> bool:
         return False
 
 
-BOSS_CMDS = {"fast": "start-boss-server.cmd", "smart": "start-qwen-server.cmd", "balanced": "start-balanced-server.cmd"}
-BOSS_NAMES = {"fast": "gemma", "smart": "qwen3.8", "balanced": "glimmer"}  # what the loaded model's file name contains
+BOSS_CMD = "start-balanced-server.cmd"  # Muse Glimmer 30B thinks (:8090), EvoCUA-8B sees and clicks (:8091)
+BOSS_NAME = "glimmer"  # what the loaded model's file name contains
 
 
 def evo_up() -> bool:
-    """Balanced mode's eyes (EvoCUA on its own server) answer."""
+    """The eyes (EvoCUA on its own server) answer."""
     try:
         return http_json(boss.EVO_URL.removesuffix("/v1") + "/health", timeout=3).get("status") == "ok"
     except Exception:
@@ -197,30 +196,11 @@ def boss_model_path() -> str:
 
 
 def stop_boss_server() -> None:
-    """Stops the llama-servers on the boss port and Balanced's eyes port, so the other mode's models can load."""
+    """Stops the llama-servers on the boss and eyes ports (a half-started pair, or another model on the boss port)."""
     subprocess.run(["powershell", "-NoProfile", "-Command",
                     "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | "
                     "Where-Object { $_.CommandLine -like '*--port 8090*' -or $_.CommandLine -like '*--port 8091*' } | "
                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"], creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
-
-
-switching = asyncio.Lock()
-
-
-async def switch_models() -> None:
-    """Fast <-> Smart: free the GPU first (UI-TARS out for Smart, Qwen out for Fast), then load the other."""
-    async with switching:
-        while current["task"] is not None:  # never pull the model out from under a running task
-            await asyncio.sleep(2)
-        mode = state["settings"].get("model_mode", "fast")
-        status["boss"] = "switching model"
-        if mode != "fast":
-            await ensure_eyes()  # unloads UI-TARS
-        await asyncio.to_thread(stop_boss_server)
-        await asyncio.sleep(2)
-        await ensure_boss()
-        if mode == "fast":
-            await ensure_eyes()
 
 
 boss_starting = asyncio.Lock()
@@ -245,7 +225,6 @@ async def ensure_boss() -> None:
 
 
 async def _ensure_boss() -> None:
-    mode = state["settings"].get("model_mode", "fast")
     if not boss_up() and await asyncio.to_thread(boss_loading):
         status["boss"] = "loading model"
         for _ in range(300):
@@ -254,76 +233,45 @@ async def _ensure_boss() -> None:
                 break
     if boss_up():
         path = await asyncio.to_thread(boss_model_path)
-        eyes_ok = mode != "balanced" or await asyncio.to_thread(evo_up)  # Balanced needs both of its servers
-        if (not path or BOSS_NAMES[mode] in path) and eyes_ok:
-            status["boss"] = "ready"
+        if (not path or BOSS_NAME in path) and await asyncio.to_thread(evo_up):  # both servers, the right model
+            status["boss"] = status["eyes"] = "ready"
             return
-        await asyncio.to_thread(stop_boss_server)  # the other mode's model is loaded, or half of Balanced died
-        await asyncio.sleep(2)
-    elif mode == "balanced":
-        await asyncio.to_thread(stop_boss_server)  # an EvoCUA left over from a half start would hold its memory twice
-        await asyncio.sleep(1)
-    status["boss"] = {"smart": "starting Qwen 3.8 27B", "balanced": "starting Muse Glimmer + EvoCUA"}.get(mode, "starting model")
+    await asyncio.to_thread(stop_boss_server)  # another model on the port, or half of the pair died (it would hold its memory twice)
+    await asyncio.sleep(1)
+    await asyncio.to_thread(free_studio_gpu)
+    status["boss"] = "starting Muse Glimmer + EvoCUA"
+    status["eyes"] = "starting EvoCUA"
     log_file = open(HERE / "logs" / "boss-server.log", "a", encoding="utf-8")
     subprocess.Popen(
-        ["cmd", "/c", str(HERE / BOSS_CMDS[mode])],
+        ["cmd", "/c", str(HERE / BOSS_CMD)],
         stdout=log_file,
         stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    for _ in range(300):  # Qwen 27B takes longer to load
+    for _ in range(300):
         await asyncio.sleep(1)
-        if boss_up() and (mode != "balanced" or await asyncio.to_thread(evo_up)):
-            status["boss"] = "ready"
+        if boss_up() and await asyncio.to_thread(evo_up):
+            status["boss"] = status["eyes"] = "ready"
             return
-    status["boss"] = "failed to start (see logs/boss-server.log)"
+    failed = "failed to start (see logs/boss-server.log)"
+    status["boss"] = "ready" if boss_up() else failed
+    status["eyes"] = "ready" if await asyncio.to_thread(evo_up) else failed
 
 
-def studio_models(key: str) -> list[dict] | None:
-    try:
-        return http_json(f"{STUDIO_URL}/v1/models", key=key)["data"]
-    except Exception:
-        return None
-
-
-async def ensure_eyes() -> None:
-    """Makes sure UI-TARS is loaded in Unsloth Studio, opening Studio first if needed (e.g. at login).
-    In Smart mode Qwen is its own eyes, so UI-TARS is unloaded instead to leave room on the GPU."""
+def free_studio_gpu() -> None:
+    """IO no longer uses Unsloth Studio's server (it hosted UI-TARS). If Studio happens to be open with a model loaded,
+    that model would take the GPU memory Glimmer and EvoCUA need: unload it. Studio is never started from here."""
     key = boss.studio_key()
-    if state["settings"].get("model_mode", "fast") != "fast":
-        try:
-            await asyncio.to_thread(http_json, f"{STUDIO_URL}/v1/unload", {"model_path": boss.EYES_MODEL}, 60, key)
-        except Exception:
-            pass
-        status["eyes"] = "ready"
-        return
-    models = studio_models(key)
-    if models is None and STUDIO_EXE.exists():
-        status["eyes"] = "opening Unsloth Studio"
-        subprocess.Popen([str(STUDIO_EXE)], creationflags=subprocess.DETACHED_PROCESS)
-    for _ in range(60):  # Studio can take a few minutes to come up after login
-        if models is not None:
-            break
-        await asyncio.sleep(5)
-        models = studio_models(key)
-    if models is None:
-        status["eyes"] = "waiting for Unsloth Studio"
-        asyncio.create_task(retry_eyes_later())
-        return
-    if any(m["id"] == boss.EYES_MODEL and m.get("loaded") for m in models):
-        status["eyes"] = "ready"
-        return
-    status["eyes"] = "loading UI-TARS in Studio"
     try:
-        await asyncio.to_thread(http_json, f"{STUDIO_URL}/v1/load", {**EYES_LOAD, "force_reload": True}, 600, key)
-        status["eyes"] = "ready"
-    except Exception as e:
-        status["eyes"] = f"couldn't load UI-TARS in Studio: {e}"
-
-
-async def retry_eyes_later() -> None:
-    await asyncio.sleep(30)
-    await ensure_eyes()
+        models = http_json(f"{STUDIO_URL}/v1/models", key=key, timeout=3)["data"]
+    except Exception:
+        return
+    for m in models:
+        if m.get("loaded"):
+            try:
+                http_json(f"{STUDIO_URL}/v1/unload", {"model_path": m["id"]}, 60, key)
+            except Exception:
+                pass
 
 
 # ---------- tasks ----------
@@ -430,6 +378,20 @@ def error_text(e: BaseException) -> str:
     return str(e) or type(e).__name__
 
 
+def task_effort(task: dict) -> str:
+    """The level a task runs at: its message's own pick, else the Settings default. A goal's check-ins get at least
+    High from Medium up (goals are the long, unattended work the NVIDIA models are for). Without a key, everything is
+    Low: IO never falls back to a web chat AI."""
+    level = task.get("effort") if task.get("effort") in boss.EFFORT else state["settings"].get("effort", "high")
+    if level not in boss.EFFORT:
+        level = "high"
+    if not nim.nim_key():
+        return "low"
+    if level == "medium" and (task.get("goal") or str(task.get("source", "")).startswith("goal: ")):
+        return "high"
+    return level
+
+
 async def worker() -> None:
     while True:
         task = await queue.get()
@@ -441,13 +403,10 @@ async def worker() -> None:
             await ensure_boss()
         task.update(status="running", started=time.time())
         current["task"] = task
-        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode", "model_mode")}
+        options = {k: state["settings"][k] for k in ("allow_powershell", "confirm_risky", "browser", "files", "browser_mode")}
         options["chrome_token"] = chrome_token()
-        # the NVIDIA brain needs its key; without one IO runs on the local models (never a web chat AI)
-        options["ask_gemini"] = bool(state["settings"].get("ask_gemini")) and bool(nim.nim_key())
-        options["gemini_mode"], options["advisor_role"] = "nim", "director"
-        # Ultracode: the message's own switch, else the Settings default (boss caps it at 5 helpers at once)
-        options["ultracode"] = bool(task["ultracode"] if "ultracode" in task else state["settings"].get("ultracode"))
+        options["effort"] = task["effort"] = task_effort(task)
+        options["on_escalate"] = lambda level, t=task: t.update(effort=level, escalated=True)
         options["brain_models"] = list(state["settings"].get("brain_models") or nim.BRAIN_MODELS)
         options["vision_model"] = state["settings"].get("vision_model", "")
         options["race_width"] = int(state["settings"].get("race_width") or 0)
@@ -771,18 +730,13 @@ async def keep_awake() -> None:
 # ---------- watchdog ----------
 
 async def watchdog() -> None:
-    """Brings the boss model and UI-TARS back if they crash or get unloaded."""
+    """Brings Glimmer and EvoCUA back if either crashes."""
     await asyncio.sleep(120)  # let startup finish first
     while True:
         if state["settings"].get("watchdog", True) and current["task"] is None:
-            if not boss_up() or (state["settings"].get("model_mode") == "balanced" and not evo_up() and not boss_loading()):
+            if not boss_up() or (not evo_up() and not boss_loading()):
                 print("watchdog: a local model is down, restarting")
                 await ensure_boss()
-            models = studio_models(boss.studio_key())
-            if state["settings"].get("model_mode", "fast") == "fast" and (
-                    not models or not any(m["id"] == boss.EYES_MODEL and m.get("loaded") for m in models)):
-                print("watchdog: UI-TARS not loaded, restoring")
-                await ensure_eyes()
         await asyncio.sleep(30)
 
 
@@ -791,7 +745,7 @@ async def watchdog() -> None:
 async def startup() -> None:
     (HERE / "logs").mkdir(exist_ok=True)
     boss.listeners.append(on_event)
-    await asyncio.gather(ensure_boss(), ensure_eyes())
+    await ensure_boss()
 
 
 @asynccontextmanager
@@ -967,8 +921,10 @@ async def chat_message(request: Request) -> JSONResponse:
         task["from_phone"] = True  # its answer is sent to the phone as a notification
     if body.get("loop"):
         task["loop"] = True
-    if "ultracode" in body:
-        task["ultracode"] = bool(body["ultracode"])
+    if body.get("effort") in boss.EFFORT:
+        task["effort"] = body["effort"]
+    elif body.get("ultracode") is True:  # older callers: Ultracode on is the Max level
+        task["effort"] = "max"
     if body.get("learn") is False:
         task["learn"] = False
     chat["messages"].append({"task_id": task["id"], "at": time.time()})
@@ -1046,6 +1002,8 @@ async def add_task(request: Request) -> JSONResponse:
     images = [n for n in body.get("images", []) if isinstance(n, str) and re.fullmatch(r"[0-9a-f]{8}-\d\.(png|jpg|webp|gif)", n)
               and (UPLOADS / n).is_file()]
     task = new_task(text, str(body.get("source", "you")), body.get("max_steps"), images=images)
+    if body.get("effort") in boss.EFFORT:
+        task["effort"] = body["effort"]
     if remote.is_remote(request.scope):
         task["from_phone"] = True
     return JSONResponse({"id": task["id"]})
@@ -1124,14 +1082,13 @@ async def delete_template(request: Request) -> JSONResponse:
 async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
-    s["max_steps"] = max(5, min(100, int(body.get("max_steps", s["max_steps"]))))
+    s["max_steps"] = max(5, min(200, int(body.get("max_steps", s["max_steps"]))))  # the cap; each level has its own steps
     if body.get("theme") in ("system", "light", "dark"):
         s["theme"] = body["theme"]
     if body.get("browser_mode") in ("edge", "chrome"):
         s["browser_mode"] = body["browser_mode"]
-    if body.get("model_mode") in ("fast", "smart", "balanced") and body["model_mode"] != s.get("model_mode"):
-        s["model_mode"] = body["model_mode"]
-        asyncio.create_task(switch_models())
+    if body.get("effort") in boss.EFFORT:
+        s["effort"] = body["effort"]
     if isinstance(body.get("brain_models"), list):
         picked = [str(m).strip() for m in body["brain_models"] if str(m).strip()][:12]
         s["brain_models"] = list(dict.fromkeys(picked)) or list(nim.BRAIN_MODELS)
@@ -1144,9 +1101,7 @@ async def save_settings(request: Request) -> JSONResponse:
     for key in ("vision_model", "helper_model"):
         if key in body:
             s[key] = str(body[key] or "").strip()[:120]
-    if "ask_gemini" in body:
-        s["brain_v2"] = True  # the user chose: no migration ever flips it again
-    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "ask_gemini", "focus_glow", "ultracode", "debug",
+    for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "focus_glow", "debug",
                 "keep_awake", "remote_access"):
         if key in body:
             s[key] = bool(body[key])
@@ -1187,7 +1142,7 @@ async def save_nim_key(request: Request) -> JSONResponse:
     nim.save_nim_key(key)
     if use_nim_once():
         save_state()
-    return JSONResponse({"ok": True, "nim_key_set": bool(key), "brain_on": bool(key) and bool(state["settings"].get("ask_gemini"))})
+    return JSONResponse({"ok": True, "nim_key_set": bool(key), "effort": state["settings"].get("effort")})
 
 
 async def nim_catalog(_request: Request) -> JSONResponse:

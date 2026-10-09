@@ -360,7 +360,7 @@ def uninstall(quiet: bool = False) -> None:
     UNINSTALLED.touch()
     if not quiet:
         _message(f"IO was removed from the Start menu, desktop and Installed apps. Unpin it from the taskbar if you pinned it.\n\n"
-                 f"Your chats, settings and the app itself are still in\n{HERE}\nTo remove everything, close the boss model (llama-server) and Unsloth Studio, then delete that folder.")
+                 f"Your chats, settings and the app itself are still in\n{HERE}\nTo remove everything, close IO's local models (llama-server), then delete that folder.")
 
 
 if __name__ == "__main__":

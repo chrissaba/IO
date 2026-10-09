@@ -2,7 +2,7 @@
 each checked by a script against the result, never by trusting the answer. Writes bench/tasks_hard.json:
 
     .venv\\Scripts\\python.exe bench\\hard_tasks.py
-    .venv\\Scripts\\python.exe bench\\run_bench.py --suite hard --director on
+    .venv\\Scripts\\python.exe bench\\run_bench.py --suite hard --effort high
 
 Every task works in its own folder %TEMP%\\io-bench\\<id> (made fresh by its setup). In checker code: B is that folder,
 A is IO's answer, run(...) runs a command there, fail(msg) fails the check with msg as what was observed."""

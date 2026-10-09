@@ -153,6 +153,8 @@ def create(client, _purpose: str = "", **kw):
     t0 = time.time()
     chars, images = size_of(kw.get("messages"))
     rec = {"model": kw.get("model", ""), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or [])}
+    if label := reasoning_label(kw):
+        rec["reasoning"] = label
     if not _slots.acquire(timeout=SLOT_WAIT):
         trace({**rec, "ok": False, "wait": round(time.time() - t0, 1), "secs": 0, "error": "no free slot"})
         raise TimeoutError(f"all {MAX_PARALLEL} NVIDIA slots stayed busy for {SLOT_WAIT}s")
@@ -169,10 +171,55 @@ def create(client, _purpose: str = "", **kw):
         m = r.choices[0].message if r.choices else None
         trace({**rec, "ok": True, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
                "in_tokens": getattr(u, "prompt_tokens", None), "out_tokens": getattr(u, "completion_tokens", None),
-               "calls": [c.function.name for c in (m.tool_calls or [])] if m else [], "finish": r.choices[0].finish_reason if r.choices else ""})
+               "calls": [c.function.name for c in (m.tool_calls or [])] if m else [], "finish": r.choices[0].finish_reason if r.choices else "",
+               **({"thought_chars": n} if m is not None and (n := len(str((getattr(m, "model_extra", None) or {}).get("reasoning_content") or ""))) else {})})
         return r
     finally:
         _slots.release()
+
+# How much each model reasons, in its own words (boss.EFFORT's low / medium / high / max). Models expose different
+# switches, and a field one ignores another rejects, so each gets only what was measured to work for it (2026-10-09,
+# ~230 requests: thinking tokens on the same puzzle at each setting). Every model returns its thinking in
+# message.reasoning_content.
+#   GLM-5.3 Flash: only reasoning_effort low / high / max mean anything ("medium" and "none" quietly mean max); low gave
+#     38 thinking tokens against 189 by default; it can't be turned off
+#   Kimi K3: "none" turns thinking off; low / high / max made no measurable difference, so it is off or on ("medium" is
+#     rejected with a 400)
+#   Muse Glimmer: low / medium / high / xhigh (low ~320 tokens, high ~700 on the same question); it never fully stops
+#   Nemotron 3 Nano Omni: chat_template_kwargs enable_thinking false turns it off; nvext max_thinking_tokens is a hard
+#     cap; reasoning_effort does nothing (and top-level thinking fields are rejected)
+#   Llama 3.2 90B Vision never reasons; DeepSeek V4.1 Flash couldn't be measured (its queue outlasted every request),
+#     and a field it rejects only comes back after the whole queue wait, so it gets nothing
+REASONING_FIELDS: dict[str, dict[str, dict]] = {
+    "z-ai/glm-5.3-flash": {"low": {"reasoning_effort": "low"}, "medium": {"reasoning_effort": "high"},
+                           "high": {"reasoning_effort": "max"}, "max": {"reasoning_effort": "max"}},
+    "moonshotai/kimi-k3": {"low": {"reasoning_effort": "none"}, "medium": {}, "high": {}, "max": {"reasoning_effort": "max"}},
+    "meta/muse-glimmer-30b": {"low": {"reasoning_effort": "low"}, "medium": {"reasoning_effort": "medium"},
+                              "high": {"reasoning_effort": "high"}, "max": {"reasoning_effort": "xhigh"}},
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": {
+        "low": {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}},
+        "medium": {"extra_body": {"nvext": {"max_thinking_tokens": 1024}}}, "high": {}, "max": {}},
+}
+
+
+def reasoning(model: str, level: str) -> dict:
+    """Keyword arguments for chat.completions.create that ask `model` for `level` of reasoning ({} for a model with no
+    switch IO knows, which then reasons as it does by default)."""
+    fields = REASONING_FIELDS.get(model, {}).get(level, {})
+    return {k: (dict(v) if isinstance(v, dict) else v) for k, v in fields.items()}
+
+
+def reasoning_label(kw: dict) -> str:
+    """What a request asked for, for the debug timeline."""
+    if kw.get("reasoning_effort"):
+        return str(kw["reasoning_effort"])
+    extra = kw.get("extra_body") or {}
+    if (extra.get("chat_template_kwargs") or {}).get("enable_thinking") is False:
+        return "off"
+    if (extra.get("nvext") or {}).get("max_thinking_tokens"):
+        return f"cap {extra['nvext']['max_thinking_tokens']}"
+    return ""
+
 
 TEXT_ONLY = {"deepseek-ai/deepseek-v4.1-flash"}  # gets the conversation without screenshots (it calls look_at_screen)
 SLOW_QUEUE = {"deepseek-ai/deepseek-v4.1-flash"}  # queues for minutes: allowed a longer wait per request

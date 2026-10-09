@@ -15,7 +15,7 @@
         {"type": "answer_nonempty"},
         {"type": "max_tools", "n": 0},
         {"type": "max_director_rounds", "n": 0},
-        {"type": "max_secs", "n": 8, "modes": ["fast"]}
+        {"type": "max_secs", "n": 8, "efforts": ["low"]}
       ]
     },
     {

@@ -1,8 +1,8 @@
-"""ui-tars-boss: a small tool-calling text model drives Windows through Windows-MCP.
+"""IO's agent loop: a tool-calling model drives Windows through Windows-MCP and IO's action library.
 
-UI-TARS is only used as "eyes": when the boss can't find something in the accessibility
-tree (unnamed icons, canvases, images), it calls find_on_screen and UI-TARS returns
-where to click.
+Muse Glimmer 30B (local) or NVIDIA's models (by effort level, see EFFORT) decide; EvoCUA-8B is the "eyes": when
+something can't be found in the accessibility tree (unnamed icons, canvases, images), find_on_screen asks it where to
+click, and look_at_screen asks it what is on screen.
 
 Usage:  python boss.py "open notepad and type hello"
 """
@@ -50,8 +50,6 @@ ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
 HERE = Path(__file__).parent
 BOSS_URL = os.environ.get("BOSS_URL", "http://127.0.0.1:8090/v1")
 BOSS_MODEL = os.environ.get("BOSS_MODEL", "boss")
-EYES_URL = os.environ.get("EYES_URL", "http://127.0.0.1:8888/v1")
-EYES_MODEL = os.environ.get("EYES_MODEL", "mradermacher/UI-TARS-1.5-7B-GGUF")
 MCP_TOOLS = "App,Snapshot,Click,Type,Scroll,Shortcut,WaitFor,PowerShell,Clipboard,Process,FileSystem,Scrape"
 # Playwright MCP drives web pages by their elements, in one of two places:
 # "edge": a separate Edge window with its own profile
@@ -72,8 +70,7 @@ BROWSER_TOOLS = {
     "browser_file_upload", "browser_close",
 }
 MAX_MEMORY = 50
-# llama.cpp caps Qwen2.5-VL images at 4096 visual tokens of 28x28 px; resize to that ourselves
-# so UI-TARS's pixel coordinates refer to the exact image we sent
+# the eyes' screenshots are sized to at most 4096 tiles of 28x28 px (what llama.cpp keeps of a Qwen-VL image anyway)
 EYES_MAX_PIXELS = 4096 * 28 * 28
 KEEP_FULL_SNAPSHOTS = 2
 # replanning: after this many failed calls in a row, or steps without finishing, at most MAX_REPLANS times
@@ -464,11 +461,6 @@ STEPS_TOOL = {"type": "function", "function": {
     "parameters": actions.tool_schema("steps")["function"]["parameters"]}}
 EXTRA_TOOLS.append(STEPS_TOOL)
 
-# UI-TARS-1.5's single-point grounding prompt; on taskbar icons it lands within a few pixels,
-# where the multi-step agent prompt was off by hundreds
-EYES_PROMPT = "Output only the coordinate of one point in your response. What element matches the following task: {target}"
-
-
 STUDIO_KEY_FILE = HERE / "data" / "studio.json"
 
 
@@ -789,11 +781,14 @@ positions of buttons, menus and items, coordinates, paths, URLs), what worked, a
 only the summary."""
 LEARN_EVERY = 25  # loops: the brain updates its playbook for the task after this many more actions
 
-NO_THINKING = {"chat_template_kwargs": {"enable_thinking": False}}  # llama-server: skip the reasoning for this request
+# EvoCUA always thinks before it answers; llama-server's per-request cap is the one switch it honours (its template has
+# no on/off: enable_thinking did nothing). 192 tokens leaves its clicks as accurate as no cap (measured on a Save dialog).
+EVO_THINK = {"thinking_budget_tokens": 192}
+EVO_THINK_LONG = {"thinking_budget_tokens": 384}  # describing a screen or a picture
 QWEN_POINT_PROMPT = ("Find this on the screenshot: {target}\nAnswer only with JSON like {{\"point_2d\": [x, y]}}, the centre "
                      "of it, with x and y on a 0-1000 scale across the image's width and height.")
 
-# Balanced mode's eyes: EvoCUA-8B (Meituan's computer-use model) on its own llama-server. It's asked the way it was
+# The eyes: EvoCUA-8B (Meituan's computer-use model) on its own llama-server. It's asked the way it was
 # trained (its "S2" prompt: one computer_use tool call, coordinates on a 1000x1000 grid), with only a click allowed.
 EVO_URL = os.environ.get("EVO_URL", "http://127.0.0.1:8091/v1")
 EVO_MODEL = "eyes"
@@ -826,13 +821,13 @@ def evo_point(client, url: str, target: str) -> tuple[float, float] | None:
     """EvoCUA's click for `target` on one image, as fractions of its width and height; None when it says it isn't there.
     Asked plainly first (its Qwen3-VL base's point_2d answer: on a 4K desktop it hit 7 of 10 described targets, as many
     as UI-TARS, against 6 with its own agent prompt), and with that agent prompt only when the plain answer has no point."""
-    plain = local_create(client, EVO_MODEL, _purpose="find where to click", temperature=0, max_tokens=300, extra_body=NO_THINKING, messages=[
+    plain = local_create(client, EVO_MODEL, _purpose="find where to click", temperature=0, max_tokens=400, extra_body=EVO_THINK, messages=[
         {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": QWEN_POINT_PROMPT.format(target=target)}]},
     ]).choices[0].message.content or ""
     m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", re.sub(r"<think>.*?</think>", "", plain, flags=re.S))
     if m and 0 <= float(m.group(1)) <= 1000 and 0 <= float(m.group(2)) <= 1000:
         return float(m.group(1)) / 1000, float(m.group(2)) / 1000
-    reply = local_create(client, EVO_MODEL, _purpose="find where to click (agent prompt)", temperature=0.01, max_tokens=200, messages=[
+    reply = local_create(client, EVO_MODEL, _purpose="find where to click (agent prompt)", temperature=0.01, max_tokens=400, extra_body=EVO_THINK, messages=[
         {"role": "system", "content": EVO_SYSTEM},
         {"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}, {"type": "text", "text": EVO_ASK.format(target=target)}]},
     ]).choices[0].message.content or ""
@@ -844,19 +839,13 @@ def evo_point(client, url: str, target: str) -> tuple[float, float] | None:
 
 
 class Eyes:
-    """Where to click and what's on screen. Fast mode: UI-TARS in Unsloth Studio finds things, the boss describes.
-    Smart mode: the boss (Qwen) does both with its own vision."""
+    """Where to click and what's on screen: EvoCUA-8B (Meituan's computer-use model) on its own llama-server finds things
+    and describes screens for Muse Glimmer, which reads text only. look_at_screen asks the NVIDIA brain's vision models
+    first when the task runs on them (High and Max)."""
 
-    def __init__(self, mode: str = "fast") -> None:
-        # Smart: Qwen 3.8 sees for itself. Balanced: EvoCUA sees and clicks for Muse Glimmer, which reads text only.
-        self.mode = {"smart": "smart", "balanced": "evo"}.get(mode, "fast")
-        BOSS_SEES[0] = self.mode != "evo"
-        if self.mode == "smart":
-            self.client, self.model = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=180), BOSS_MODEL
-        elif self.mode == "evo":
-            self.client, self.model = OpenAI(base_url=EVO_URL, api_key="local", max_retries=2, timeout=120), EVO_MODEL
-        else:
-            self.client, self.model = OpenAI(base_url=EYES_URL, api_key=studio_key() or "local", max_retries=3, timeout=120), EYES_MODEL
+    def __init__(self, mode: str = "") -> None:
+        self.mode = "evo"  # one local stack now; the argument is kept for older callers
+        self.client, self.model = OpenAI(base_url=EVO_URL, api_key="local", max_retries=2, timeout=120), EVO_MODEL
         self.content = False  # loops: look only at the window's content area (a game without its emulator's side bars)
         self.brief = False  # loops: short looks, since it looks again before every move
 
@@ -869,44 +858,10 @@ class Eyes:
         buf = io.BytesIO()
         shot.resize((iw, ih)).save(buf, format="PNG")
         url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-        if self.mode == "evo":
-            frac = evo_point(self.client, url, description)
-            if frac is None:
-                return {"error": "could not locate it"}
-            return {"x": round(left + frac[0] * (right - left)), "y": round(top + frac[1] * (bottom - top))}
-
-        prompt = QWEN_POINT_PROMPT if self.mode == "smart" else EYES_PROMPT
-        reply = local_create(self.client, self.model, _purpose="find where to click",
-            temperature=0,
-            max_tokens=400 if self.mode == "smart" else 60,
-            extra_body=NO_THINKING if self.mode == "smart" else None,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": url}},
-                        {"type": "text", "text": prompt.format(target=description)},
-                    ],
-                }
-            ],
-        ).choices[0].message.content or ""
-        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.S)
-        if self.mode == "smart":
-            m = re.search(r"\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]", reply)
-            if not m:
-                return {"error": "could not locate it", "eyes_said": reply[-300:]}
-            px, py = float(m.group(1)), float(m.group(2))
-            if not (0 <= px <= 1000 and 0 <= py <= 1000):  # off the image: a guess, not a sighting
-                return {"error": f"could not locate it (the answer pointed off the {'window' if window else 'screen'})"}
-            x = left + px / 1000 * (right - left)
-            y = top + py / 1000 * (bottom - top)
-            return {"x": round(x), "y": round(y)}
-        m = re.search(r"\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)", reply)
-        if not m:
-            return {"error": "could not locate it", "eyes_said": reply[-300:]}
-        x = left + float(m.group(1)) * (right - left) / iw
-        y = top + float(m.group(2)) * (bottom - top) / ih
-        return {"x": round(x), "y": round(y)}
+        frac = evo_point(self.client, url, description)
+        if frac is None:
+            return {"error": "could not locate it"}
+        return {"x": round(left + frac[0] * (right - left)), "y": round(top + frac[1] * (bottom - top))}
 
     def describe(self, question: str, display: int = 0, window: str = "") -> str:
         """Answers a question about a display's (or one window's) contents with the boss model's own vision."""
@@ -931,7 +886,8 @@ class Eyes:
         for client, model in fresh + [r for r in remote if r not in fresh]:  # the NVIDIA brain's vision models, in turn
             t_req = time.time()
             try:
-                reply = nim.create(client, _purpose="look at the screen", model=model, temperature=0.2, max_tokens=700, messages=quick, timeout=90)
+                reply = nim.create(client, _purpose="look at the screen", model=model, temperature=0.2, max_tokens=1500, messages=quick, timeout=90,
+                                   **nim.reasoning(model, "low"))  # a look is reading, not puzzling: it once spent all 700 tokens thinking
                 answer = re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
                 if answer:
                     nim.note(model, time.time() - t_req, True)
@@ -939,11 +895,10 @@ class Eyes:
                 nim.note(model, time.time() - t_req, False)
             except Exception as e:  # next vision model, then the local one
                 nim.note(model, time.time() - t_req, False, gone=getattr(e, "status_code", 0) == 404)
-        local = (self.client, self.model) if self.mode == "evo" else (OpenAI(base_url=BOSS_URL, api_key="local", max_retries=2, timeout=120), BOSS_MODEL)
-        reply = local_create(*local,
-            _purpose="look at the screen", temperature=0.2, max_tokens=160 if self.brief else 700,
-            extra_body=NO_THINKING if self.brief else None, messages=messages)
-        return reply.choices[0].message.content or "(no answer)"
+        reply = local_create(self.client, self.model,
+            _purpose="look at the screen", temperature=0.2, max_tokens=500 if self.brief else 1100,
+            extra_body=EVO_THINK if self.brief else EVO_THINK_LONG, messages=messages)
+        return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip() or "(no answer)"
 
 
 # Windows-MCP's label/labels args are ids from its annotated screenshot, which the text-only boss
@@ -2345,11 +2300,74 @@ AGENT: contextvars.ContextVar = contextvars.ContextVar("agent", default=None)
 _log_lock = threading.Lock()  # sub-agents log at the same time, some from worker threads
 
 
-BOSS_SEES = [True]  # False in Balanced mode: Muse Glimmer loads without its vision part, to leave room for EvoCUA
+# How hard IO works on a task (Settings > Effort, or the message's own pick). One local stack at every level: Muse
+# Glimmer 30B thinks, EvoCUA-8B sees and clicks. The levels differ in who decides and how much each model reasons:
+#   api      False: nothing leaves the PC; "hard": the local model decides, but tasks the route table marks as needing
+#            the stronger brain (driving apps, open-ended work) start on NVIDIA's, and a local run that keeps failing
+#            hands over to it; True: NVIDIA's models decide every step
+#   local    Glimmer's reasoning for its own steps (its template's "Reasoning strength"; measured on one puzzle: low ~380
+#            thinking tokens, medium ~490, high ~1300, all right). Its one-line helpers always run with thinking off.
+#   api_reason  what the NVIDIA models are asked for (nim.reasoning maps it to each model's own switch)
+#   steps    the most steps a task gets (Settings' "most steps" caps it)
+#   out      Glimmer's answer budget per step: reasoning counts against it
+#   check    a second look at the work before the answer, on the local model (the NVIDIA brain checks itself too)
+#   ultracode  the brain may split the task among helper sub-agents
+EFFORT = {
+    "low": {"api": False, "local": "low", "api_reason": "low", "steps": 30, "out": 1500, "check": False, "ultracode": False},
+    "medium": {"api": "hard", "local": "medium", "api_reason": "medium", "steps": 60, "out": 2500, "check": False, "ultracode": False},
+    "high": {"api": True, "local": "high", "api_reason": "high", "steps": 120, "out": 4096, "check": True, "ultracode": False},
+    "max": {"api": True, "local": "high", "api_reason": "max", "steps": 200, "out": 4096, "check": True, "ultracode": True},
+}
+EFFORT_NOW: contextvars.ContextVar = contextvars.ContextVar("effort", default="high")  # the running task's level
+MEDIUM_LOCAL_REPLANS = 1  # Medium: the local model gets one new plan when stuck; stuck again, the NVIDIA brain takes over
+
+
+class Escalate(Exception):
+    """Medium: the local model is stuck; run() starts the task again on the NVIDIA brain with what was done so far."""
+
+
+def escalation_in(err: BaseException) -> "Escalate | None":
+    """The Escalate inside an error, however deep the task groups nested it, else None."""
+    if isinstance(err, Escalate):
+        return err
+    if isinstance(err, BaseExceptionGroup):
+        for sub in err.exceptions:
+            if (found := escalation_in(sub)) is not None:
+                return found
+    return None
+
+
+BOSS_SEES = [False]  # Muse Glimmer loads without its vision part (room for EvoCUA): pictures reach it as EvoCUA's words
 # NVIDIA model id (a part of it) -> what the local model's file name contains when this PC runs the same model
 LOCAL_TWINS = {"muse-glimmer-30b": "glimmer"}
 LOCAL_TWIN_CHARS = 75_000  # what fits the local copy's 32K-token context with room for its answer; larger goes to NVIDIA
 LOCAL_TWIN_OUT = 4096
+_ban: dict = {}
+
+
+def glimmer_off() -> dict:
+    """Glimmer with thinking off. Its template has no on/off switch (enable_thinking did nothing, and no reasoning budget
+    is enforced for it): it starts thinking by addressing itself (" to=self"), so banning that token sends it straight
+    to its answer or tool call. Measured: 0 thinking tokens, answers and tool calls still right, and the prompt cache is
+    untouched (an effort change would make it re-read the tools and history)."""
+    if "id" not in _ban:
+        tid = 19669  # "=self" in Glimmer's vocabulary: [328 " to", 19669 "=self"]
+        try:
+            req = urllib.request.Request(BOSS_URL.removesuffix("/v1") + "/tokenize", data=json.dumps({"content": " to=self"}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                toks = json.loads(r.read()).get("tokens") or []
+            if len(toks) == 2:
+                tid = int(toks[1])
+        except Exception:
+            pass
+        _ban["id"] = tid
+    return {"logit_bias": {str(_ban["id"]): False}}
+
+
+def local_reasoning(level: str) -> dict:
+    """llama-server fields for Glimmer at a reasoning level: off, or its template's low / medium / high."""
+    return glimmer_off() if level == "off" else {"reasoning_effort": level}
 
 
 def boss_file() -> str:
@@ -2359,6 +2377,8 @@ def boss_file() -> str:
             return Path(str(json.loads(r.read()).get("model_path", ""))).name.lower()
     except Exception:
         return ""
+
+
 _described: dict = {}  # picture (its hash) -> EvoCUA's description, so an image kept in the conversation is described once
 
 
@@ -2378,7 +2398,7 @@ def words_for_pictures(messages: list) -> list:
                 if key not in _described:
                     try:
                         r = local_create(OpenAI(base_url=EVO_URL, api_key="local", max_retries=1, timeout=120), EVO_MODEL,
-                                         _purpose="describe a picture for the brain", temperature=0.2, max_tokens=500, extra_body=NO_THINKING,
+                                         _purpose="describe a picture for the brain", temperature=0.2, max_tokens=1100, extra_body=EVO_THINK_LONG,
                                          messages=[{"role": "user", "content": [p, {"type": "text", "text": (
                                              "Describe this image for someone who can't see it: what it shows, every piece of text "
                                              "that matters (exactly as written), and where the main buttons and items are.")}]}])
@@ -2391,13 +2411,27 @@ def words_for_pictures(messages: list) -> list:
     return out
 
 
+REASONING_KEYS = ("reasoning_effort", "logit_bias", "thinking_budget_tokens", "chat_template_kwargs")
+
+
 def local_create(client, model: str, _purpose: str = "", **kw):
-    """A local llama-server call, timed for the debug timeline like NVIDIA's (nim.create)."""
-    if model == BOSS_MODEL and not BOSS_SEES[0] and kw.get("messages"):
+    """A local llama-server call, timed for the debug timeline like NVIDIA's (nim.create). Glimmer gets the running
+    task's reasoning level unless the caller set one; a step whose whole budget went to thinking (no answer, no tool
+    call) is asked again with thinking off, which costs nothing in prompt cache."""
+    glimmer = model == BOSS_MODEL
+    if glimmer and not BOSS_SEES[0] and kw.get("messages"):
         kw["messages"] = words_for_pictures(kw["messages"])
+    if glimmer:
+        extra = dict(kw.get("extra_body") or {})
+        if not any(k in extra for k in REASONING_KEYS):
+            extra.update(local_reasoning(EFFORT[EFFORT_NOW.get()]["local"]))
+        kw["extra_body"] = extra
     t0 = time.time()
     chars, images = nim.size_of(kw.get("messages"))
-    rec = {"model": "local: " + str(model), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or []), "wait": 0}
+    extra = kw.get("extra_body") or {}
+    level = "off" if "logit_bias" in extra else extra.get("reasoning_effort", "")
+    rec = {"model": "local: " + str(model), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or []),
+           "wait": 0, **({"reasoning": level} if glimmer and level else {})}
     try:
         r = client.chat.completions.create(model=model, **kw)
     except Exception as e:
@@ -2405,8 +2439,14 @@ def local_create(client, model: str, _purpose: str = "", **kw):
         raise
     u = getattr(r, "usage", None)
     m = r.choices[0].message if r.choices else None
+    thought = len(str((getattr(m, "model_extra", None) or {}).get("reasoning_content") or "")) if m is not None else 0
     nim.trace({**rec, "ok": True, "secs": round(time.time() - t0, 1), "in_tokens": getattr(u, "prompt_tokens", None),
-               "out_tokens": getattr(u, "completion_tokens", None), "calls": [c.function.name for c in (m.tool_calls or [])] if m else []})
+               "out_tokens": getattr(u, "completion_tokens", None), "calls": [c.function.name for c in (m.tool_calls or [])] if m else [],
+               **({"thought_chars": thought} if thought else {})})
+    if (glimmer and m is not None and r.choices[0].finish_reason == "length" and not (m.content or "").strip() and not m.tool_calls
+            and "logit_bias" not in kw["extra_body"]):
+        kw["extra_body"] = kw["extra_body"] | glimmer_off()
+        return local_create(client, model, _purpose=_purpose + " (again, thinking off: the budget went to thinking)", **kw)
     return r
 
 
@@ -2634,10 +2674,12 @@ def loop_goal(task: str) -> str:
     return re.sub(r"^\s*/loop\b\s*", "", task).strip() or task
 
 
-def local_chat(system: str, user: str, max_tokens: int = 300, think: bool = True) -> str:
+def local_chat(system: str, user: str, max_tokens: int = 300, think: bool | str = True) -> str:
+    """One question to Glimmer. think: True = the task's reasoning level, False = none (one-line helpers: thinking used to
+    eat their whole budget and leave no answer), or a level ("low")."""
     client = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=1, timeout=90)
     reply = local_create(client, BOSS_MODEL, _purpose="local helper (" + system.split(".")[0][:40] + ")", temperature=0.1,
-                         max_tokens=max_tokens, extra_body=None if think else NO_THINKING,
+                         max_tokens=max_tokens, extra_body=None if think is True else local_reasoning(think or "off"),
                          messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
     return re.sub(r"<think>.*?</think>", "", reply.choices[0].message.content or "", flags=re.S).strip()
 
@@ -2663,14 +2705,15 @@ def resolve_followup(task: str, conversation: list[dict]) -> str:
     return line if 0 < len(line) <= max(300, 4 * len(task)) else task
 
 
-def check_work(task: str, steps: list[str], answer: str, constraints: str = "", evidence: str = "") -> str:
+def check_work(task: str, steps: list[str], answer: str, constraints: str = "", evidence: str = "", careful: bool = False) -> str:
     """'' when the work looks done; otherwise what is missing, in one sentence. constraints: what the user said not to do;
-    evidence: what the director saw on its screenshots (this checker sees no image)."""
+    evidence: what the director saw on its screenshots (this checker sees no image). careful (High and Max): the
+    checker thinks it over briefly instead of answering straight away."""
     verdict = local_chat(CHECK_SYSTEM, f"Request: {task}" + (f"\nThe user's constraints: {constraints}" if constraints else "") +
                          "\n\nActions and results:\n" + "\n".join(steps[-8:]) +
                          # the director's own words, not proof: only the results above show what really happened
                          (f"\n\nThe deciding model's own (unverified) claim: {evidence[:300]}" if evidence else "") +
-                         f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=120, think=False)  # (thinking ate the 120 tokens: no verdict)
+                         f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=1500 if careful else 200, think="low" if careful else False)
     if verdict.upper().startswith("NO"):
         return verdict[2:].lstrip(" :.-") or "the request doesn't look done yet"
     return ""
@@ -2688,7 +2731,7 @@ def summarize_steps(task: str, old: list[dict], chat=None) -> str:
             lines.append(f"note: {str(m['content'])[:400]}")
     if chat is not None:  # the brain: a fuller summary of more of the run
         return chat(BRAIN_SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines)[-60000:], 1200)
-    return local_chat(SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines), max_tokens=320)
+    return local_chat(SUMMARY_SYSTEM, f"Task: {task}\n\nEarlier steps:\n" + "\n".join(lines), max_tokens=500, think=False)
 
 
 def text_of(res) -> str:
@@ -2726,7 +2769,23 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     """Runs one task (see _run); the focus hint is cleared however it ends."""
     hint_focus("")
     try:
-        return await _run(task, max_steps, options, ask, conversation, images)
+        try:
+            return await _run(task, max_steps, options, ask, conversation, images)
+        except BaseException as err:
+            # Medium: the local model got stuck; the NVIDIA brain takes over from the state the PC is in now, told what
+            # was tried, so it carries on instead of starting over. The Escalate comes out wrapped in the MCP clients'
+            # task groups (it is raised inside their sessions), so it is unwrapped like app.error_text does
+            e = escalation_in(err)
+            if e is None:
+                raise
+            log("escalate", text=str(e)[:300], to="high")
+            hint_focus("")
+            if callable((options or {}).get("on_escalate")):
+                options["on_escalate"]("high")
+            return await _run(task + f"\n\n(A first try on the local model stopped: {e}\nCarry on from where things are now: files "
+                              "it saved and apps it opened are still there, but IO's browser tab and any dialogs it had open were "
+                              "closed, so reopen those if you need them. Don't redo work that is already done.)",
+                              max_steps, {**(options or {}), "effort": "high", "escalated": True}, ask, conversation, images)
     finally:
         hint_focus("")
 
@@ -2746,22 +2805,37 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         **(options or {}),
     }
     (HERE / "logs").mkdir(exist_ok=True)
+    level = options.get("effort") if options.get("effort") in EFFORT else ("high" if options.get("ask_gemini") else "low")
+    eff = EFFORT[level]
+    EFFORT_NOW.set(level)  # Glimmer's reasoning for this task (local_create reads it, also in worker threads)
+    if not loop:
+        max_steps = min(max_steps, eff["steps"])
     boss = OpenAI(base_url=BOSS_URL, api_key="local", max_retries=3, timeout=300)
-    eyes = Eyes(options.get("model_mode", "fast"))
+    eyes = Eyes()
     # one brain: with a director AI set up and an NVIDIA key, a frontier model on NVIDIA's API runs the whole task with
     # IO's tools itself (native tool calls), like Claude does; no JSON director handing steps to a small local model.
-    # The local models stay as eyes (UI-TARS/Qwen find where to click) and as the last fallback.
-    remote_brain = bool(options.get("ask_gemini") and options.get("advisor_role", "director") == "director"
-                        and options.get("gemini_mode") == "nim" and nim.nim_key())
+    # The local models stay as eyes (EvoCUA finds where to click) and as the last fallback.
+    # who decides: High and Max, NVIDIA's models every step; Medium, the local model unless the task is a hard one (below,
+    # once its kind is known) or it gets stuck (Escalate); Low, the local model alone, nothing leaves the PC
+    api_ok = bool(eff["api"] and nim.nim_key())
+    remote_brain = api_ok and eff["api"] is True
     brain_chain = [(boss, BOSS_MODEL)]
     brain_models: list[str] = []  # the NVIDIA models the brain goes round, in order (Settings > Brain)
-    if remote_brain:
+    if api_ok:  # Medium's local brain can still ask them (ask_model) and hand over to them
         nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=300)  # DeepSeek queues ~3 min
         brain_models[:] = [m for m in (options.get("brain_models") or []) if isinstance(m, str) and m.strip()] or list(nim.BRAIN_MODELS)
         brain_chain = [(nim_client, m) for m in brain_models] + brain_chain
-        # look_at_screen: the model Settings picked for it, then the brain's own vision models in order
+
+    def use_remote_eyes() -> None:
+        """look_at_screen: the model Settings picked for it, then the brain's own vision models in order (only when the
+        NVIDIA brain runs the task: a local task's screens stay on the PC)."""
         looker = options.get("vision_model") or ""
         eyes.remote = [(nim_client, m) for m in dict.fromkeys(([looker] if looker else []) + brain_models) if nim.is_vision(m)]
+
+    if remote_brain:
+        use_remote_eyes()
+    log("effort", level=level, brain="nvidia" if remote_brain else "local", reasoning_local=eff["local"],
+        reasoning_api=eff["api_reason"] if api_ok else "", steps=max_steps, escalated=bool(options.get("escalated")))
     brain_at = [0]  # the NVIDIA model that answered last; each step starts there
     # NVIDIA models this PC runs itself (Balanced mode's Muse Glimmer): their turns in the brain's order go to the local
     # copy, so they don't wait in NVIDIA's queue or count against its rate limit. Its turns as look_at_screen's vision
@@ -2806,6 +2880,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         def prepare(model: str, kw: dict) -> dict:
             """The request as this model needs it."""
             kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
+            # this level's reasoning, in the model's own words; Ultracode's helpers think at Medium's, so five of them at
+            # once still finish their parts quickly (slower answers hold NVIDIA's request slots longer)
+            kw2.update(nim.reasoning(model, "medium" if role == "helper step" else eff["api_reason"]))
             if not nim.is_vision(model):
                 kw2["messages"] = text_only(kw2["messages"])
             elif model in nim.ONE_IMAGE:
@@ -2824,6 +2901,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             request fits its context (otherwise NVIDIA's copy takes it)."""
             if model in local_twins:
                 kw2 = prepare(model, kw)
+                kw2.pop("reasoning_effort", None)  # NVIDIA's switch; the local copy gets this level's own, set here because
+                kw2["extra_body"] = local_reasoning("medium" if role == "helper step" else eff["local"])  # race threads start bare
                 chars, _pics = nim.size_of(kw2["messages"])
                 if chars + len(json.dumps(kw2.get("tools") or [])) < LOCAL_TWIN_CHARS:
                     kw2["messages"] = text_only(kw2["messages"])  # it reads text only; it can call look_at_screen
@@ -2888,7 +2967,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             finished.set()
 
             for i in entrants:
-                threading.Thread(target=run, args=(i,), daemon=True).start()
+                threading.Thread(target=contextvars.copy_context().run, args=(run, i), daemon=True).start()  # the task's level goes along
             while not finished.wait(0.5):
                 if stop is not None and stop.is_set():
                     break
@@ -2977,8 +3056,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     def helper_roster() -> dict[str, tuple]:
         """The models ask_model can consult: short name -> (client, model id, sees screenshots, one-line card). The card
         is what the brain chooses by: what each is good at and how long it has been taking, measured this session."""
-        out = {"local": (boss, BOSS_MODEL, eyes.mode == "smart",
-                         "the local model on this PC: free, private, no rate limit" + (", sees screenshots" if eyes.mode == "smart" else ", text only"))}
+        out = {"local": (boss, BOSS_MODEL, False, "the local model on this PC: free, private, no rate limit, text only")}
         for m in brain_models:
             secs = nim._health.get(m, {}).get("avg") or (nim.tests().get(m) or {}).get("secs")
             sees = nim.is_vision(m)
@@ -3010,10 +3088,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         t0 = time.time()
         try:
             if client is boss:
-                r = local_create(boss, BOSS_MODEL, _purpose=f"ask_model ({name})", messages=messages, temperature=0.2, max_tokens=700)
+                r = local_create(boss, BOSS_MODEL, _purpose=f"ask_model ({name})", messages=messages, temperature=0.2, max_tokens=1500,
+                                 extra_body=local_reasoning("low"))
             else:
-                r = nim.create(client, _purpose=f"ask_model ({name})", model=model, messages=messages, temperature=0.2, max_tokens=700,
-                               timeout=240 if model in nim.SLOW_QUEUE else 90)
+                r = nim.create(client, _purpose=f"ask_model ({name})", model=model, messages=messages, temperature=0.2, max_tokens=3000,
+                               timeout=240 if model in nim.SLOW_QUEUE else 90, **nim.reasoning(model, eff["api_reason"]))
                 nim.note(model, time.time() - t0, True)
         except Exception as e:
             if client is not boss:
@@ -3066,6 +3145,20 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             except Exception as e:
                 log("warning", text=f"browser tools unavailable: {e}")
 
+        standalone = task
+        if conversation:
+            try:
+                standalone = await asyncio.to_thread(resolve_followup, task, conversation) or task
+            except Exception as e:
+                log("warning", text=f"couldn't resolve the follow-up: {e}")
+        if level == "medium" and api_ok and not remote_brain:
+            # the route table's own idea of a hard task: driving apps, open-ended work and standing loops already wanted
+            # the stronger brain (decider "director"); chat, facts, files, settings and the like stay on the local model
+            early = actions.route_of(standalone, loop, bool(images))
+            if early.decider == "director":
+                remote_brain = True
+                use_remote_eyes()
+                log("effort", level=level, brain="nvidia", why=f"a {early.kind} task: the NVIDIA models take the hard ones")
         # installed plugins from the Customize page, exposed as "<plugin>_<tool>"
         plugin_tools = await plugins.start_enabled(stack, log=lambda m: log("warning", text=m))
         plugin_defs = {}
@@ -3098,12 +3191,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # next to the task, where a small model actually reads it (it overlooks notes in the system prompt)
             memo = "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:])
             prompt = (f"Your saved notes (use them when relevant):\n{memo}\n\n" if notes else "") + (f"{skills}\n\n" if skills else "") + f"Task: {task}"
-        standalone = task
-        if conversation:
-            try:
-                standalone = await asyncio.to_thread(resolve_followup, task, conversation) or task
-            except Exception as e:
-                log("warning", text=f"couldn't resolve the follow-up: {e}")
+        if conversation:  # (resolved above)
             if standalone.strip().lower() != task.strip().lower():
                 log("resolved", text=standalone)
                 prompt += f"\n\n(This continues the conversation above. In context, the user means: {standalone})"
@@ -3202,6 +3290,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                          if n not in raw or re.search(raw[n], standalone, re.I)] + ["ask_user", "done", "tools"]
             if REMEMBER_REQUEST.search(standalone):
                 first.append("remember")
+            if api_ok and not remote_brain and not loop and "ask_model" not in first:
+                first.append("ask_model")  # Medium: a hard question can go to an NVIDIA model without handing over the task
             apply_menu(first)
             system = layer_system(menu_names, browser_where, remote_brain)
         elif "browser_navigate" in sessions:
@@ -3242,16 +3332,16 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 redos += 1
                 log("check", text=unmade)
                 return f"Not done yet: {unmade} Do it and check it, or say plainly that it wasn't done."
-            if not steps_log or redos >= MAX_REDOS or remote_brain:  # a frontier brain checks the rest itself
+            if not steps_log or redos >= MAX_REDOS or (remote_brain and not eff["check"]):
                 return ""
             try:
                 if layer:  # the resolved request, the user's constraints and what the director saw on screen
                     rules = "; ".join(x for x in (actions.constraints_text(ctx.constraints),
                                                   "the request doesn't say which one, so asking the user and opening nothing until they say is right"
                                                   if vague else "") if x)
-                    problem = await asyncio.to_thread(check_work, ctx.request, steps_log, answer, rules, director_saw if director else "")
+                    problem = await asyncio.to_thread(check_work, ctx.request, steps_log, answer, rules, director_saw if director else "", eff["check"])
                 else:
-                    problem = await asyncio.to_thread(check_work, task, steps_log, answer)
+                    problem = await asyncio.to_thread(check_work, task, steps_log, answer, "", "", eff["check"])
             except Exception as e:
                 log("warning", text=f"couldn't check the work: {e}")
                 return ""
@@ -3290,7 +3380,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             try:
                 t0 = time.time()
                 text = await asyncio.to_thread(planner.plan_local, standalone, context, BOSS_URL, BOSS_MODEL, history,
-                                               actions.planner_text(menu_names) if layer else "")
+                                               actions.planner_text(menu_names) if layer else "", local_reasoning("low"))
             except Exception as e:
                 log("warning", text=f"planning failed: {e}")
                 return
@@ -3306,7 +3396,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """The hidden researcher (signed-out Gemini, Google as the fallback), started on first use."""
             nonlocal researcher
             if researcher is None:
-                researcher = Researcher(stack, use_gemini=not remote_brain)
+                researcher = Researcher(stack)
             return researcher
 
         async def research_for(question: str) -> str:
@@ -3335,7 +3425,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             log("loop", goal=task, window=focus)
             if not layer:
                 tools.append(RESEARCH_TOOL)
-            researcher = Researcher(stack, use_gemini=bool(options.get("ask_gemini")) and not remote_brain)  # no web chat AIs with the NVIDIA brain
+            researcher = Researcher(stack)  # never a web chat AI: Low keeps everything on the PC
             gemini = None if remote_brain else make_director(stack, options)  # one brain: it is the director
             director = bool(gemini) and options.get("advisor_role", "director") == "director"
             if layer:
@@ -3427,7 +3517,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # models are its eyes and hands (finding and clicking things) and take over only if no director answers
             director = bool(gemini)
             if director and not layer:  # it can look things up too: Gemini signed out (or Google) in a hidden browser
-                researcher = Researcher(stack, use_gemini=not remote_brain)
+                researcher = Researcher(stack)
                 tools.append(RESEARCH_TOOL)
 
             def window_shot() -> bytes:
@@ -3619,7 +3709,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             t0 = time.time()
             try:
                 r = await asyncio.to_thread(
-                    brain_create, tools=done_tool, temperature=0, max_tokens=400, extra_body=NO_THINKING,
+                    brain_create, tools=done_tool, temperature=0, max_tokens=400, extra_body=local_reasoning("off"),
                     messages=compact(messages, snaps_kept=snaps_kept) + [{"role": "user", "content": FINISH_CHECK.format(task=ctx.request or task)}])
                 calls = r.choices[0].message.tool_calls or []
             except Exception as e:
@@ -3685,7 +3775,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 except Exception as e:
                     print(f"couldn't learn from the run: {e}", flush=True)
 
-            threading.Thread(target=work, daemon=True).start()
+            threading.Thread(target=contextvars.copy_context().run, args=(work,), daemon=True).start()
 
         async def ultracode() -> None:
             """Ultracode: the brain writes a plan, sub-agents do its parallel parts (ULTRA_MAX_AGENTS at once, each with its
@@ -3833,7 +3923,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 messages.append({"role": "user", "content": note.strip()})
             log("ultra", agents=len(par), secs=round(time.time() - t0, 1))
 
-        if options.get("ultracode") and layer and not loop and route.kind not in ("chat", "images", "knowledge"):
+        if eff["ultracode"] and layer and not loop and route.kind not in ("chat", "images", "knowledge"):
             if not remote_brain:
                 log("warning", text="Ultracode needs the NVIDIA brain (Settings > Brain); working step by step")
             elif images:
@@ -3874,6 +3964,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 # it told a frontier brain it was "stuck" 10 steps into good research, and the new plan started it over
                 stuck = (error_streak >= REPLAN_AFTER_ERRORS or (not remote_brain and step - last_plan_step > REPLAN_AFTER_STEPS)) \
                     and replans < MAX_REPLANS
+            if (stuck and error_streak >= REPLAN_AFTER_ERRORS and not loop and level == "medium" and api_ok and not remote_brain
+                    and replans >= MEDIUM_LOCAL_REPLANS):  # a long but healthy run keeps its steps (out of steps hands over too)
+                raise Escalate("steps kept failing, even after a new plan. Its last actions:\n" + "\n".join(steps_log[-10:]))
             if stuck:
                 replans, last_plan_step, error_streak = replans + 1, step, 0
                 if remote_brain:
@@ -3937,7 +4030,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             brain_create,
                             messages=seen(compact(messages, keep=keep_full, trim=4000, snaps_kept=2, cap=tool_cap) if remote_brain else
                                           compact(messages, keep=1, trim=800, snaps_kept=1, cap=tool_cap)), tools=tools,
-                            temperature=0.3, max_tokens=BRAIN_MAX_OUT if remote_brain else 1024,
+                            temperature=0.3, max_tokens=BRAIN_MAX_OUT if remote_brain else eff["out"],
                         )
                     except Exception as e:
                         log("warning", text=f"loop step {step} failed, retrying: {e}"[:300])
@@ -3956,7 +4049,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     # read the same pages again and again
                     messages=seen(compact(messages, keep=keep_full, snaps_kept=snaps_kept,
                                           cap=tool_cap if remote_brain else 0)), tools=tools, temperature=0.2,
-                    max_tokens=BRAIN_MAX_OUT if remote_brain else 1024, strong=error_streak > 0,
+                    max_tokens=BRAIN_MAX_OUT if remote_brain else eff["out"], strong=error_streak > 0,
                 )
             except BadRequestError as e:
                 if "context" not in str(e).lower():
@@ -4535,6 +4628,8 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     if not w_arg or w_arg in focus_hint.lower() or focus_hint.lower() in w_arg:
                         hint_focus("")  # its window is gone: the glow follows the foreground window again
 
+        if level == "medium" and api_ok and not remote_brain and not loop:
+            raise Escalate(f"it used all {max_steps} steps without finishing. Its last actions:\n" + "\n".join(steps_log[-10:]))
         log("gave_up", steps=max_steps)
         learn_now(f"ran out of steps ({max_steps}) without finishing")
         return f"stopped after {max_steps} steps without finishing"

@@ -19,10 +19,10 @@
 ---
 
 IO (named after Jupiter's moon) is a local assistant that operates your PC the way a person would. A local model
-plans and decides, UI-TARS-1.5 finds things on screen, and [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)
-reads the accessibility tree so most clicks land on real controls instead of guessed pixels. If you have a key, a
-stronger brain on NVIDIA's free API can take over planning, while the local models stay on as eyes and as the
-fallback.
+(Muse Glimmer 30B) plans and decides, EvoCUA-8B finds things on screen, and
+[Windows-MCP](https://github.com/CursorTouch/Windows-MCP) reads the accessibility tree so most clicks land on real
+controls instead of guessed pixels. If you have a key, the Effort setting lets a stronger brain on NVIDIA's free API
+take over hard tasks or all of them, while the local models stay on as eyes and as the fallback.
 
 ## Highlights
 
@@ -66,23 +66,30 @@ locked window.
 
 ## Models
 
-Pick a mode in Settings. Everything here runs locally through llama.cpp (Unsloth Studio's build).
+Two local models run all the time, side by side on llama.cpp (Unsloth Studio's build): **Muse Glimmer 30B**
+(3-bit GGUF, text only) thinks and calls tools, and **EvoCUA-8B**, Meituan's computer-use model, sees and clicks.
+Glimmer reads EvoCUA's descriptions of pictures.
 
-| Mode | Thinks | Sees and clicks | Notes |
+How hard IO works is one setting, **Effort**. Pick it in Settings, or for a single message when you send it.
+Changing it reloads nothing: every level uses the same two local models.
+
+| Effort | Who decides | Reasoning | What it does |
 | --- | --- | --- | --- |
-| **Fast** | Gemma 4 E4B | UI-TARS-1.5-7B | Quickest |
-| **Balanced** | Muse Glimmer 30B (3-bit, text only) | EvoCUA-8B | Meituan's computer-use model clicks; Glimmer reads its descriptions of pictures |
-| **Smart** | Qwen 3.8 27B | Qwen 3.8 27B | Strongest local option, several times slower |
+| **Low** | Muse Glimmer, on your PC | Low | Nothing leaves the PC. Quickest |
+| **Medium** | Muse Glimmer; hard tasks and goals go to NVIDIA's models | Medium | Tasks that need a stronger brain start on NVIDIA's, and a local run that keeps failing hands over to it |
+| **High** | NVIDIA's models | High | More steps, and a second look at the work before the answer |
+| **Max** | NVIDIA's models | Max | High, plus Ultracode: the brain can split a task among helpers that work on its parts at once |
 
-**Optional cloud brain:** paste an NVIDIA API key in Settings and choose the models (GLM-5.3 Flash, Kimi K3,
+**NVIDIA models:** paste an NVIDIA API key in Settings and choose the models (GLM-5.3 Flash, Kimi K3,
 Nemotron 3 Nano Omni, Llama 3.2 90B Vision and others; Settings can test any model in NVIDIA's catalog). IO goes
 round them in order, skips ones that are failing or slow, and falls back to the local model if none answers.
+Without a key, every task runs at Low.
 
 ## Using it
 
 IO installs as a normal per-user app: open it from the Start menu, pin it to the taskbar, or turn on
 **Start with Windows** in the tray menu. Closing the window keeps it in the tray, so queued and scheduled tasks keep
-running. On start it launches Unsloth Studio, loads UI-TARS and starts the local model as needed.
+running. On start it runs `start-balanced-server.cmd` to load the two local models if they aren't up yet.
 
 The panel is also served at http://127.0.0.1:8765, so other programs can queue work:
 
@@ -118,9 +125,15 @@ packet (the PC must be on Ethernet).
 
 ## Setup from scratch
 
-**Needs:** Windows 11, an NVIDIA GPU, Node.js, [uv](https://docs.astral.sh/uv/), and
-[Unsloth Studio](https://unsloth.ai) with UI-TARS-1.5-7B (Q8_0) and its llama.cpp build. The model for your mode
-goes in the Hugging Face cache; the `start-*-server.cmd` scripts show which files each mode expects.
+**Needs:** Windows 11, an NVIDIA GPU (both models fit side by side in 24 GB), Node.js,
+[uv](https://docs.astral.sh/uv/), and [Unsloth Studio](https://unsloth.ai). IO only uses Studio for its llama.cpp
+build (`%USERPROFILE%\.unsloth\llama.cpp`) and the CUDA libraries that come with it; Studio itself doesn't need to
+run. The models go in `%USERPROFILE%\models`:
+
+- `Muse-Glimmer-30B-UD-Q3_K_XL.gguf` (thinks)
+- `evocua-8b-UD-Q4_K_XL.gguf` and `mmproj-evocua-8b-f16.gguf` (sees and clicks, with its vision part)
+
+`start-balanced-server.cmd` starts them on llama-server: EvoCUA on port 8091 first, then Glimmer on 8090.
 
 ```bash
 uv venv --python 3.14 .venv
@@ -135,13 +148,12 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 
 **Without the window:** `.venv\Scripts\python.exe boss.py "open notepad and type hello"`. Every step is logged to
 `logs/boss.jsonl`, and the panel's debug timeline shows every model call, screenshot and tool with timings.
-`toolcheck.py` (Settings > Tools) tests every tool without touching the screen.
+`toolcheck.py` (Settings > Tools) tests every tool and both model servers without touching the screen.
 
 | Variable | Default |
 | --- | --- |
-| `BOSS_URL` / `BOSS_MODEL` | `http://127.0.0.1:8090/v1` / `boss` |
-| `EYES_URL` / `EYES_MODEL` | `http://127.0.0.1:8888/v1` / `mradermacher/UI-TARS-1.5-7B-GGUF` |
-| `STUDIO_API_KEY` | `data/studio.json`, else UI-TARS Desktop's saved settings |
+| `BOSS_URL` / `BOSS_MODEL` | `http://127.0.0.1:8090/v1` / `boss` (Muse Glimmer) |
+| `EVO_URL` | `http://127.0.0.1:8091/v1` (EvoCUA) |
 | `BOSS_APP_PORT` | `8765` |
 
 ## Project layout
@@ -157,14 +169,18 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 | `plugins.py`, `catalog.json` | One-click MCP plugins |
 | `triggers.py` | Folder and webhook triggers |
 | `remote.py`, `static/sw.js` | Phone access: pairing, device tokens, Tailscale, the offline Wake screen |
-| `bench/` | Regression benchmark |
+| `start-balanced-server.cmd` | Starts the two local models on llama-server (Glimmer on 8090, EvoCUA on 8091) |
+| `toolcheck.py` | Tests every tool and both model servers without touching the screen |
+| `bench/` | Regression benchmark, one cell per effort level |
 | `chrome-extension/` | Modified Playwright Extension for driving your Chrome |
 
 ## Credits
 
-- [UI-TARS-1.5](https://github.com/bytedance/UI-TARS) by ByteDance for screen grounding.
-  `extras/ui-tars-desktop.patch` holds the changes made to
-  [UI-TARS-desktop](https://github.com/bytedance/UI-TARS-desktop) while testing it with Unsloth Studio.
+- EvoCUA by Meituan for screen grounding, and Muse Glimmer for thinking, both run on
+  [llama.cpp](https://github.com/ggml-org/llama.cpp).
+- `extras/ui-tars-desktop.patch` holds the changes made to
+  [UI-TARS-desktop](https://github.com/bytedance/UI-TARS-desktop) back when IO used ByteDance's
+  [UI-TARS-1.5](https://github.com/bytedance/UI-TARS) in Unsloth Studio for screen grounding.
 - [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) for the accessibility tree and input.
 - [Playwright MCP](https://github.com/microsoft/playwright-mcp); `chrome-extension/` is a modified copy of
   Microsoft's Playwright Extension (Apache-2.0), see its NOTICE.

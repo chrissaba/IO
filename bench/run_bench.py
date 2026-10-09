@@ -5,13 +5,19 @@ Drivers:
   direct (default)  boss.run() in this process, with the code on disk now: tests a change without restarting IO
   http              the running app through its API (after the user restarted IO)
 
-    .venv\\Scripts\\python.exe bench\\run_bench.py --only chat,P1 --director off
-    .venv\\Scripts\\python.exe bench\\run_bench.py --suite smoke --director off,on --repeat 2 --save-baseline
-    .venv\\Scripts\\python.exe bench\\run_bench.py --suite full --mode balanced --baseline bench\\baseline.json
+    .venv\\Scripts\\python.exe bench\\run_bench.py --only chat,P1 --effort low
+    .venv\\Scripts\\python.exe bench\\run_bench.py --suite smoke --efforts low,medium --repeat 2 --save-baseline
+    .venv\\Scripts\\python.exe bench\\run_bench.py --suite full --effort high --baseline bench\\baseline.json
+
+Each cell is one effort level (low, medium, high, max; default: the one saved in IO's settings). Every level runs on
+the same two local models (Muse Glimmer thinks, EvoCUA sees and clicks), so changing it reloads nothing: low keeps
+everything local, medium escalates hard tasks and goals to NVIDIA's models, high lets the NVIDIA brain run the task,
+max adds Ultracode helpers. The direct driver passes the effort in the task's options; the http driver sends it with
+each chat message (and sets IO's effort setting for the run, put back at the end).
 
 It shares the PC with IO and with you: it waits until IO is idle, pauses IO's queue while it runs (direct driver),
 skips tasks whose app you already have open, closes only windows created during a task, discards Notepad tabs only
-when their text is the bench's own, and restores your clipboard, IO's paused state and IO's model mode at the end.
+when their text is the bench's own, and restores your clipboard, IO's paused state and IO's effort at the end.
 The bench itself never imports actions.py; the direct driver's boss.run does, so it measures the code on disk. To measure
 without the action layer, set data/actions.json to {"enabled": false} (note: the running IO reads that file too, within 5 s).
 """
@@ -66,6 +72,10 @@ CHECK_TYPES = {
     "no_new_window", "file", "no_process", "tools_chars_max", "verify", "http",
 }
 POLICY_CHECKS = {"max_tools", "max_director_rounds", "tools_chars_max"}
+# IO's effort scale (settings.effort / options["effort"]); every level uses the same local models, so no reloads
+EFFORTS = ("low", "medium", "high", "max")
+# options boss.py no longer reads (effort replaced them): kept out of a run's options so stale saved values can't leak in
+LEGACY_OPTIONS = ("model_mode", "ask_gemini", "ultracode", "advisor_role", "gemini_mode")
 SETUP_OPS = {"sandbox", "write", "files", "bigfiles", "open", "maximize", "clip", "python"}
 # windows that come and go on their own: never a leftover, never "your window disappeared"
 IGNORE_TITLES = re.compile(r"^(Program Manager|Windows Input Experience|NVIDIA GeForce Overlay|Task Switching|Start|Search|"
@@ -685,8 +695,8 @@ def check(c: dict, run: dict, ctx: dict) -> tuple[bool, str]:
         good = sum(1 for e in director if e.get("actions"))
         return good / len(director) >= c["min"], f"{good}/{len(director)} usable"
     if t == "max_secs":
-        if c.get("modes") and ctx["mode"] not in c["modes"]:
-            return True, f"n/a in {ctx['mode']} mode"
+        if c.get("efforts") and ctx.get("effort") not in c["efforts"]:
+            return True, f"n/a at {ctx.get('effort') or 'this'} effort"
         return run["secs"] <= c["n"], f"{run['secs']}s"
     if t == "asked":
         qs = run.get("questions", [])
@@ -793,6 +803,11 @@ def load_tasks() -> list[dict]:
                 problems.append(f"{tid}: unknown gt {c['gt']}")
             if c.get("app") and c["app"] not in APPS:
                 problems.append(f"{tid}: unknown app {c['app']}")
+            if "modes" in c:
+                problems.append(f"{tid}: {c.get('type')} has 'modes', but the model modes are gone: use 'efforts' (low, medium, high, max)")
+            for e in c.get("efforts", []):
+                if e not in EFFORTS:
+                    problems.append(f"{tid}: unknown effort {e!r} in {c.get('type')}.efforts")
             for key in ("pattern", "name", "args", "result", "yes", "no", "title", "text", "contains", "none"):
                 if isinstance(c.get(key), str):
                     try:
@@ -1078,24 +1093,27 @@ def chrome_token() -> str:
         return ""
 
 
+def nim_key_set() -> bool:
+    try:
+        return bool((REPO / "data" / "nim_key.txt").read_text(encoding="utf-8").strip())
+    except OSError:
+        return False
+
+
 def base_options(cell: dict, task: dict, boss) -> dict:
-    """Like app.worker builds them: your saved settings, IO's Chrome token, plus this cell's model mode and director."""
+    """Like app.worker builds them: your saved settings, IO's Chrome token, plus this cell's effort."""
     try:
         settings = json.loads((REPO / "data" / "store.json").read_text(encoding="utf-8"))["settings"]
     except (OSError, ValueError, KeyError):
         settings = {}
     defaults = {"allow_powershell": True, "confirm_risky": True, "browser": True, "files": True, "browser_mode": "edge"}
-    # every saved setting (brain models, race width, vision model...), so a run measures IO as you use it
-    options = {**defaults, **{k: v for k, v in settings.items() if k not in ("theme", "debug", "notify", "hotkeys", "focus_glow")}}
+    # every saved setting (brain models, race width, vision model...), so a run measures IO as you use it; not the old
+    # model mode / director / Ultracode switches, which the effort now decides
+    skip = ("theme", "debug", "notify", "hotkeys", "focus_glow") + LEGACY_OPTIONS
+    options = {**defaults, **{k: v for k, v in settings.items() if k not in skip}}
     options["chrome_token"] = chrome_token()
     options["max_steps"] = settings.get("max_steps", 30)  # what app.worker gives a task (run_direct takes it out again)
-    options["model_mode"] = cell["mode"]
-    if cell["director"]:
-        # nim: GLM-5.3 Flash with Duck.ai behind it (director_order from your settings); duck: Duck.ai alone
-        options.update(ask_gemini=True, gemini_mode=cell.get("ai", "nim"), advisor_role="director",
-                       director_order=settings.get("director_order", "glm_first"))
-    else:
-        options.update(ask_gemini=False, gemini_mode=settings.get("gemini_mode", "private"), advisor_role=settings.get("advisor_role", "director"))
+    options["effort"] = cell["effort"] if nim_key_set() else "low"  # app.task_effort: without a key every task runs at Low
     options["focus_glow"] = False
     options["learn"] = False  # bench tasks must not teach IO playbooks (six had piled up and one derailed a later task)
     options["images_from_earlier"] = False
@@ -1137,7 +1155,9 @@ async def run_direct(task: dict, cell: dict, ctx: dict, earlier: list[dict], tim
     options = base_options(cell, task, boss)
     conversation = conversation_of(earlier, boss)
     boss.listeners.append(collect)
-    run = {"status": "", "answer": "", "error": "", "stop_secs": None, "had_conversation": bool(conversation)}
+    run = {"status": "", "answer": "", "error": "", "stop_secs": None, "had_conversation": bool(conversation), "escalated_to": ""}
+    # Medium: boss.py calls this when it hands a stuck task to the NVIDIA brain (app.worker records it on the task)
+    options["on_escalate"] = lambda level, *_a, **_k: run.update(escalated_to=str(level))
     ctx["t0"] = time.time()
     max_steps = int(task.get("max_steps") or options.pop("max_steps", 0) or 30)
     quiet = contextlib.ExitStack()
@@ -1182,7 +1202,7 @@ async def run_http(task: dict, cell: dict, ctx: dict, chats: dict, timeout: floa
     if key not in chats:
         chats[key] = (await asyncio.to_thread(api, "/api/chats", {}))["id"]
     ctx["t0"] = time.time()
-    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop")), "ultracode": False, "learn": False}))["task_id"]
+    tid = (await asyncio.to_thread(api, f"/api/chats/{chats[key]}/messages", {"text": task["text"], "loop": bool(task.get("loop")), "effort": cell["effort"], "learn": False}))["task_id"]
     run = {"status": "", "answer": "", "error": "", "stop_secs": None, "questions": [], "had_conversation": bool(task.get("chat"))}
     answered, t_stop, t = set(), None, {}
     limit = task.get("run_secs") or timeout
@@ -1218,6 +1238,7 @@ async def run_http(task: dict, cell: dict, ctx: dict, chats: dict, timeout: floa
     if run["status"] == "error":
         run["error"] = t.get("summary", "")
     run["events_full"] = t.get("events", [])
+    run["escalated_to"] = str(t.get("effort") or "") if t.get("escalated") else ""
     return run
 
 
@@ -1237,19 +1258,21 @@ def wait_idle(limit: float = 900) -> bool:
     return False
 
 
-def set_mode(mode: str, wait: bool = True) -> bool:
-    """Switches IO's model mode and waits until both models report ready 3 times in a row (and at least 20 s)."""
-    api("/api/settings", {"model_mode": mode})
-    if not wait:
-        return True
-    t0, streak = time.time(), 0
-    while time.time() - t0 < 900:
-        time.sleep(2)
-        st = (io_state() or {}).get("status", {})
-        streak = streak + 1 if st.get("boss") == "ready" and st.get("eyes") == "ready" else 0
-        if streak >= 3 and time.time() - t0 >= 20:
-            return True
-    return False
+def saved_effort(state: dict | None) -> str:
+    """IO's effort setting: from the running app, else data/store.json, else High (app.py's default)."""
+    effort = (state or {}).get("settings", {}).get("effort")
+    if effort not in EFFORTS:
+        try:
+            effort = json.loads((REPO / "data" / "store.json").read_text(encoding="utf-8"))["settings"].get("effort")
+        except (OSError, ValueError, KeyError):
+            effort = None
+    return effort if effort in EFFORTS else "high"
+
+
+def set_effort(effort: str) -> None:
+    """Sets IO's effort setting. Every level runs on the same local models, so nothing reloads and there's nothing to
+    wait for."""
+    api("/api/settings", {"effort": effort})
 
 
 def director_note(r: dict) -> str:
@@ -1345,6 +1368,8 @@ def write_reports(path: Path, meta: dict, results: list[dict], summary: dict, fa
                 notes.append(f"error: {r['error']}")
             if r.get("teardown_problems"):
                 notes += r["teardown_problems"]
+            if r.get("escalated_to"):
+                notes.append(f"escalated to {r['escalated_to']}")
             cell_text = "; ".join(notes).replace("|", "/").replace("\n", " ")[:400]
             md.append(f"| {r['task']}#{r['repeat']} | {r['cat']} | {'PASS' if r['pass'] else 'FAIL'} | {'ok' if inv_ok else 'FAIL'} | {r['secs']} | "
                       f"{r['tools']} | {r['director_rounds']}{director_note(r)} | {cell_text} |")
@@ -1374,7 +1399,7 @@ def save_baseline(summary: dict, stamp: str) -> None:
 
 def dry_run(tasks: list[dict]) -> int:
     say(f"tasks.json: {len(tasks)} tasks OK ({sum('smoke' in t['suites'] for t in tasks)} in smoke)")
-    ctx = {"t0": time.time(), "t1": time.time(), "pre_windows": windows(), "mode": "fast"}
+    ctx = {"t0": time.time(), "t1": time.time(), "pre_windows": windows(), "effort": ""}
     for name, fn in GT.items():
         try:
             arg = {"app_installed": "runescape", "folder_size_bytes": str(HERE), "newest_files": {"dir": str(HERE), "n": 3}}.get(name)
@@ -1415,15 +1440,17 @@ async def main_async(args) -> int:
         warnings.append("IO isn't reachable: running without pausing it (and the http driver can't run)")
         if args.driver == "http":
             raise SystemExit("the http driver needs IO running")
-    current = (state or {}).get("settings", {}).get("model_mode") or json.loads((REPO / "data" / "store.json").read_text(encoding="utf-8"))["settings"].get("model_mode", "fast")
-    modes = [current if m == "current" else m for m in (args.mode or args.modes).split(",")]
-    if len(modes) > 1 and any(m != current for m in modes) and not args.allow_mode_switch:
-        raise SystemExit("several modes need --allow-mode-switch (it reloads IO's models)")
-    if any(m != current for m in modes) and state is None:
-        raise SystemExit("switching modes needs IO running")
-    directors = [d.strip() == "on" for d in args.director.split(",")]
-    on = "on" if args.director_ai == "duck" else "on-glm"  # (earlier reports' director-on cells were Duck.ai)
-    cells = [{"mode": m, "director": d, "ai": args.director_ai, "key": f"{m}/director-{on if d else 'off'}"} for m in modes for d in directors]
+    current = saved_effort(state)
+    efforts: list[str] = []
+    for e in (w.strip().lower() for w in (args.efforts or args.effort or "current").split(",")):
+        e = current if e in ("current", "saved") else e
+        if e and e not in efforts:
+            efforts.append(e)
+    efforts = efforts or [current]
+    unknown = [e for e in efforts if e not in EFFORTS]
+    if unknown:
+        raise SystemExit(f"unknown effort {', '.join(unknown)}: use low, medium, high, max or current")
+    cells = [{"effort": e, "key": f"effort-{e}"} for e in efforts]
     repeat = args.repeat or (2 if args.suite == "full" and not args.only else 1)
 
     # your clipboard: saved now, put back however the bench ends
@@ -1446,34 +1473,29 @@ async def main_async(args) -> int:
             was_paused = bool((io_state() or state)["status"].get("paused"))
             api("/api/pause", {"paused": True})
             RESTORE.add("IO's paused state", lambda: api("/api/pause", {"paused": was_paused}))
-        if any(m != current for m in modes):
-            RESTORE.add("IO's model mode", lambda: set_mode(current, wait=False))
-    http_settings = {}
-    if args.driver == "http" and state is not None:
-        http_settings = {k: state["settings"].get(k) for k in ("ask_gemini", "gemini_mode", "advisor_role")}
-        RESTORE.add("IO's director settings", lambda: api("/api/settings", http_settings))
+    if args.driver == "http" and state is not None and any(e != current for e in efforts):
+        # the http driver also sets IO's effort per cell (each message carries it too): put yours back at the end
+        RESTORE.add("IO's effort", lambda: set_effort(current))
 
     boss_log = None if args.verbose else open(out_dir / "boss.log", "a", encoding="utf-8")
     results: list[dict] = []
     chats: dict = {}
     t_run = time.time()
     meta = {"stamp": stamp, "driver": args.driver, "suite": args.only or args.suite, "repeat": repeat, "cells": [c["key"] for c in cells],
-            "baseline": args.baseline or "", "warnings": warnings, "sandbox": str(SANDBOX), "io_mode_at_start": current}
+            "baseline": args.baseline or "", "warnings": warnings, "sandbox": str(SANDBOX), "io_effort_at_start": current}
     say(f"IO bench {stamp}: {len(tasks)} task(s) x {len(cells)} cell(s) x {repeat}, driver {args.driver}; report in {out_dir}")
     stopped = ""
     try:
         for cell in cells:
-            if state is not None and cell["mode"] != ((io_state() or {}).get("settings", {}).get("model_mode")):
-                say(f"switching IO to {cell['mode']} mode (reloads the models)...")
-                if not set_mode(cell["mode"]):
-                    warnings.append(f"{cell['key']}: the models weren't ready 15 minutes after switching; cell skipped")
-                    continue
-            if args.driver == "http":
-                api("/api/settings", {"ask_gemini": True, "gemini_mode": cell["ai"], "advisor_role": "director"} if cell["director"] else {"ask_gemini": False})
-            if cell["director"] and args.driver == "direct" and cell["ai"] == "duck" and not chrome_token():
-                warnings.append(f"{cell['key']}: no Chrome token in data/browser.json, so the director (Duck.ai in Chrome) can't connect")
-            if cell["director"] and cell["ai"] == "nim" and not (REPO / "data" / "nim_key.txt").is_file():
-                warnings.append(f"{cell['key']}: no NVIDIA key in data/nim_key.txt, so GLM can't answer (Duck.ai and the local model stand in)")
+            if args.driver == "http" and cell["effort"] != ((io_state() or {}).get("settings", {}).get("effort") or current):
+                say(f"setting IO's effort to {cell['effort']}")
+                try:
+                    set_effort(cell["effort"])
+                except Exception as e:
+                    warnings.append(f"{cell['key']}: couldn't set IO's effort ({error_text(e)}); each message still carries it")
+            if cell["effort"] != "low" and not nim_key_set():
+                warnings.append(f"{cell['key']}: no NVIDIA key in data/nim_key.txt, and without one IO runs every task at Low "
+                                f"(so does this cell)")
             for rep in range(1, repeat + 1):
                 chat_runs: dict[str, list[dict]] = {}
                 for task in tasks:
@@ -1490,7 +1512,7 @@ async def main_async(args) -> int:
                     SANDBOX.mkdir(parents=True, exist_ok=True)
                     pre = snapshot()
                     ctx = {"t0": time.time(), "pre_windows": pre["windows"], "pre_hwnds": pre["hwnds"], "pre_pids": pre["pids"],
-                           "setup_hwnds": set(), "mode": cell["mode"]}
+                           "setup_hwnds": set(), "effort": cell["effort"]}
                     err = do_setup(task, ctx)
                     sentinel = f"IO-BENCH-CLIP-{len(results) + 1}"
                     try:
@@ -1535,6 +1557,7 @@ async def main_async(args) -> int:
                         "director_via": [f"{e.get('via', '')}{'/' + e['model'] if e.get('model') else ''}" for e in director],
                         "director_secs": [e.get("secs") for e in director],
                         "questions": run.get("questions", []), "had_conversation": run.get("had_conversation", False),
+                        "escalated_to": run.get("escalated_to", ""),
                         "plan": next((str(e.get("plan", ""))[:600] for e in events if e.get("event") == "plan"), ""),
                         "redo_checks": [str(e.get("text", ""))[:300] for e in events if e.get("event") == "check"],
                         "tools_chars": next((e.get("tools_chars") for e in events if e.get("event") == "start" and "tools_chars" in e), None),
@@ -1548,6 +1571,7 @@ async def main_async(args) -> int:
                     via = sorted(set(rec["director_via"]))
                     say(f"    {'PASS' if rec['pass'] else 'FAIL'} {run['status']} {run['secs']}s, {rec['tools']} tools, {rec['director_rounds']} director"
                         + (f" ({', '.join(via)}; {sum(s or 0 for s in rec['director_secs']):.0f}s)" if via else "")
+                        + (f", escalated to {rec['escalated_to']}" if rec["escalated_to"] else "")
                         + (f"  failed: {', '.join(bad)}" if bad else "") + (f"  error: {rec['error'][:120]}" if rec["error"] else ""))
                     if args.driver == "direct" and state is not None:
                         with contextlib.suppress(Exception):  # keep IO paused even if you pressed Resume meanwhile
@@ -1562,11 +1586,7 @@ async def main_async(args) -> int:
         for chat_id in chats.values():
             with contextlib.suppress(Exception):
                 api(f"/api/chats/{chat_id}", method="DELETE")
-        if any(m != current for m in modes) and state is not None and (io_state() or {}).get("settings", {}).get("model_mode") != current:
-            say(f"switching IO back to {current} mode...")
-            with contextlib.suppress(Exception):
-                set_mode(current)
-        RESTORE.run()
+        RESTORE.run()  # your clipboard, IO's paused state and (http driver) IO's effort
         shutil.rmtree(SANDBOX, ignore_errors=True)
         if boss_log:
             boss_log.close()
@@ -1598,12 +1618,12 @@ def main() -> None:
     p.add_argument("--suite", choices=["smoke", "full", "hard", "all"], default="smoke")
     p.add_argument("--only", "--tasks", dest="only", default="", help="comma list of task ids and/or categories (overrides --suite)")
     p.add_argument("--driver", choices=["direct", "http"], default="direct")
-    p.add_argument("--mode", default="", help="fast|balanced|smart|current: one model mode (IO is switched to it and back)")
-    p.add_argument("--modes", default="current", help="comma list of modes; more than one needs --allow-mode-switch")
-    p.add_argument("--allow-mode-switch", action="store_true")
-    p.add_argument("--director", default="off,on", help="off, on, or off,on")
-    p.add_argument("--director-ai", choices=["nim", "duck"], default="nim",
-                   help="director-on cells: nim = GLM-5.3 Flash with Duck.ai behind it (default), duck = Duck.ai alone")
+    p.add_argument("--effort", default="", help="low|medium|high|max|current: one effort level (default: the one saved in IO's settings)")
+    p.add_argument("--efforts", default="", help="comma list of effort levels, one cell each (e.g. low,medium,high,max)")
+    # gone: IO has one local model stack now, and the effort decides when NVIDIA's models (the old director) step in
+    for gone in ("--mode", "--modes", "--director", "--director-ai"):
+        p.add_argument(gone, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--allow-mode-switch", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--repeat", type=int, default=0, help="runs per task (default 1, or 2 for the full suite)")
     p.add_argument("--timeout", type=float, default=0, help="seconds per task, overriding tasks.json")
     p.add_argument("--report", default="", help="report folder, or a .json path (the .md goes next to it)")
@@ -1613,8 +1633,12 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="validate tasks.json, compute every ground truth and the invariant snapshot")
     p.add_argument("--verbose", action="store_true", help="show boss.py's own log lines instead of writing them to boss.log")
     args = p.parse_args()
-    if args.director.replace(" ", "") not in ("off", "on", "off,on", "on,off"):
-        raise SystemExit("--director must be off, on, or off,on")
+    if args.mode is not None or args.modes is not None or args.allow_mode_switch:
+        raise SystemExit("--mode/--modes/--allow-mode-switch are gone: IO runs one local stack (Muse Glimmer + EvoCUA) now. "
+                         "Use --effort low|medium|high|max, or --efforts low,high for several cells.")
+    if args.director is not None or args.director_ai is not None:
+        raise SystemExit("--director/--director-ai are gone: the effort decides when NVIDIA's models step in "
+                         "(low: never, medium: hard tasks and goals, high/max: they run the task). Use --effort or --efforts.")
     sys.path.insert(0, str(REPO))
     os.chdir(REPO)
     try:
