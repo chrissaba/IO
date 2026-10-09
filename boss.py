@@ -2370,6 +2370,8 @@ EFFORT = {
     "high": {"api": True, "local": "high", "api_reason": "high", "steps": 120, "out": 4096, "check": True, "ultracode": False},
     "max": {"api": True, "local": "high", "api_reason": "max", "steps": 200, "out": 4096, "check": True, "ultracode": True},
 }
+# extra output tokens for a request whose model thinks first (its thoughts count against max_tokens)
+REASON_ROOM = {"low": 0, "medium": 1500, "high": 3000, "max": 6000}
 EFFORT_NOW: contextvars.ContextVar = contextvars.ContextVar("effort", default="high")  # the running task's level
 MEDIUM_LOCAL_REPLANS = 1  # Medium: the local model gets one new plan when stuck; stuck again, the NVIDIA brain takes over
 
@@ -2935,7 +2937,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             kw2 = {k: v for k, v in kw.items() if k != "extra_body"}  # llama-server options mean nothing to NVIDIA
             # this level's reasoning, in the model's own words; Ultracode's helpers think at Medium's, so five of them at
             # once still finish their parts quickly (slower answers hold NVIDIA's request slots longer)
-            kw2.update(nim.reasoning(model, "medium" if role == "helper step" else eff["api_reason"]))
+            level = kw2.pop("_level", None) or ("medium" if role == "helper step" else eff["api_reason"])
+            think = nim.reasoning(model, level)
+            kw2.update(think)
+            if think and kw2.get("max_tokens"):
+                # a thinking model's thoughts count against max_tokens: at Max, GLM thought 6,000 characters and was cut
+                # off before writing the Ultracode plan it was asked for (finish "length", 1,500 tokens)
+                kw2["max_tokens"] = int(kw2["max_tokens"]) + REASON_ROOM.get(level, 0)
             if not nim.is_vision(model):
                 kw2["messages"] = text_only(kw2["messages"])
             elif model in nim.ONE_IMAGE:
@@ -2953,9 +2961,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """One request to one of the brain's models: NVIDIA's, or the local copy of a model this PC runs, when the
             request fits its context (otherwise NVIDIA's copy takes it)."""
             if model in local_twins:
+                own = kw.get("_level")
                 kw2 = prepare(model, kw)
                 kw2.pop("reasoning_effort", None)  # NVIDIA's switch; the local copy gets this level's own, set here because
-                kw2["extra_body"] = local_reasoning("medium" if role == "helper step" else eff["local"])  # race threads start bare
+                kw2["extra_body"] = local_reasoning(("high" if own == "max" else own) if own else  # race threads start bare
+                                                    "medium" if role == "helper step" else eff["local"])
                 chars, _pics = nim.size_of(kw2["messages"])
                 if chars + len(json.dumps(kw2.get("tools") or [])) < LOCAL_TWIN_CHARS:
                     kw2["messages"] = text_only(kw2["messages"])  # it reads text only; it can call look_at_screen
@@ -3101,9 +3111,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     brain_create = make_brain(brain_at)
 
     def brain_chat(system: str, user: str, max_tokens: int = 1200, purpose: str = "summary") -> str:
-        """One plain question to the brain (no tools): summaries and skill playbooks."""
+        """One plain question to the brain (no tools): summaries and skill playbooks. Bookkeeping, so it thinks at Medium
+        at most: at Max, writing a skill playbook timed out on every NVIDIA model (90 s each, eight tries) while they
+        thought, and fell to the local model."""
         r = brain_create(messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                         temperature=0.2, max_tokens=max_tokens, purpose=purpose)
+                         temperature=0.2, max_tokens=max_tokens, purpose=purpose,
+                         _level="low" if eff["api_reason"] == "low" else "medium")
         return re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
 
     def helper_roster() -> dict[str, tuple]:
@@ -3250,6 +3263,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 prompt += f"\n\n(This continues the conversation above. In context, the user means: {standalone})"
             else:
                 prompt += "\n\n(This continues the conversation above; resolve words like 'it', 'that', or 'again' from it.)"
+        # without a date the brain lives at its training time, so nothing tells it that what it remembers of a fast-moving
+        # library, a game's patch or a price is old; with one it can reason "that was a year ago, check" (next to the task,
+        # not in the system prompt, which stays byte-for-byte the same for the servers' prompt caches)
+        prompt += (f"\n\n(Today is {time.strftime('%A')}, {time.strftime('%Y-%m-%d')}. What you know of software, games and prices comes "
+                   "from your training, which may be a year or more older: check anything version-specific on this PC or the web.)")
         parts = []
         for p in images or []:
             try:
