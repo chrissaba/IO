@@ -358,8 +358,11 @@ async def call(name: str, args: dict, ctx: Ctx) -> str:
     ctx.last_key = key
     if failed and n_failed == 1:  # after the prefix, so "unsure:" / "error:CODE:" still lead
         result = re.sub(r"^(unsure:|error:\w+:)", r"\1 (2nd time)", result)
-    if failed and len(result) > 700:
-        result = result[:700] + "…"
+    # a failure is usually one line; but a program that exited non-zero (FAILED) or was stopped (TIMEOUT) carries its own
+    # output, already cut to fit by its action, and the error is in it: cut at 700, a failing build or test run showed
+    # the brain its first error line and nothing of what it needed to fix it
+    if failed and len(result) > (24000 if result.startswith(("error:FAILED", "error:TIMEOUT")) else 700):
+        result = result[:24000 if result.startswith(("error:FAILED", "error:TIMEOUT")) else 700] + "…"
     if ctx.options.get("debug_actions"):
         ctx.log(f"[actions] {name} {round(time.time() - t0, 2)}s {result[:120]!r}")
     return result
@@ -3642,7 +3645,8 @@ def _file_text_print_sync(p: Path) -> tuple[str, tuple | None]:
     ext = p.suffix.lower()
     st = p.stat()
     if st.st_size > 5_000_000 and ext not in OFFICE:
-        raise Fail("UNSUPPORTED", f"{p.name} is {_size(p)}; IO reads files up to 5 MB", f'list_files("{p.parent}")')
+        raise Fail("UNSUPPORTED", f"{p.name} is {_size(p)}; IO reads files up to 5 MB whole",
+                   f'read_file("{p}", tail=200) for its end, or find="words" for the lines about something')
     if ext in OFFICE:
         with zipfile.ZipFile(p) as z:
             names = z.namelist()
@@ -3743,6 +3747,56 @@ def _fit(lines: list[str], budget: int) -> tuple[str, int]:
         n += 1
     text = "\n".join(lines[:n])
     return (text if len(text) <= budget else _clip(text, budget)), n
+
+
+def _log_lines_sync(p: Path, shown: str, tail: int, find: str, budget: int) -> str:
+    """The end of a file of any size (a log), or its lines with some words (in the last `tail` lines when given): read
+    in pieces from the end, or line by line, never the whole file into memory."""
+    size = p.stat().st_size
+    if not find:
+        n = builtins_max(1, min(int(tail), 5000))
+        data, pos, chunk = b"", size, 65536
+        with open(p, "rb") as f:
+            while pos > 0 and data.count(b"\n") <= n:
+                step = min(chunk, pos)
+                pos -= step
+                f.seek(pos)
+                data = f.read(step) + data
+                chunk *= 2
+        rows = data.decode("utf-8", "replace").replace("\r\n", "\n").split("\n")
+        if rows and rows[-1] == "":
+            rows.pop()
+        rows = rows[-n:]
+        body = "\n".join(rows)
+        if len(body) > budget:  # the newest lines matter most in a log
+            body = "[... older lines cut to fit]\n" + body[-budget:].split("\n", 1)[-1]
+        return f"{shown} ({_size(p)}), its last {len(rows)} lines:\n{body}" if rows else f"{shown}: (empty file)"
+    words = [w.lower() for w in re.findall(r"[^\s,]+", find)]
+    hits: list[tuple[int, str]] = []
+    total = 0
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        for total, line in enumerate(f, 1):
+            low = line.lower()
+            if all(w in low for w in words):
+                hits.append((total, line.rstrip("\r\n")))
+                if len(hits) > 20000:
+                    del hits[:10000]  # only the newest are shown anyway
+    if tail:
+        hits = [h for h in hits if h[0] > total - tail]
+    scope = f"in its last {tail:,} lines" if tail else f"of {total:,}"
+    if not hits:
+        return f"{shown} ({_size(p)}): no line {scope} has all of: {find}"
+    shown_rows: list[str] = []
+    used = 0
+    for i, line in reversed(hits):  # newest first until the budget is spent, then back in file order
+        row = f"{i}: {_clip(line, 600)}"
+        if used + len(row) > budget and shown_rows:
+            break
+        shown_rows.append(row)
+        used += len(row) + 1
+    shown_rows.reverse()
+    more = f" (the newest {len(shown_rows)} shown)" if len(shown_rows) < len(hits) else ""
+    return f"{shown} ({_size(p)}): {len(hits)} lines {scope} with \"{find}\"{more}:\n" + "\n".join(shown_rows)
 
 
 def _line_span(spec: str, total: int, shown: str) -> tuple[int, int]:
@@ -4198,13 +4252,14 @@ def _outline_text(text: str, rows: list, lang: str, ext: str, shown: str, info: 
         path s the file's path (or an artifact:// link)
         find s? only the lines about these words
         lines s? only these lines, like 120-180
+        tail i? only the last N lines (any size: logs)
         anchors b? prefix lines N:hh| for edit_lines
         max i? most characters (default: all that fits)
         raw b? full text even for a big code file
         """, cost=0.1, star=True, top="path,find?", fallback='FileSystem(mode="read", path)', hide=("raw",),
-        limits="no PDFs; up to 5 MB; never opens an editor; a big code file gives its outline (then lines=, or raw=true)")
+        limits="no PDFs; up to 5 MB whole (tail= or find= read any size); never opens an editor; a big code file gives its outline")
 async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: str = "", anchors: bool = False, raw: bool = False,
-                    **_) -> str:
+                    tail: int = 0, **_) -> str:
     art = _artifact_of(path)
     if art is not None:  # a saved tool result: IO's own data, so no _private refusal and no user-folder rule
         p, shown = art, f"artifact://{art.stem}"
@@ -4219,6 +4274,10 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: st
             raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
         if p.is_dir():
             raise Fail("BAD_ARGS", f"{p} is a folder", f'list_files("{p}")')
+    if (tail and not lines) or (find and not lines and p.suffix.lower() not in OFFICE and p.stat().st_size > 5_000_000):
+        room = builtins_max(4000, ctx.page_chars or 4000)
+        budget = builtins_max(200, min(int(max or room), builtins_max(20000, room)))
+        return ok(await asyncio.to_thread(_log_lines_sync, p, shown, int(tail or 0), find, budget))
     text, fp = await asyncio.to_thread(_file_text_print_sync, p)
     if fp and art is None:  # what this task now knows of the file: edits refuse if it changes on disk after this
         ctx.file_prints[str(p).lower()] = fp
@@ -4717,9 +4776,18 @@ async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 1
         ctx.written.add(str(dest).lower())
         saved = f" (output saved to {dest})"
     budget = builtins_max(4000, ctx.page_chars or 4000)
-    if len(text) > budget:  # the end of a run (the summary, the traceback) matters most
-        text = text[:budget // 4] + f"\n[... {len(text) - budget} characters cut ...]\n" + text[-(budget * 3 // 4):]
-    body = text or "(no output)"
+    report, instead = ("", False)
+    if code is not None and _DIAG_ANY.search(text):  # a compiler's errors and warnings: each once, and what they need
+        report, instead = await asyncio.to_thread(_compile_report_sync, text, where, code != 0)
+    if instead:
+        link = _keep_whole(text)
+        rest = "\n".join(ln for ln in text.splitlines() if not (_DIAG.match(ln) or _DIAG_NOFILE.match(ln)))  # listed above
+        body = report + (f"\n\n[the whole output ({len(text):,} characters): {link}; its last lines other than the errors:]\n"
+                         if link else "\n\n[the output's last lines other than the errors:]\n") + rest.strip()[-1200:]
+    else:
+        if len(text) > budget:  # the end of a run (the summary, the traceback) matters most
+            text = text[:budget // 4] + f"\n[... {len(text) - budget} characters cut ...]\n" + text[-(budget * 3 // 4):]
+        body = (text or "(no output)") + (f"\n\n{report}" if report else "")
     if code is None:
         raise Fail("TIMEOUT", f"still running after {limit}s, so it was stopped. Output so far:\n{body}",
                    "start_app for something that keeps running, or a larger timeout")
@@ -4778,6 +4846,423 @@ def _port_open(port: int) -> bool:
     with socket.socket() as s:
         s.settimeout(0.3)
         return s.connect_ex(("127.0.0.1", int(port))) == 0
+
+
+# ======================================================================================================================
+# the real API of installed libraries. A model writes library calls from memory, and its memory is of whatever version
+# it was trained on: Dalamud moved LocalPlayer from IClientState to IObjectTable, and a model still writes the old one
+# with full confidence. Nothing in its own knowledge says it's stale, so research never starts; the installed files
+# are the truth, and a failed build now carries them.
+# ======================================================================================================================
+
+APILENS = HERE / "tools" / "apilens"
+NO_WINDOW = 0x08000000
+_apilens_lock = threading.Lock()
+_refs_cache: dict[str, tuple[tuple, list[str], list[str]]] = {}
+
+
+def _dotnet() -> str:
+    exe = shutil.which("dotnet")
+    if not exe:
+        raise Fail("UNSUPPORTED", "the .NET SDK isn't installed (no dotnet on PATH)", 'web_answer("install the .NET SDK")')
+    return exe
+
+
+def _apilens_sync() -> Path:
+    """tools/apilens/out/apilens.exe, built on first use (and again after its source changes)."""
+    exe = APILENS / "out" / "apilens.exe"
+    with _apilens_lock:
+        newest = builtins_max((APILENS / n).stat().st_mtime for n in ("Program.cs", "apilens.csproj"))
+        if exe.is_file() and exe.stat().st_mtime >= newest:
+            return exe
+        r = subprocess.run([_dotnet(), "build", str(APILENS), "-c", "Release", "-o", str(APILENS / "out"), "-nologo"],
+                           capture_output=True, timeout=300, creationflags=NO_WINDOW)
+        if r.returncode != 0 or not exe.is_file():
+            raise Fail("FAILED", "IO's API reader (tools/apilens) didn't build:\n" + r.stdout.decode("utf-8", "replace")[-1500:],
+                       f'run_command("dotnet build -c Release -o out", folder="{APILENS}")')
+        exe.touch()  # an up-to-date build copies nothing, and the check above compares times
+        return exe
+
+
+def _lens_sync(search: list[str], refs: list[str], mode: str, query: str = "", member: str = "", budget: int = 12000) -> str:
+    """apilens on these dlls: mode type (one type in full), find (names containing a word) or overview."""
+    exe = _apilens_sync()
+    req = Path(os.environ.get("TEMP") or HERE / "data") / f"io-apilens-{os.urandom(4).hex()}.json"
+    req.write_text(json.dumps({"search": search, "refs": refs, "mode": mode, "query": query, "member": member, "max": budget}),
+                   encoding="utf-8")
+    try:
+        r = subprocess.run([str(exe), str(req)], capture_output=True, timeout=120, creationflags=NO_WINDOW)
+    finally:
+        req.unlink(missing_ok=True)
+    text = r.stdout.decode("utf-8", "replace").replace("\r\n", "\n").strip()
+    if r.returncode != 0 and not text:
+        raise Fail("FAILED", "IO's API reader failed: " + r.stderr.decode("utf-8", "replace")[-800:], "find_file the library's .dll and pass it as of=")
+    return text
+
+
+def _project_refs_sync(proj: Path) -> tuple[list[str], list[str]]:
+    """(the dlls a project compiles against other than .NET itself, every dll it compiles against): exactly what the
+    compiler sees, from MSBuild's own reference resolution (packages, an SDK's own references like Dalamud's, project
+    references). The project's own libraries come first."""
+    assets = proj.parent / "obj" / "project.assets.json"
+    stamp = lambda: (proj.stat().st_mtime, assets.stat().st_mtime if assets.exists() else 0)  # noqa: E731
+    key = str(proj).lower()
+    hit = _refs_cache.get(key)
+    if hit and hit[0] == stamp():
+        return hit[1], hit[2]
+    base = [_dotnet(), "msbuild", str(proj), "-nologo", "-restore", "-t:ResolveAssemblyReferences", "-getItem:ReferencePath"]
+
+    def run(extra: list[str]) -> tuple[int, str]:
+        r = subprocess.run(base + extra, capture_output=True, timeout=300, creationflags=NO_WINDOW, cwd=str(proj.parent))
+        return r.returncode, r.stdout.decode("utf-8", "replace")
+
+    code, out = run([])
+    source = proj.read_text(encoding="utf-8", errors="replace")
+    if code != 0 and "TargetFramework" in out:  # a multi-target project: ask about its first framework
+        m = re.search(r"<TargetFrameworks>\s*([^;<\s]+)", source)
+        if m:
+            code, out = run([f"-p:TargetFramework={m.group(1)}"])
+    try:
+        items = json.loads(out[out.index("{"):])["Items"]["ReferencePath"]
+    except (ValueError, KeyError, TypeError):
+        raise Fail("FAILED", f"MSBuild couldn't list {proj.name}'s references:\n{_clip(out.strip(), 1500)}",
+                   f'run_command("dotnet build", folder="{proj.parent}")') from None
+    refs = [i["Identity"] for i in items if i.get("Identity")]
+    named = source.lower()
+    search = sorted((i["Identity"] for i in items if i.get("Identity") and not i.get("FrameworkReferenceName")),
+                    key=lambda p: 0 if Path(p).stem.lower() in named else 1)
+    _refs_cache[key] = (stamp(), search, refs)
+    return search, refs
+
+
+def _nuget_dlls(name: str) -> list[str]:
+    """A package's dlls from the local NuGet cache: its newest stable version, the newest framework it ships for."""
+    root = Path(os.environ.get("NUGET_PACKAGES") or Path.home() / ".nuget" / "packages") / name.strip().lower()
+    if not root.is_dir():
+        return []
+
+    def version(d: Path) -> tuple:
+        return ("-" not in d.name, [int(x) for x in re.findall(r"\d+", d.name)])
+
+    def framework(d: Path) -> tuple:
+        n = d.name.lower()
+        m = re.match(r"net(\d+)\.(\d+)", n)
+        return (2, int(m.group(1)), int(m.group(2))) if m else (1, 0, 0) if n.startswith("netstandard") else (0, 0, 0)
+
+    for v in sorted((d for d in root.iterdir() if d.is_dir()), key=version, reverse=True):
+        libs = [d for d in (v / "lib").glob("*") if d.is_dir() and any(d.glob("*.dll"))] if (v / "lib").is_dir() else []
+        if libs:
+            return [str(p) for p in builtins_max(libs, key=framework).glob("*.dll")]
+    return []
+
+
+# a Python module's API, printed by the Python that has it installed
+_PY_LENS = r'''
+import importlib, inspect, sys
+mod, typ, find, budget = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+out = []
+def doc(o, w=160):
+    d = (inspect.getdoc(o) or "").strip()
+    return ("  # " + d.splitlines()[0][:w]) if d else ""
+def sig(o):
+    try:
+        return str(inspect.signature(o))
+    except (TypeError, ValueError):
+        return "(...)"
+def line(o, name):
+    if isinstance(o, (staticmethod, classmethod)):
+        o = o.__func__
+    if isinstance(o, property):
+        return name + "  (property)"
+    if inspect.isclass(o):
+        return "class " + name + sig(o)
+    if callable(o):
+        return name + sig(o)
+    return name + " = " + repr(o)[:80]
+def public(o):
+    names = getattr(o, "__all__", None) if inspect.ismodule(o) else None
+    for k in (names or dir(o)):
+        if k.startswith("_") and k != "__init__":
+            continue
+        try:
+            yield k, (inspect.getattr_static(o, k) if inspect.isclass(o) else getattr(o, k))
+        except Exception:
+            continue
+m = importlib.import_module(mod)
+ver = getattr(m, "__version__", "")
+if not ver:
+    try:
+        from importlib.metadata import version
+        ver = version(mod.split(".")[0])
+    except Exception:
+        pass
+out.append(f"{mod} {ver} ({getattr(m, '__file__', '')})")
+if typ:
+    o = m
+    for part in typ.split("."):
+        try:
+            o = getattr(o, part)
+        except AttributeError:
+            try:
+                o = importlib.import_module(o.__name__ + "." + part)
+            except Exception:
+                out.append(f"no {part} in {getattr(o, '__name__', mod)}")
+                o = None
+                break
+    if o is not None:
+        out.append(line(o, typ) + doc(o, 400))
+        if inspect.isclass(o) or inspect.ismodule(o):
+            for k, v in public(o):
+                out.append("    " + line(v, k) + doc(getattr(v, "__func__", v)))
+elif find:
+    w = find.lower()
+    for name, mm in list(sys.modules.items()):
+        if not (name == mod or name.startswith(mod + ".")):
+            continue
+        for k, v in list(vars(mm).items()):
+            if k.startswith("_"):
+                continue
+            if w in k.lower():
+                out.append(f"  {name}.{line(v, k)}")
+            if inspect.isclass(v) and getattr(v, "__module__", "") == name:
+                for k2, v2 in vars(v).items():
+                    if not k2.startswith("_") and w in k2.lower():
+                        out.append(f"  {name}.{k}.{line(v2, k2)}")
+    if len(out) == 1:
+        out.append("nothing by that name in the module or its loaded submodules")
+else:
+    for k, v in public(m):
+        out.append("  " + line(v, k) + doc(v, 100))
+print("\n".join(out)[:budget])
+'''
+
+
+def _py_lens_sync(module: str, python: str, type_: str, find: str, budget: int) -> str:
+    exe = python.strip().strip('"') if python else ""
+    if not exe:
+        found = shutil.which("python") or shutil.which("py") or ""
+        exe = sys.executable if not found or "WindowsApps" in found else found  # the Store's stub only opens the Store
+    try:
+        r = subprocess.run([exe, "-c", _PY_LENS, module, type_, find, str(budget)], capture_output=True, timeout=60,
+                           creationflags=NO_WINDOW, cwd=str(Path.home()), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Fail("FAILED", f"couldn't run {exe}: {e}", "python= the full path of the project's python.exe") from None
+    text = r.stdout.decode("utf-8", "replace").replace("\r\n", "\n").strip()
+    if r.returncode != 0:
+        why = r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or ["no output"]
+        raise Fail("NOT_FOUND", f"{module}: {why[0]} (asked {exe})",
+                   "of= a .csproj, .dll or folder for .NET; for Python, python= the project's own python.exe")
+    return text
+
+
+@action("api_lookup", group="PC", summary="a library's real API as installed (.NET project/dll, NuGet, Python)",
+        params="""
+        of s .csproj, .dll, folder, NuGet id, module
+        type s? one type in full; Type.Member for one
+        find s? a word to search type/member names for
+        python s? the Python that has the module
+        """, cost=1.0, star=True, top="of,type?,find?", timeout=420, hide=("python",),
+        desc="Read from the installed files, so it matches the version the code builds against. of= a .csproj gives exactly "
+             "what it compiles against (an SDK's own libraries included). type= lists members with signatures, doc summaries "
+             "and [Obsolete] notes naming replacements; find= searches names; neither: the namespaces.",
+        limits="the installed files, not the web; with neither type nor find: an overview of its namespaces")
+async def api_lookup(ctx: Ctx, of: str, type: str = "", find: str = "", python: str = "", **_) -> str:
+    """Ground truth for code against a library: what the version on this PC really has, read from its files. A .csproj
+    gives exactly the libraries it compiles against (an SDK's own, like Dalamud's, included)."""
+    budget = builtins_max(4000, min(ctx.page_chars or 12000, 16000))
+    target = str(of or "").strip().strip('"')
+    if not target:
+        raise Fail("BAD_ARGS", "of= is required: a project, dll, folder, NuGet package or Python module",
+                   'api_lookup(of="C:\\\\path\\\\App.csproj", find="name")')
+    mode, query = ("type", type) if type else ("find", find) if find else ("overview", "")
+    if not re.search(r"[\\/:]|\.(dll|csproj|fsproj|vbproj)$", target, re.I):
+        dlls = await asyncio.to_thread(_nuget_dlls, target)
+        cached = (Path(os.environ.get("NUGET_PACKAGES") or Path.home() / ".nuget" / "packages") / target.lower()).is_dir()
+        if not dlls and cached:
+            raise Fail("NOT_FOUND", f"the NuGet package {target} has no libraries of its own (an MSBuild SDK or a build tool)",
+                       "api_lookup(of=a project that uses it): that lists what the project compiles against")
+        if not dlls:  # not a cached NuGet package: a Python module
+            text = await asyncio.to_thread(_py_lens_sync, target, python, type, find, budget)
+            return ok(f"Python {target}, as installed:\n{text}")
+        text = await asyncio.to_thread(_lens_sync, dlls, [], mode, query, "", budget)
+        return ok(f"NuGet {target} ({Path(dlls[0]).parent}):\n{text}")
+    p = _path(target)
+    if not p.exists():
+        raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
+    if p.is_dir():
+        projects = [q for ext in ("*.csproj", "*.fsproj", "*.vbproj") for q in p.glob(ext)]
+        if len(projects) == 1:
+            p = projects[0]
+        else:
+            dlls = [str(q) for q in p.glob("*.dll")]
+            if not dlls:
+                raise Fail("NOT_FOUND", f"no .dll or single project file in {p}", f'list_files("{p}")')
+            text = await asyncio.to_thread(_lens_sync, dlls, [], mode, query, "", budget)
+            return ok(text)
+    if p.suffix.lower() in (".csproj", ".fsproj", ".vbproj"):
+        search, refs = await asyncio.to_thread(_project_refs_sync, p)
+        if not search:
+            raise Fail("NOT_FOUND", f"{p.name} compiles against nothing but .NET itself", "api_lookup on a .dll, or the package's name")
+        text = await asyncio.to_thread(_lens_sync, search, refs, mode, query, "", budget)
+        return ok(f"what {p.name} compiles against:\n{text}")
+    if p.suffix.lower() != ".dll":
+        raise Fail("BAD_ARGS", f"{p.name} isn't a .dll or a project file", "of= a .csproj, a .dll, a folder, a NuGet id or a Python module")
+    text = await asyncio.to_thread(_lens_sync, [str(p)], [], mode, query, "", budget)
+    return ok(text)
+
+
+# --- compiler errors in a build's output (dotnet/MSBuild, tsc): each error once, with its source line, and for an error
+# that says a name doesn't exist, the library's real API right in the result
+
+_DIAG = re.compile(r"^\s*(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)(?:,\d+,\d+)?\)\s*:\s*(?P<sev>error|warning)\s+(?P<code>[A-Z]{2,}\d+)\s*:\s*"
+                   r"(?P<msg>.*?)(?:\s+\[(?P<proj>[^\[\]]+?\.\w*proj)(?:::[^\]]*)?\])?\s*$")
+_DIAG_NOFILE = re.compile(r"^\s*(?:.*?:\s+)?(?P<sev>error)\s+(?P<code>(?:NU|MSB|NETSDK|CS)\d+)\s*:\s*(?P<msg>.*?)"
+                          r"(?:\s+\[(?P<proj>[^\[\]]+?\.\w*proj)(?:::[^\]]*)?\])?\s*$")
+_DIAG_ANY = re.compile(r"\b(?:error|warning) [A-Z]{2,}\d+\s*:")
+# "that name isn't in the library as installed": the result then shows the library's real API
+_API_ERRORS = {"CS0117", "CS1061", "CS0246", "CS0234", "CS0426", "CS1501", "CS7036", "CS1739", "CS0103", "CS0122"}
+_ERROR_HINTS = {
+    "CS1705": "A library here is built for a newer .NET than the project targets: raise the project's TargetFramework (or the "
+              "version of the SDK that sets it, as in Sdk=\"Name/version\") to match the installed library.",
+    "NETSDK1045": "This .NET SDK can't target that framework: target one it can, or install the newer SDK.",
+    "NU1101": "No package by that id: check it with run_command(\"dotnet package search <id> --exact-match\").",
+    "NU1102": "That version of the package doesn't exist: run_command(\"dotnet package search <id> --exact-match\") lists the real ones.",
+    "MSB3027": "The output file is locked by a running program (a game or app that loaded it): unload or reload it there, then build again.",
+    "MSB3021": "The output file is locked by a running program (a game or app that loaded it): unload or reload it there, then build again.",
+}
+
+
+def _api_queries(errors: list[dict]) -> list[tuple[str, str, str]]:
+    """What to look up for errors about names: [(mode, query, member)], at most 4."""
+    out: list = []
+
+    def add(q: tuple) -> None:
+        if q[1] and q not in out and len(out) < 4:
+            out.append(q)
+
+    def short(s: str) -> str:  # 'Dalamud.Plugin.Services.IClientState?' -> IClientState; 'List<int>' -> List
+        return re.sub(r"<.*", "", s.strip().rstrip("?")).split(".")[-1]
+
+    for d in errors:
+        code, msg = d["code"], d["msg"]
+        if code in ("CS1061", "CS0117") and (m := re.search(r"'([^']+)' does not contain a definition for '([^']+)'", msg)):
+            add(("type", short(m.group(1)), ""))
+            add(("find", m.group(2), ""))
+        elif code == "CS0246" and (m := re.search(r"name '([^'<]+)", msg)):
+            add(("find", m.group(1), ""))
+        elif code in ("CS0234", "CS0426") and (m := re.search(r"name '([^'<]+)'", msg)):
+            add(("find", m.group(1), ""))
+        elif code == "CS1501" and (m := re.search(r"method '([^'<]+)'", msg)):
+            add(("find", m.group(1), ""))
+        elif code == "CS1739" and (m := re.search(r"overload for '([^'<]+)'", msg)):
+            add(("find", m.group(1), ""))
+        elif code == "CS7036" and (m := re.search(r"of '([\w.]+?)\.(\w+)(?:<[^>]*>)?\(", msg)):
+            add(("type", short(m.group(1)), m.group(2)))
+        elif code == "CS0103" and (m := re.search(r"name '([A-Z]\w*)' does not exist", msg)):
+            add(("find", m.group(1), ""))
+        elif code == "CS0122" and (m := re.search(r"'([^'(]+)", msg)):
+            add(("find", m.group(1).split(".")[-1], ""))
+    return out
+
+
+def _compile_report_sync(text: str, where: Path, failed: bool) -> tuple[str, bool]:
+    """(a report on a build's errors and warnings, whether it replaces the raw output). Errors are listed once each
+    (MSBuild repeats them in its summary) with the line of code they point at."""
+    errors: list[dict] = []
+    warns: list[dict] = []
+    seen = set()
+    for raw in text.splitlines():
+        m = _DIAG.match(raw) or _DIAG_NOFILE.match(raw)
+        if not m:
+            continue
+        d = {"file": "", "line": "", "col": "", "proj": None, **{k: v for k, v in m.groupdict().items() if v is not None}}
+        key = (d["file"], d["line"], d["col"], d["code"], d["msg"][:120])
+        if key not in seen:
+            seen.add(key)
+            (errors if d["sev"] == "error" else warns).append(d)
+    obsolete = [w for w in warns if w["code"] in ("CS0618", "CS0612")]
+    if not failed or not errors:
+        if not obsolete:
+            return "", False
+        lines = [f"  {Path(w['file']).name}:{w['line']} {_clip(w['msg'], 220)}" for w in obsolete[:10]]
+        return ("Built, but it uses parts of the library marked obsolete (they go away in a later version; the message "
+                "usually names the replacement):\n" + "\n".join(lines)), False
+
+    def rel(f: str) -> str:
+        try:
+            return str(Path(f).resolve().relative_to(where.resolve()))
+        except (ValueError, OSError):
+            return Path(f).name if f else ""
+
+    sources: dict[str, list[str]] = {}
+
+    def source_line(d: dict) -> str:
+        f = d["file"]
+        if not d["line"] or not f:
+            return ""
+        if f not in sources:
+            try:
+                p = Path(f)
+                sources[f] = p.read_text(encoding="utf-8", errors="replace").splitlines() if p.is_file() and p.stat().st_size < 2_000_000 else []
+            except OSError:
+                sources[f] = []
+        n = int(d["line"])
+        return _clip(sources[f][n - 1].strip(), 160) if 0 < n <= len(sources[f]) else ""
+
+    def tidy(msg: str) -> str:
+        msg = re.sub(r" and no accessible extension method .*$", "", msg)
+        return _clip(re.sub(r"\s*\(are you missing [^)]*\)", "", msg), 300)
+
+    out = [f"The build failed: {len(errors)} error{'s' if len(errors) != 1 else ''} (each listed once):"]
+    for d in errors[:25]:
+        where_at = f"{rel(d['file'])}:{d['line']}:{d['col']} " if d["line"] else ""
+        out.append(f"  {where_at}{d['code']} {tidy(d['msg'])}")
+        if src := source_line(d):
+            out.append(f"      | {src}")
+    if len(errors) > 25:
+        out.append(f"  ... and {len(errors) - 25} more")
+    hints = [h for c, h in _ERROR_HINTS.items() if any(d["code"] == c for d in errors)]
+    out += [f"\n{h}" for h in hints]
+
+    named = [d for d in errors if d["code"] in _API_ERRORS]
+    proj = next((Path(d["proj"]) for d in errors if d.get("proj")), None)
+    if proj is None:
+        found = [q for ext in ("*.csproj", "*.fsproj", "*.vbproj") for q in where.glob(ext)]
+        proj = found[0] if len(found) == 1 else None
+    if named and proj is not None and proj.is_file():
+        parts: list[str] = []
+        why = ""
+        try:
+            search, refs = _project_refs_sync(proj)
+            for mode, q, member in _api_queries(named):
+                got = _lens_sync(search, refs, mode, q, member, 3500 if mode == "type" else 2200)
+                if got and "Nothing by that name" not in got[:600]:
+                    parts.append(got)
+                if sum(map(len, parts)) > 9000:
+                    break
+        except (Fail, OSError, subprocess.TimeoutExpired) as e:
+            why = f" (reading it failed: {_clip(str(getattr(e, 'result', e)), 200)})"
+        if parts:
+            out.append("\nThese errors name things that the library this project builds against doesn't have, as installed "
+                       "(code written from memory of another version of it does this). Its real API, read from the installed files:\n")
+            out.append("\n\n".join(parts))
+            out.append(f'\nUse these names, not guesses. More: api_lookup(of="{proj}", type="Name") or find="word".')
+        else:
+            out.append(f'\nLook the real names up with api_lookup(of="{proj}", find="word") instead of guessing{why}.')
+    if obsolete:
+        out.append(f"\n({len(obsolete)} warnings say parts of the library used here are obsolete.)")
+    return "\n".join(out), True
+
+
+def _keep_whole(text: str) -> str:
+    """Saves a whole output as an artifact:// link read_file can open ("" if the disk says no)."""
+    try:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        aid = new_artifact_id()
+        artifact_path(aid).write_text(text, encoding="utf-8", newline="")
+        return f"artifact://{aid}"
+    except OSError:
+        return ""
 
 
 @action("open_path", group="FILE", summary="open a file or folder in its app (or app=), or reveal it in Explorer",
@@ -6757,7 +7242,8 @@ ROUTES = {
     "images": Route("images", ["done"], [], "local", None, "no"),
     "loop": Route("loop", LOOP_MENU, ["GAME", "SEE"], "director", 0, "as_today"),
     "chat": Route("chat", ["done"], [], "local", None, "no"),
-    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "edit_file", "file_op", "open_path", "open_file", "run_command", "start_app", "PowerShell", "ask_user", "done"],
+    "files": Route("files", ["list_files", "find_file", "read_file", "write_file", "edit_file", "file_op", "open_path", "open_file", "run_command", "start_app",
+                             "api_lookup", "PowerShell", "ask_user", "done"],
                    ["FILE"], "local", 2, "no"),
     "screen": Route("screen", ["look_at_screen", "list_windows", "read_window", "check_screen", "done"], ["SEE", "READ"], "local", 1, "no"),
     "settings": Route("settings", ["change_setting", "open_settings", "set_control", "find_control", "read_window", "scroll_until", "click", "list_controls", "done"],

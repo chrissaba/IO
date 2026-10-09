@@ -182,6 +182,8 @@ LAYER_JOBS = [
     ("click", "Click in an app: click(target, window) with the control's visible text; type_into(field, text, window) for a field."),
     ("pc_info", "The time anywhere, disk space, CPU/GPU/RAM, IP: pc_info(topic, place). Installed or running apps: app_info(name), never by opening it."),
     ("list_files", "Files and folders: list_files, find_file, read_file, write_file, file_op. Never open Explorer for that."),
+    ("api_lookup", "Code against an installed library or SDK: api_lookup(of=project/dll/package, type= or find=) shows its real "
+                   "API. Use those names, never ones from memory."),
     ("web_answer", "A fact on the web: web_answer(question), then answer from its excerpts. A given page: read_page(url, find=a few words)."),
     ("web_fill", "Use a web page or web app (fill its form, press its buttons, even one on localhost): browser_open(url) opens it in "
                  "IO's tab in the user's browser, then web_fill({label: value, ...}) for all its fields at once and web_click(text). "
@@ -208,6 +210,10 @@ FRONTIER_STYLE = """WORKING STYLE
   not the program's). Use PowerShell only for PowerShell's own cmdlets.
 - Check your work the way the user will use it before calling done: run the tests and read their output, request the
   server's page and its API, look at the result. A command's "Status Code" is the last program's exit code: not 0 means it failed.
+- Code against a library, SDK or plugin API installed here (a NuGet or pip package, a game's plugin framework): what you
+  remember of its API may be from another version. Look up the installed one with api_lookup(of=the project, dll or
+  package, type= or find=) before writing calls to it. When a build says a name doesn't exist, its result shows the
+  real API: use those names, never another guess. Logs of any size: read_file(path, tail=200) or find="words".
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
 - State facts only from what your tools returned in this task. If a page didn't show something, look somewhere better
   (a site's own API, another page) or say you couldn't find it; never fill the gap from memory.
@@ -1600,7 +1606,7 @@ def split_steps(calls: list) -> tuple[list, dict]:
 
 
 # reads that touch nothing shared (no window, no browser tab, no model slot): several in one reply run at once
-PARALLEL_SAFE = {"read_file", "list_files", "find_file", "pc_info", "app_info", "calc"}
+PARALLEL_SAFE = {"read_file", "list_files", "find_file", "pc_info", "app_info", "calc", "api_lookup"}
 
 # calls that only look (a failed one doesn't stop the other calls in its reply)
 READ_ONLY = {"web_search", "web_answer", "read_page", "read_file", "list_files", "find_file", "look_at_screen", "Snapshot",
