@@ -2953,8 +2953,10 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if model in nim.NO_REQUIRED_TOOLS and kw2.get("tool_choice") == "required":
                 kw2.pop("tool_choice")
             # a queue that hasn't answered in 90 s rarely does soon: the next model gets the turn (DeepSeek, the slow
-            # text-only one, gets longer)
-            kw2["timeout"] = min(timeout or 999, 240 if model in nim.SLOW_QUEUE else 90)
+            # text-only one, gets longer). Thinking takes time of its own, at ~25 tokens a second on the free API: the
+            # Ultracode plan at Max timed out on both racers at 90 s once it had room to think
+            room = REASON_ROOM.get(level, 0) // 40 if think else 0
+            kw2["timeout"] = min(timeout or 999, (240 if model in nim.SLOW_QUEUE else 90) + room)
             return kw2
 
         def ask(client, model: str, purpose: str, kw: dict):
