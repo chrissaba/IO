@@ -434,7 +434,7 @@ static class Program
 
     // ---------------------------------------------------------------------------------------------------- type mode
 
-    static List<Type> Matching(List<Assembly> asms, string q)
+    static List<Type> Matching(List<Assembly> asms, string q, int arity = -1)
     {
         var hits = new List<(int rank, int order, Type t)>();
         var order = 0;
@@ -448,14 +448,23 @@ static class Program
                 else if (name.Equals(q, StringComparison.OrdinalIgnoreCase) || full.Equals(q, StringComparison.OrdinalIgnoreCase)) hits.Add((1, order, t));
                 else if (full.EndsWith("." + q, StringComparison.OrdinalIgnoreCase)) hits.Add((2, order, t));
             }
-        return hits.OrderBy(h => h.rank).ThenBy(h => h.order).Select(h => h.t).ToList();
+        // RowRef`1 (or RowRef<T>) asks for the generic one, not RowRef
+        return hits.OrderBy(h => arity < 0 ? 0 : OwnArity(h.t) == arity ? 0 : 1).ThenBy(h => h.rank).ThenBy(h => h.order).Select(h => h.t).ToList();
+    }
+
+    static int OwnArity(Type t)
+    {
+        var m = Regex.Match(t.Name, @"`(\d+)$");
+        return m.Success ? int.Parse(m.Groups[1].Value) : 0;
     }
 
     static void ShowType(List<Assembly> asms, string query, string member)
     {
-        var q = Regex.Replace(query.Trim().Replace('+', '.'), @"<.*>$", "");
-        q = Regex.Replace(q, @"`\d+$", "");
-        var found = Matching(asms, q);
+        var raw = query.Trim().Replace('+', '.');
+        var generic = Regex.Match(raw, @"(?:`(\d+)|<([^<>]*)>)$");
+        var arity = !generic.Success ? -1 : generic.Groups[1].Success ? int.Parse(generic.Groups[1].Value) : generic.Groups[2].Value.Split(',').Length;
+        var q = Regex.Replace(Regex.Replace(raw, @"<.*>$", ""), @"`\d+$", "");
+        var found = Matching(asms, q, arity);
         if (found.Count == 0 && q.Contains('.') && member.Length == 0)
         {
             var cut = q.LastIndexOf('.');

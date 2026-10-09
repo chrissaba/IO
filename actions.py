@@ -5115,6 +5115,13 @@ async def api_lookup(ctx: Ctx, of: str, type: str = "", find: str = "", python: 
     if p.suffix.lower() != ".dll":
         raise Fail("BAD_ARGS", f"{p.name} isn't a .dll or a project file", "of= a .csproj, a .dll, a folder, a NuGet id or a Python module")
     text = await asyncio.to_thread(_lens_sync, [str(p)], [], mode, query, "", budget)
+    if mode != "overview" and "Nothing by that name" in text[:800]:
+        # a library is often several dlls side by side (Lumina's RowRef is in Lumina.dll, not Lumina.Excel.dll): look there
+        siblings = [str(q) for q in p.parent.glob("*.dll") if q != p]
+        if siblings:
+            more = await asyncio.to_thread(_lens_sync, [str(p)] + siblings, [], mode, query, "", budget)
+            if "Nothing by that name" not in more[:800]:
+                return ok(f"not in {p.name}; in the dlls beside it:\n{more}")
     return ok(text)
 
 
