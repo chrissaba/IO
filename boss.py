@@ -216,7 +216,9 @@ FRONTIER_STYLE = """WORKING STYLE
   real API: use those names, never another guess. Logs of any size: read_file(path, tail=200) or find="words".
 - What IO itself can do: about_io(topic). Its program files are read-only to you. When the task needs an ability none of
   your tools give (not information, not the user's decision), call propose_tool(name, does, why) once: the user decides
-  whether IO builds that tool in its workshop. Then carry on with what you can.
+  whether IO builds that tool in its workshop. Then carry on with what you can. Do the same when you had to improvise
+  the ability with a one-off script (decoding a file type, talking to a program) and it will come up again: proposing
+  it in the same reply as your answer means next time it's a tool, not a puzzle.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
 - State facts only from what your tools returned in this task. If a page didn't show something, look somewhere better
   (a site's own API, another page) or say you couldn't find it; never fill the gap from memory.
