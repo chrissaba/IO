@@ -261,8 +261,12 @@ def create_streamed(client, label: dict, **kw):
     calls: dict[int, dict] = {}
     finish, usage, model, cid, created = None, None, kw.get("model", ""), "", int(time.time())
     emit({"kind": "start", "rid": rid, **label})
+    limit = float(kw.get("timeout") or 240)
+    deadline = time.time() + limit  # a stream that keeps trickling (or sends keep-alives) still ends on time
     try:
         for chunk in client.chat.completions.create(**kw, stream=True, stream_options={"include_usage": True}):
+            if time.time() > deadline:
+                raise TimeoutError(f"the answer took over {limit:.0f}s")
             cid, model, created = chunk.id or cid, chunk.model or model, chunk.created or created
             if getattr(chunk, "usage", None):
                 usage = chunk.usage
@@ -493,14 +497,21 @@ def claude_completion(msg):
 def claude_call(kw: dict, label: dict):
     """One request to Claude, streamed to IO Console when one is open."""
     params = claude_params(kw)
-    client = _claude_client()
+    # the step's own deadline (boss.prepare: 45 s plus thinking room). It was dropped here, so Claude got the client's
+    # 240 s, and a stream never timed out at all: Claude's stream sends ping events while it stalls, each one resetting
+    # the read timeout (a task sat 31 minutes on one step). Now the whole request has to finish inside it
+    limit = float(kw.get("timeout") or 240)
+    client = _claude_client().with_options(timeout=limit)
     if not stream_listeners:
         return claude_completion(client.messages.create(**params))
+    deadline = time.time() + limit
     rid = f"{time.time():.3f}-{id(kw) % 10000}"
     emit({"kind": "start", "rid": rid, **label, **context_label()})
     try:
         with client.messages.stream(**params) as stream:
             for ev in stream:
+                if time.time() > deadline:
+                    raise TimeoutError(f"Claude's answer took over {limit:.0f}s")
                 if ev.type == "content_block_start" and getattr(ev.content_block, "type", "") == "tool_use":
                     emit({"kind": "tool", "rid": rid, "text": ev.content_block.name})
                 elif ev.type == "content_block_delta":
