@@ -1237,7 +1237,7 @@
       </div>
       <h2>Privacy</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Check before anything goes to an API model</div>
+        <div class="setting"><div class="txt"><div>Check before anything goes to an API model (off by default: it slows long runs)</div>
             <div>From Medium up, what IO reads (files, windows, pages, command output, pictures you attach) is screened here on the PC first: an instant pattern scan, then the local Muse model for longer text. When it finds one of the kinds below, IO stops and asks: send it anyway, or keep the chat on this PC. Runs nobody is watching (goals, schedules, loops) keep it on the PC by themselves.</div></div>
           <label class="switch"><input type="checkbox" :checked="s.settings.privacy_check !== false" @change="s.settings.privacy_check = $event.target.checked; saveSettings()"><span></span></label></div>
         <template x-for="k in (s.privacy_kinds_all || [])" :key="k.id">

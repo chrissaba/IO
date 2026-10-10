@@ -74,7 +74,7 @@ DEFAULT_SETTINGS = {
     "race_width": 0,  # 2-5: the brain's step goes to this many models at once and the fastest answer wins (0 = in turn)
     "debug": False,  # show each message's debug timeline: every model call, screenshot and tool, with timings
     # the privacy check (privacy.py): what IO reads is screened on this PC before it goes to an API model, for these kinds
-    "privacy_check": True,
+    "privacy_check": False,  # off by default (2026-10-10): too slow for long runs; the lock keeps a chat private
     "privacy_kinds": list(boss.privacy.DEFAULT_KINDS),
 }
 MOST_STEPS = max(e["steps"] for e in boss.EFFORT.values())  # a task's own cap (another app may ask for fewer)
@@ -401,6 +401,9 @@ def chat_written(task: dict) -> list[str]:
                     and str(e.get("result", "")).startswith("ok") and (e.get("args") or {}).get("path")):
                 out.append(str(boss.actions._path(str(e["args"]["path"]))))
     return out
+
+
+boss.privacy.live_check = lambda: bool(state["settings"].get("privacy_check"))
 
 
 def privacy_options(task: dict, options: dict) -> None:

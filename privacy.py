@@ -173,6 +173,10 @@ PRIVATE_APPS = [(re.compile(p, re.I), kind, what) for p, kind, what in (
 )]
 
 
+# Settings > Privacy's switch, read on every request: turning the check off takes effect in a task already running
+live_check = lambda: True  # noqa: E731  (the app sets it)
+
+
 class GoPrivate(BaseException):
     """The chat turned private while a task was sending to an API model: the task starts over on this PC (boss.run).
     A BaseException, so the retry-the-next-model handlers (except Exception) can't swallow it."""
@@ -476,7 +480,7 @@ class Guard:
     def gate(self, model: str, messages) -> None:
         if self.private:
             raise GoPrivate(self.why)
-        if not self.check or not self.kinds or not messages:
+        if not self.check or not live_check() or not self.kinds or not messages:
             return
         with self.lock:  # one screening, and one question, at a time: a racing thread waits here and sees the outcome
             if self.private:
