@@ -1098,6 +1098,7 @@ def state_body(tasks: list, lite: bool) -> dict:
             "today": today_stats(),
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
+            "mistral_key_set": bool(nim.mistral_key()),
             "brain_models": [nim.label(m) for m in state["settings"].get("brain_models") or nim.BRAIN_MODELS],
             "model_info": {m: {"label": nim.label(m), "vision": nim.is_vision(m), **{k: v for k, v in nim.tests().get(m, {}).items() if k in ("tools", "secs", "note", "when")}}
                            for m in dict.fromkeys(list(state["settings"].get("brain_models") or nim.BRAIN_MODELS) + list(nim.tests()))},
@@ -1413,20 +1414,57 @@ async def save_nim_key(request: Request) -> JSONResponse:
 
 
 async def nim_catalog(_request: Request) -> JSONResponse:
-    """The chat models NVIDIA offers the saved key, for Settings' model picker."""
-    if not nim.nim_key():
+    """The chat models NVIDIA (and Mistral, with its key) offer, for Settings' model picker."""
+    if not nim.nim_key() and not nim.mistral_key():
         return JSONResponse({"models": [], "error": "No key saved."})
-    try:
-        ids = await asyncio.to_thread(nim.catalog)
-    except Exception as e:
-        return JSONResponse({"models": [], "error": f"Couldn't reach NVIDIA: {type(e).__name__}"})
-    return JSONResponse({"models": [{"id": m, "label": nim.label(m), "vision": nim.is_vision(m)} for m in ids]})
+    models, errors = [], []
+    if nim.nim_key():
+        try:
+            models += [{"id": m, "label": nim.label(m), "vision": nim.is_vision(m)} for m in await asyncio.to_thread(nim.catalog)]
+        except Exception as e:
+            errors.append(f"Couldn't reach NVIDIA: {type(e).__name__}")
+    if nim.mistral_key():
+        try:
+            models += [{"id": m["id"], "label": nim.label(m["id"]), "vision": m["vision"]} for m in await asyncio.to_thread(nim.mistral_catalog)]
+        except Exception as e:
+            errors.append(f"Couldn't reach Mistral: {type(e).__name__}")
+    return JSONResponse({"models": models, **({"error": "; ".join(errors)} if errors and not models else {})})
+
+
+async def save_mistral_key(request: Request) -> JSONResponse:
+    """Stores the Mistral key in data/mistral_key.txt (git-ignored); empty clears it. Never sent back or logged."""
+    key = str((await request.json()).get("key", "")).strip()
+    nim.save_mistral_key(key)
+    return JSONResponse({"ok": True, "mistral_key_set": bool(key)})
+
+
+async def test_mistral_key(_request: Request) -> JSONResponse:
+    """Which of Mistral's models this key may use now (its per-model limits, from one tiny request each to a few)."""
+    if not nim.mistral_key():
+        return JSONResponse({"result": "No Mistral key saved."})
+
+    def probe() -> str:
+        import urllib.error  # noqa: PLC0415
+        open_, shut = [], []
+        for name in ("mistral-medium-latest", "magistral-medium-latest", "mistral-small-latest", "ministral-14b-latest", "ministral-8b-latest"):
+            req = urllib.request.Request(nim.MISTRAL_URL + "/chat/completions", method="POST", headers={
+                "Authorization": f"Bearer {nim.mistral_key()}", "Content-Type": "application/json"},
+                data=json.dumps({"model": name, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}).encode())
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    open_.append(f"{name.replace('-latest', '')} ({r.headers.get('x-ratelimit-limit-req-minute', '?')}/min)")
+            except urllib.error.HTTPError as e:
+                shut.append(name.replace("-latest", "") if e.code == 429 else f"{name.replace('-latest', '')} ({e.code})")
+            except OSError as e:
+                return f"Couldn't reach Mistral: {type(e).__name__}"
+        return ("Open: " + (", ".join(open_) or "none")) + (f". Not on this plan yet (0 a minute): {', '.join(shut)}" if shut else "")
+    return JSONResponse({"result": await asyncio.to_thread(probe)})
 
 
 async def nim_test_model(request: Request) -> JSONResponse:
     """Settings' Test on one model: sees a screenshot? calls tools? how fast?"""
     model = str((await request.json()).get("model", "")).strip()
-    if not model or not nim.nim_key():
+    if not model or not (nim.mistral_key() if nim.is_mistral(model) else nim.nim_key()):
         return JSONResponse({"ok": False, "note": "No model or no key."})
     r = await asyncio.to_thread(nim.test_model, model)
     return JSONResponse({"ok": r["tools"], **r})
@@ -1842,6 +1880,8 @@ app = Starlette(
         Route("/api/browser", save_browser, methods=["POST"]),
         Route("/api/keys/nim", save_nim_key, methods=["POST"]),
         Route("/api/keys/nim/test", test_nim_key, methods=["POST"]),
+        Route("/api/keys/mistral", save_mistral_key, methods=["POST"]),
+        Route("/api/keys/mistral/test", test_mistral_key, methods=["POST"]),
         Route("/api/learned/delete", delete_learned, methods=["POST"]),
         Route("/api/nim/models", nim_catalog),
         Route("/api/nim/test", nim_test_model, methods=["POST"]),

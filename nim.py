@@ -225,17 +225,22 @@ def create_streamed(client, label: dict, **kw):
 def create(client, _purpose: str = "", **kw):
     """client.chat.completions.create, holding one of the MAX_PARALLEL slots while the request is out, and paced under
     the per-minute limit. Each request is reported to `listeners`: how long it waited for IO's own limits, how long
-    NVIDIA took, and how big it was."""
+    NVIDIA took, and how big it was. A "mistral:" model goes to Mistral instead, whatever client the caller had."""
     t0 = time.time()
     chars, images = size_of(kw.get("messages"))
     rec = {"model": kw.get("model", ""), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or [])}
     if label := reasoning_label(kw):
         rec["reasoning"] = label
-    if not _slots.acquire(timeout=SLOT_WAIT):
+    mistral = is_mistral(rec["model"])
+    if mistral:
+        client, kw = mistral_client(), mistral_request(kw)
+    slots = _mistral_slots if mistral else _slots
+    if not slots.acquire(timeout=SLOT_WAIT):
         trace({**rec, "ok": False, "wait": round(time.time() - t0, 1), "secs": 0, "error": "no free slot"})
-        raise TimeoutError(f"all {MAX_PARALLEL} NVIDIA slots stayed busy for {SLOT_WAIT}s")
+        raise TimeoutError(f"all of {'Mistral' if mistral else 'NVIDIA'}'s request slots stayed busy for {SLOT_WAIT}s")
     try:
-        _pace()
+        if not mistral:
+            _pace()  # NVIDIA's 40 a minute; Mistral's limits are per model and much higher
         t1 = time.time()
         try:
             r = call(client, {"model": rec["model"], "purpose": _purpose, **({"reasoning": rec["reasoning"]} if rec.get("reasoning") else {})}, **kw)
@@ -251,7 +256,93 @@ def create(client, _purpose: str = "", **kw):
                **({"thought_chars": n} if m is not None and (n := len(str((getattr(m, "model_extra", None) or {}).get("reasoning_content") or ""))) else {})})
         return r
     finally:
-        _slots.release()
+        slots.release()
+
+
+# ---------- Mistral (api.mistral.ai): a second OpenAI-compatible provider. A brain model named "mistral:<id>" is sent
+# there by create(), so the brain, races, ask_model and Settings' Test all work with it unchanged. Its limits are per
+# model (measured 2026-10-09 on a free key: ministral-8b 188 requests a minute, ministral-14b 30, codestral 125, while
+# mistral-medium, mistral-small and magistral said 0 until the plan opens them).
+MISTRAL_URL = "https://api.mistral.ai/v1"
+MISTRAL_KEY_FILE = HERE / "data" / "mistral_key.txt"
+MISTRAL_PREFIX = "mistral:"
+_mistral_slots = threading.BoundedSemaphore(4)
+_mistral: dict = {"key": "", "client": None, "at": 0.0, "models": []}
+
+
+def is_mistral(model: str) -> bool:
+    return str(model or "").startswith(MISTRAL_PREFIX)
+
+
+def mistral_key() -> str:
+    try:
+        return MISTRAL_KEY_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def save_mistral_key(key: str) -> None:
+    MISTRAL_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MISTRAL_KEY_FILE.write_text(key.strip(), encoding="utf-8")
+    _mistral.update(key="", client=None, at=0.0, models=[])
+
+
+def mistral_client() -> OpenAI:
+    key = mistral_key()
+    if not key:
+        raise RuntimeError("no Mistral key saved (Settings > Brain)")
+    if _mistral["client"] is None or _mistral["key"] != key:
+        _mistral.update(key=key, client=OpenAI(base_url=MISTRAL_URL, api_key=key, max_retries=0, timeout=120))
+    return _mistral["client"]
+
+
+def _mistral_id(call_id: str) -> str:
+    """Mistral takes tool-call ids of exactly 9 letters and digits; ids other models made earlier in the conversation
+    become such an id, the same one every time."""
+    s = str(call_id or "")
+    if re.fullmatch(r"[A-Za-z0-9]{9}", s):
+        return s
+    import hashlib  # noqa: PLC0415
+    return hashlib.sha1(s.encode()).hexdigest()[:9]
+
+
+def mistral_request(kw: dict) -> dict:
+    """The request as Mistral takes it: its own model id, tool-call ids it accepts, and none of the extra fields other
+    servers put on messages (reasoning text)."""
+    out = {k: v for k, v in kw.items() if k not in ("extra_body",)}
+    out["model"] = str(kw["model"])[len(MISTRAL_PREFIX):]
+    messages = []
+    for m in kw.get("messages") or []:
+        if not isinstance(m, dict):
+            m = m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else dict(m)
+        m = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_call_id", "name")}
+        if m.get("tool_calls"):
+            m["tool_calls"] = [{**c, "id": _mistral_id(c.get("id"))} for c in m["tool_calls"]]
+        if m.get("tool_call_id"):
+            m["tool_call_id"] = _mistral_id(m["tool_call_id"])
+        messages.append(m)
+    out["messages"] = messages
+    return out
+
+
+def mistral_catalog() -> list[dict]:
+    """The chat models with tool calling that Mistral offers the saved key (cached 10 minutes), as "mistral:<id>"."""
+    if time.time() - _mistral["at"] < 600 and _mistral["models"]:
+        return _mistral["models"]
+    import json  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    req = urllib.request.Request(MISTRAL_URL + "/models", headers={"Authorization": f"Bearer {mistral_key()}"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.load(r).get("data", [])
+    seen, models = set(), []
+    for m in data:
+        caps = m.get("capabilities") or {}
+        if not (caps.get("completion_chat") and caps.get("function_calling")) or m.get("id") in seen or re.search(r"-\d{4}$", m.get("id", "")):
+            continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
+        seen.add(m["id"])
+        models.append({"id": MISTRAL_PREFIX + m["id"], "vision": bool(caps.get("vision"))})
+    _mistral.update(at=time.time(), models=sorted(models, key=lambda m: m["id"]))
+    return _mistral["models"]
 
 # How much each model reasons, in its own words (boss.EFFORT's low / medium / high / max). Models expose different
 # switches, and a field one ignores another rejects, so each gets only what was measured to work for it (2026-10-09,
@@ -322,6 +413,8 @@ def tests() -> dict:
 def label(model: str) -> str:
     if model in BRAIN_LABELS:
         return BRAIN_LABELS[model]
+    if is_mistral(model):
+        return model[len(MISTRAL_PREFIX):].replace("-latest", "").replace("-", " ").title() + " (Mistral)"
     name = model.split("/")[-1].replace("-instruct", "").replace("-it", "")
     return name.replace("-", " ").replace("_", " ").title()
 
@@ -329,7 +422,12 @@ def label(model: str) -> str:
 def is_vision(model: str) -> bool:
     """Whether the brain may send this model screenshots: measured here, or passed Settings' Test with a picture."""
     t = tests().get(model)
-    return bool(t["vision"]) if t and "vision" in t else model in VISION
+    if t and "vision" in t:
+        return bool(t["vision"])
+    if is_mistral(model):  # its catalog says; before that's been read, its chat models see and its code models don't
+        known = next((m for m in _mistral["models"] if m["id"] == model), None)
+        return known["vision"] if known else "code" not in model
+    return model in VISION
 
 
 def catalog(key: str = "") -> list[str]:
@@ -419,8 +517,10 @@ def save_nim_key(key: str) -> None:
 
 def scrub(text: str) -> str:
     """Text with the key masked, for anything that may reach a log or the screen."""
-    key = nim_key()
-    return text.replace(key, "***") if key and len(key) > 8 else text
+    for key in (nim_key(), mistral_key()):
+        if key and len(key) > 8:
+            text = text.replace(key, "***")
+    return text
 
 
 class NimDirector:

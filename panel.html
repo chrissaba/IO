@@ -1161,7 +1161,7 @@
           </template>
           <div class="modelrow" style="flex-basis:100%">
             <select x-model="addModel" @focus="loadCatalog()" style="flex:1">
-              <option value="" x-text="catalogNote || 'Add a model from NVIDIA\'s catalog…'"></option>
+              <option value="" x-text="catalogNote || 'Add a model (NVIDIA, or Mistral with its key)…'"></option>
               <template x-for="c in catalog.filter((c) => !(s.settings.brain_models || []).includes(c.id))" :key="c.id">
                 <option :value="c.id" x-text="c.label + (c.vision ? '  (sees)' : '') + '   ' + c.id"></option>
               </template>
@@ -1191,6 +1191,14 @@
           <button class="btn sm" @click="saveNimKey()">Save</button>
           <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
           <div class="note" style="flex-basis:100%" x-show="nimNote || !s.nim_key_set" x-text="nimNote || 'No key saved yet: IO works at Low, on this PC only, until you add one.'"></div>
+        </div>
+        <div class="setting" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>Mistral API key (optional)</div>
+            <div>Adds Mistral's models to the list above (they answer in about a second). Get a key at <span class="url">console.mistral.ai</span>. Kept on this PC like the NVIDIA key; save it blank to remove it.</div></div>
+          <input type="password" style="flex:1" x-model="mistralKey" autocomplete="off" :placeholder="s.mistral_key_set ? 'key saved (paste a new one to replace it)' : 'Mistral key'">
+          <button class="btn sm" @click="saveMistralKey()">Save</button>
+          <button class="btn sm ghost" x-show="s.mistral_key_set" @click="mistralNote = 'Testing…'; post('/api/keys/mistral/test', {}).then((r) => mistralNote = r.result)">Test</button>
+          <div class="note" style="flex-basis:100%" x-show="mistralNote" x-text="mistralNote"></div>
         </div>
       </div>
       <h2>Skills IO taught itself</h2>
@@ -1566,7 +1574,7 @@ function agent() {
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
-    chromeToken: "", browserTest: "", nimKey: "", nimNote: "",
+    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", mistralKey: "", mistralNote: "",
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
     clock: Date.now(),  // ticks every second for the live line's elapsed time (only it reads this, so nothing else re-renders)
@@ -1822,7 +1830,7 @@ function agent() {
     info(m) { return (this.s.model_info || {})[m] || (this.catalog.find((c) => c.id === m) || { label: m, vision: false }); },
     async loadCatalog() {
       if (this.catalog.length) return;
-      this.catalogNote = "Loading NVIDIA's catalog…";
+      this.catalogNote = "Loading the models your keys offer…";
       const r = await fetch("/api/nim/models").then((x) => x.json());
       this.catalog = r.models || []; this.catalogNote = r.error || "";
     },
@@ -2174,6 +2182,14 @@ function agent() {
       if (!this.chromeToken.trim()) return;
       await post("/api/browser", { token: this.chromeToken });
       this.chromeToken = ""; this.browserTest = "Token saved."; this.refresh();
+    },
+    async saveMistralKey() {
+      if (!this.mistralKey.trim() && !this.s.mistral_key_set) return;
+      const r = await post("/api/keys/mistral", { key: this.mistralKey });
+      this.mistralKey = "";
+      this.s.mistral_key_set = !!r.mistral_key_set;
+      this.catalog = [];  // the model list now includes (or drops) Mistral's
+      this.mistralNote = r.mistral_key_set ? "Key saved. Its models are in the list above; Test shows which ones your plan opens." : "Key removed.";
     },
     async saveNimKey() {
       // blank clears the key; the page never gets it back, only whether one is set
