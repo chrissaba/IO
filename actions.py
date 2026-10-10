@@ -3781,13 +3781,20 @@ def _log_lines_sync(p: Path, shown: str, tail: int, find: str, budget: int) -> s
     alts = [[w.lower() for w in part.split()] for part in re.split(r"[|,]", find) if part.split()]
     hits: list[tuple[int, str]] = []
     total = 0
+    follow = 0  # a log's matching line is often a warning whose exception and stack trace are on the next lines
     with open(p, "r", encoding="utf-8", errors="replace") as f:
         for total, line in enumerate(f, 1):
             low = line.lower()
             if any(all(w in low for w in alt) for alt in alts):
                 hits.append((total, line.rstrip("\r\n")))
+                follow = 2
                 if len(hits) > 20000:
                     del hits[:10000]  # only the newest are shown anyway
+            elif follow and line[:1].isspace() or (follow and re.match(r"\s*[\w.]+(Exception|Error)\b", line)):
+                hits.append((total, "  | " + line.rstrip("\r\n")))
+                follow -= 1
+            else:
+                follow = 0
     if tail:
         hits = [h for h in hits if h[0] > total - tail]
     scope = f"in its last {tail:,} lines" if tail else f"of {total:,}"
@@ -3804,6 +3811,33 @@ def _log_lines_sync(p: Path, shown: str, tail: int, find: str, budget: int) -> s
     shown_rows.reverse()
     more = f" (the newest {len(shown_rows)} shown)" if len(shown_rows) < len(hits) else ""
     return f"{shown} ({_size(p)}): {len(hits)} lines {scope} with \"{find}\"{more}:\n" + "\n".join(shown_rows)
+
+
+def _big_lines_sync(p: Path, shown: str, spec: str, budget: int) -> str:
+    """Lines a-b of a file too big to read whole, read line by line up to b (the line numbers find= gave for a log)."""
+    m = re.fullmatch(r"\s*L?(\d+)\s*(?:(?:-|–|—|:|\.\.|to|,)\s*L?(\d*))?\s*", str(spec), re.I)
+    if not m:
+        raise Fail("BAD_ARGS", f"lines={str(spec)[:30]!r}: give one range like 120-180", f'read_file("{shown}", lines="1-200")')
+    a = builtins_max(1, int(m.group(1)))
+    b = int(m.group(2)) if m.group(2) else a + 199
+    b = min(b, a + 1999)
+    rows: list[str] = []
+    used = 0
+    n = 0
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        for n, line in enumerate(f, 1):
+            if n < a:
+                continue
+            if n > b:
+                break
+            row = f"{n}: {line.rstrip(chr(13) + chr(10))}"
+            if used + len(row) > budget and rows:
+                return f"{shown} ({_size(p)}), lines {a}-{n - 1}:\n" + "\n".join(rows) + f'\n[stopped to fit; next: lines="{n}-{b}"]'
+            rows.append(row)
+            used += len(row) + 1
+    if not rows:
+        raise Fail("BAD_ARGS", f"the file has {n} lines", f'read_file("{shown}", tail=200)')
+    return f"{shown} ({_size(p)}), lines {a}-{a + len(rows) - 1}:\n" + "\n".join(rows)
 
 
 def _line_span(spec: str, total: int, shown: str) -> tuple[int, int]:
@@ -4281,9 +4315,12 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: st
             raise Fail("NOT_FOUND", f"{p} doesn't exist", f'find_file("{p.name}")')
         if p.is_dir():
             raise Fail("BAD_ARGS", f"{p} is a folder", f'list_files("{p}")')
-    if (tail and not lines) or (find and not lines and p.suffix.lower() not in OFFICE and p.stat().st_size > 5_000_000):
+    big = p.suffix.lower() not in OFFICE and p.stat().st_size > 5_000_000
+    if (tail and not lines) or (find and not lines and big) or (lines and big):
         room = builtins_max(4000, ctx.page_chars or 4000)
         budget = builtins_max(200, min(int(max or room), builtins_max(20000, room)))
+        if lines:  # find= gave line numbers in a big log: those lines (an exception's stack trace under its warning)
+            return ok(await asyncio.to_thread(_big_lines_sync, p, shown, lines, budget))
         return ok(await asyncio.to_thread(_log_lines_sync, p, shown, int(tail or 0), find, budget))
     text, fp = await asyncio.to_thread(_file_text_print_sync, p)
     if fp and art is None:  # what this task now knows of the file: edits refuse if it changes on disk after this
