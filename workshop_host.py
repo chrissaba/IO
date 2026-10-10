@@ -33,6 +33,8 @@ def _ok_type(t) -> bool:
 def load(folder: Path):
     """(the tool functions, problems with them). Importing runs tool.py's top level, as starting it would."""
     sys.path.insert(0, str(folder))
+    if (folder / "_deps").is_dir():  # packages installed for this tool alone; after IO's own, so they never replace mcp's
+        sys.path.append(str(folder / "_deps"))
     spec = importlib.util.spec_from_file_location("tool", folder / "tool.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

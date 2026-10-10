@@ -219,6 +219,8 @@ FRONTIER_STYLE = """WORKING STYLE
   whether IO builds that tool in its workshop. Then carry on with what you can. Do the same when you had to improvise
   the ability with a one-off script (decoding a file type, talking to a program) and it will come up again: proposing
   it in the same reply as your answer means next time it's a tool, not a puzzle.
+- Installing or updating a package or program (pip, npm, winget): install_package(manager, name, why); it asks the user
+  first and never touches IO's own Python. Don't install with run_command or PowerShell.
 - A server or app that must keep running: start_app(command, folder, port) (it waits until the port answers).
 - State facts only from what your tools returned in this task. If a page didn't show something, look somewhere better
   (a site's own API, another page) or say you couldn't find it; never fill the gap from memory.
@@ -2567,8 +2569,16 @@ RISKY_POWERSHELL = re.compile(
 )
 
 
+# installing or updating software from a command line: asked like any install (install_package is the way IO should do it)
+RISKY_INSTALL = re.compile(r"(?<![-\w])(pip3?\s+install|python\S*\s+-m\s+pip\s+install|uv\s+(pip\s+install|add|tool\s+install)|"
+                           r"npm\s+(i|install|update)|winget\s+(install|upgrade)|choco\s+(install|upgrade)|scoop\s+install|"
+                           r"Install-(Package|Module|Script)|Update-Module)(?![-\w])", re.I)
+
+
 def risky_reason(name: str, args: dict, request: str = "") -> str:
     """Why an action needs confirmation, or "" if it doesn't. request: what the user asked (a named clipboard is theirs)."""
+    if name == "PowerShell" and RISKY_INSTALL.search(str(args.get("command", ""))):
+        return f"install software: {args.get('command')}"
     if name == "PowerShell" and RISKY_POWERSHELL.search(str(args.get("command", ""))):
         return f"run PowerShell: {args.get('command')}"
     if name == "FileSystem" and (args.get("mode") in ("delete", "move") or (args.get("mode") == "write" and args.get("overwrite"))):

@@ -5049,9 +5049,12 @@ def _py_lens_sync(module: str, python: str, type_: str, find: str, budget: int) 
     if not exe:
         found = shutil.which("python") or shutil.which("py") or ""
         exe = sys.executable if not found or "WindowsApps" in found else found  # the Store's stub only opens the Store
+    import workshop  # noqa: PLC0415
+    deps = os.pathsep.join(workshop.deps_paths())  # packages installed for workshop tools can be looked up too
     try:
         r = subprocess.run([exe, "-c", _PY_LENS, module, type_, find, str(budget)], capture_output=True, timeout=60,
-                           creationflags=NO_WINDOW, cwd=str(Path.home()), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                           creationflags=NO_WINDOW, cwd=str(Path.home()),
+                           env={**os.environ, "PYTHONIOENCODING": "utf-8", **({"PYTHONPATH": deps} if deps else {})})
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Fail("FAILED", f"couldn't run {exe}: {e}", "python= the full path of the project's python.exe") from None
     text = r.stdout.decode("utf-8", "replace").replace("\r\n", "\n").strip()
@@ -5238,6 +5241,146 @@ async def tool_ready(ctx: Ctx, tool: str, summary: str, **_) -> str:
     if cb is None:
         raise Fail("UNSUPPORTED", "the workshop isn't available in this run", "say in done that the tool is built and tested")
     return ok(await cb(tid, str(summary), now))
+
+
+# --- installs and updates (pip, npm, winget), each with the user's OK on the PC, like a coding agent asks. Never into
+# IO's own Python: an install there could break IO itself (a newer pydantic under the mcp it runs on); a workshop tool's
+# packages go in the tool's own folder instead
+
+INSTALL_QUESTION = "IO wants to install"  # app.py: answering this one is for the PC, not a paired phone
+
+
+def _get_json_sync(url: str) -> dict | None:
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "IO"}), timeout=15) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def _package_facts_sync(manager: str, name: str, version: str) -> tuple[str, str]:
+    """(the exact version that will be installed, one line about the package from its registry). Fails for a name the
+    registry doesn't know, so a misspelt (or look-alike) name stops here instead of installing something else."""
+    if manager == "pip":
+        info = _get_json_sync(f"https://pypi.org/pypi/{urllib.parse.quote(name)}/json")
+        if info is None:
+            raise Fail("NOT_FOUND", f"PyPI has no package named {name}", "web_search the package's exact name")
+        if version and version not in (info.get("releases") or {}):
+            raise Fail("NOT_FOUND", f"{name} has no version {version} on PyPI (newest: {info['info']['version']})", "leave version out")
+        i = info["info"]
+        home = (i.get("project_urls") or {}).get("Homepage") or i.get("home_page") or f"https://pypi.org/project/{name}/"
+        return version or i["version"], f"\"{_clip(i.get('summary') or 'no description', 160)}\" ({home})"
+    if manager == "npm":
+        info = _get_json_sync(f"https://registry.npmjs.org/{urllib.parse.quote(name, safe='@')}")
+        if info is None:
+            raise Fail("NOT_FOUND", f"npm has no package named {name}", "web_search the package's exact name")
+        latest = (info.get("dist-tags") or {}).get("latest", "")
+        if version and version not in (info.get("versions") or {}):
+            raise Fail("NOT_FOUND", f"{name} has no version {version} on npm (newest: {latest})", "leave version out")
+        return version or latest, f"\"{_clip(info.get('description') or 'no description', 160)}\" (https://www.npmjs.com/package/{name})"
+    r = subprocess.run(["winget", "show", "--id", name, "-e", "--disable-interactivity"] + (["--version", version] if version else []),
+                       capture_output=True, timeout=60, creationflags=NO_WINDOW)
+    out = r.stdout.decode("utf-8", "replace")
+    m = re.search(r"Found (.+?) \[", out)
+    if r.returncode != 0 or not m:
+        raise Fail("NOT_FOUND", f"winget has no package with the id {name}: {_clip(out.strip(), 300)}", 'run_command("winget search <words>")')
+    ver = re.search(r"(?m)^Version:\s*(.+)$", out)
+    pub = re.search(r"(?m)^Publisher:\s*(.+)$", out)
+    return (version or (ver.group(1).strip() if ver else "newest")), f"{m.group(1)}" + (f" by {pub.group(1).strip()}" if pub else "")
+
+
+@action("install_package", group="PC", summary="install or update a package or program, after the user's OK (pip, npm, winget)",
+        params="""
+        manager s pip|npm|winget
+        name s the package's exact name or id
+        why s what it's needed for
+        version s? a version (default: the newest)
+        for_tool s? pip: a workshop tool's id (installs in its folder)
+        folder s? pip: a project with a .venv; npm: the project
+        update b? update it if it's already installed
+        """, cost=30.0, star=True, top="manager,name,why", timeout=900,
+        limits="asks the user first, every time, on the PC; never into IO's own Python; npm only into a project folder")
+async def install_package(ctx: Ctx, manager: str, name: str, why: str, version: str = "", for_tool: str = "", folder: str = "",
+                          update: bool = False, **_) -> str:
+    import workshop  # noqa: PLC0415
+    manager, name, version = str(manager).strip().lower(), str(name).strip(), str(version or "").strip()
+    if manager not in ("pip", "npm", "winget"):
+        raise Fail("BAD_ARGS", "manager must be pip, npm or winget", 'install_package(manager="pip", name=..., why=...)')
+    if not re.fullmatch(r"@?[\w.\-]+(/[\w.\-]+)?", name):
+        raise Fail("BAD_ARGS", f"{name!r} isn't a package name", "the exact name from its registry")
+    exact, about = await asyncio.to_thread(_package_facts_sync, manager, name, version)
+    own = str(_real(HERE)).lower()
+    cwd = None
+    if manager == "pip":
+        uv = shutil.which("uv")
+        if for_tool:
+            try:
+                d = workshop.folder(str(for_tool).strip())
+            except ValueError as e:
+                raise Fail("BAD_ARGS", str(e), "the tool's id") from None
+            if not d.is_dir():
+                raise Fail("NOT_FOUND", f"no workshop tool {for_tool}", "about_io() lists them")
+            where = f"the workshop tool {for_tool}'s own folder (not IO's own Python)"
+            target = ["--target", str(d / "_deps"), "--python", workshop.python()]
+        else:
+            py = _path(folder) / ".venv" / "Scripts" / "python.exe" if folder else None
+            if folder and not py.is_file():
+                raise Fail("NOT_FOUND", f"{folder} has no .venv", f'run_command("uv venv", folder="{folder}") first')
+            exe = str(py) if py else (shutil.which("python") or "")
+            if not exe or "WindowsApps" in exe:
+                raise Fail("NOT_FOUND", "no Python on PATH to install into", "folder= a project with a .venv")
+            if str(_real(Path(exe))).lower().startswith(own + "\\"):
+                raise Fail("BLOCKED", "that is IO's own Python: an install there could break IO", "for_tool= a workshop tool, or a project's folder=")
+            where = f"the Python at {exe}"
+            target = ["--python", exe] + ([] if py else ["--system"])
+        spec = f"{name}=={exact}"  # exactly the version the user was shown
+        cmd = ([uv, "pip", "install"] if uv else [workshop.python(), "-m", "pip", "install"]) + (["--upgrade"] if update else []) + target + [spec]
+    elif manager == "npm":
+        if not folder or not _path(folder).is_dir():
+            raise Fail("BAD_ARGS", "npm installs go into a project: folder= its folder", "IO doesn't install npm packages globally")
+        cwd = str(_path(folder))
+        if cwd.lower().startswith(own + "\\") or cwd.lower() == own:
+            raise Fail("BLOCKED", "that is IO's own program folder", "a project of the user's")
+        where = f"the project {cwd}"
+        cmd = ["npm.cmd", "install", f"{name}@{exact if version else 'latest'}"]
+    else:
+        where = "this PC (a program; Windows may ask for admin rights)"
+        cmd = (["winget", "upgrade" if update else "install", "--id", name, "-e", "--silent", "--disable-interactivity",
+                "--accept-package-agreements", "--accept-source-agreements"] + (["--version", version] if version else []))
+    question = (f"{INSTALL_QUESTION} {name} {exact} with {manager}{' (an update)' if update else ''}: {about}. "
+                f"Into: {where}. Why: {_clip(str(why), 300)}. "
+                + ("Installing it accepts the package's license terms. " if manager == "winget" else "") + "Allow it? (yes/no)")
+    if ctx.ask is None:
+        later = ctx.options.get("approve_later")
+        if callable(later):  # nobody is watching: it waits in Approvals with everything above
+            return ok(await later("install_package", {"manager": manager, "name": name, "version": version, "why": why,
+                                                       "for_tool": for_tool, "folder": folder, "update": update},
+                                  question.removeprefix(f"{INSTALL_QUESTION} ").removesuffix(" Allow it? (yes/no)")))
+        raise Fail("NEEDS", "an install needs the user's OK and nobody can answer here", "say in done what to install and why")
+    answer = await ctx.ask(question)
+    if not str(answer).strip().lower().startswith("y"):
+        return unsure(f"the user didn't allow installing {name}", "do without it, or say in done what it would have helped with")
+
+    def run() -> tuple[int, str]:
+        r = subprocess.run(cmd, capture_output=True, timeout=840, cwd=cwd, creationflags=NO_WINDOW)
+        return r.returncode, (r.stdout + b"\n" + r.stderr).decode("utf-8", "replace").replace("\r\n", "\n").strip()
+
+    code, out = await asyncio.to_thread(run)
+    if code != 0:
+        raise Fail("FAILED", f"the install failed (exit code {code}):\n{out[-2500:]}", "read why above; a different version or package, or ask_user")
+    if manager == "pip" and for_tool:
+        d = workshop.folder(str(for_tool).strip())
+        req = d / "requirements.txt"
+        lines = [ln for ln in (req.read_text(encoding="utf-8").splitlines() if req.is_file() else [])
+                 if ln.split("==")[0].strip().lower() != name.lower()]
+        req.write_text("\n".join(lines + [f"{name}=={exact}"]) + "\n", encoding="utf-8")
+        return ok(f"installed {name} {exact} into {d / '_deps'} (recorded in requirements.txt); `import` it in tool.py, "
+                  f'then workshop_test(tool="{for_tool}")\n{out[-800:]}')
+    return ok(f"installed {name} {exact} into {where}\n{out[-1500:]}")
 
 
 # --- compiler errors in a build's output (dotnet/MSBuild, tsc): each error once, with its source line, and for an error

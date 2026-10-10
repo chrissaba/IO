@@ -33,9 +33,11 @@ BUILD_BRIEF = """How workshop tools work:
   how IO does things, if that helps.
 - tool.py: plain Python functions, one per ability, each with type-hinted parameters (str, int, float, bool, list[str])
   and a docstring whose first line says what it does (the brain reads it to choose the tool). Each returns a str: the
-  result as the brain should read it. List them in TOOLS = [function, ...]. Use the standard library, or packages
-  already installed in IO's Python ({python}); check a package's real API with api_lookup(of="module") first, since
-  what you remember of it may be from another version. No input(), no windows, nothing that keeps running: each call
+  result as the brain should read it. List them in TOOLS = [function, ...]. Use the standard library or packages
+  already installed in IO's Python ({python}). When a well-known package would do the job much better (a real PDF
+  parser instead of a regex), install_package(manager="pip", name=..., for_tool="{id}", why=...) asks the user and puts
+  it in this tool's own folder. Check a package's real API with api_lookup(of="module") before using it (it sees
+  packages installed for workshop tools): what you remember of it may be from another version. No input(), no windows, nothing that keeps running: each call
   finishes within a minute, and raises an exception with a clear message when it can't do its job.
 - test_tool.py: calls the functions with real inputs from this PC and asserts on what they return. It runs in that
   folder, so `import tool` works.
@@ -98,7 +100,8 @@ def files_hash(tid: str) -> str:
     """One hash over every .py file in the tool's folder: what was tested and approved is exactly what runs."""
     d = folder(tid)
     h = hashlib.sha256()
-    for p in sorted(d.glob("*.py")) if d.is_dir() else []:
+    # its code, and the packages it installed for itself (requirements.txt, written by install_package)
+    for p in sorted([*d.glob("*.py"), *d.glob("requirements.txt")]) if d.is_dir() else []:
         h.update(p.name.encode() + b"\0" + p.read_bytes() + b"\0")
     return h.hexdigest()[:16]
 
@@ -136,16 +139,23 @@ def build_text(entry: dict) -> str:
             BUILD_BRIEF.format(dir=folder(tid), id=tid, python=python(), prefix=prefix(tid)))
 
 
-def _env() -> dict:
+def _env(tid: str = "") -> dict:
     env = {k: v for k, v in os.environ.items() if not SECRET_ENV.search(k)}
     env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
+    if tid:  # the packages installed for this tool (install_package for_tool=)
+        env["PYTHONPATH"] = str(folder(tid) / "_deps")
     return env
+
+
+def deps_paths() -> list[str]:
+    """Every workshop tool's own package folder (for api_lookup on a package installed for one)."""
+    return [str(d) for d in WORKSHOP.glob("*/_deps") if d.is_dir()]
 
 
 def check_sync(tid: str) -> dict:
     """The host's own check of tool.py: it loads, and every tool follows the rules."""
     r = subprocess.run([python(), str(HOST), str(folder(tid)), "--check"], capture_output=True, timeout=60, cwd=str(folder(tid)),
-                       env=_env(), creationflags=NO_WINDOW)
+                       env=_env(tid), creationflags=NO_WINDOW)
     try:
         return json.loads(r.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -166,7 +176,7 @@ def test_sync(tid: str) -> dict:
         result = {"ok": False, "output": "write test_tool.py: it calls the tools with real inputs and asserts on what they return"}
     else:
         try:
-            r = subprocess.run([python(), "test_tool.py"], capture_output=True, timeout=TEST_TIMEOUT, cwd=str(d), env=_env(),
+            r = subprocess.run([python(), "test_tool.py"], capture_output=True, timeout=TEST_TIMEOUT, cwd=str(d), env=_env(tid),
                                creationflags=NO_WINDOW)
             out = (r.stdout + b"\n" + r.stderr).decode("utf-8", "replace").replace("\r\n", "\n").strip()
             result = {"ok": r.returncode == 0, "output": f"test_tool.py exit code {r.returncode}\n{out[-4000:]}"}

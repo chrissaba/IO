@@ -1385,6 +1385,9 @@ async def answer_task(request: Request) -> JSONResponse:
     future = answers.get(request.path_params["id"])
     if future is None or future.done():
         return JSONResponse({"error": "that task isn't waiting for an answer"}, status_code=409)
+    task = next((t for t in state["tasks"] if t["id"] == request.path_params["id"]), {})
+    if remote.is_remote(request.scope) and str(task.get("question", "")).startswith(boss.actions.INSTALL_QUESTION):
+        return JSONResponse({"error": "installs are approved on the PC"}, status_code=403)
     future.set_result(str((await request.json()).get("answer", "")))
     return JSONResponse({"ok": True})
 
