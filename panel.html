@@ -686,6 +686,33 @@
                   </div>
                 </div></div>
               </template>
+              <!-- an approval this message led to (a tool IO wants to build or turn on, a step an unattended run left):
+                   asked right here, under the answer, as well as in Approvals -->
+              <template x-for="a in turnApprovals(m.task_id)" :key="a.id">
+                <div class="msg-agent" style="margin-top:-14px"><div class="question">
+                  <div class="q" x-text="approvalAsk(a)"></div>
+                  <template x-if="a.name === 'build_tool'">
+                    <div class="note" style="margin-top:4px" x-text="'It would ' + a.args.does.replace(/^./, (c) => c.toLowerCase()).replace(/\.$/, '') + '. It writes and tests the tool in its workshop folder only; nothing runs until you turn it on.'"></div>
+                  </template>
+                  <template x-if="a.name === 'enable_tool'">
+                    <div class="note" style="margin-top:4px">
+                      <div x-text="a.args.summary || a.args.does"></div>
+                      <div style="font-family:'Geist Mono',monospace; font-size:11.5px; margin-top:4px" x-text="(a.args.tools || []).join('\n')"></div>
+                      <button class="linkbtn" x-show="!REMOTE" @click="post(`/api/workshop/${a.args.tool}`, { action: 'open' })">Read the code</button>
+                    </div>
+                  </template>
+                  <div class="qrow" x-show="a.status === 'pending'">
+                    <template x-if="REMOTE && ['build_tool', 'enable_tool'].includes(a.name)"><div class="note">Approve this on the PC</div></template>
+                    <template x-if="!(REMOTE && ['build_tool', 'enable_tool'].includes(a.name))">
+                      <div style="display:flex; gap:8px">
+                        <button class="btn accent sm" @click="decide(a, 'approve')" x-text="a.name === 'build_tool' ? 'Build it' : a.name === 'enable_tool' ? 'Turn it on' : a.sandbox ? 'Apply changes' : 'Approve'"></button>
+                        <button class="btn sm" @click="decide(a, 'reject')" x-text="['build_tool', 'enable_tool'].includes(a.name) ? 'Not now' : 'Reject'"></button>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="note" style="margin-top:4px" x-show="a.status !== 'pending'" x-text="approvalOutcome(a)"></div>
+                </div></div>
+              </template>
               <!-- while IO works on this message: one glowing line saying what it's doing now (see .live); one per chat.
                    Click it for the steps so far, the same dropdown the answer gets when it's done -->
               <template x-if="liveTaskId === m.task_id">
@@ -2080,10 +2107,23 @@ function agent() {
       const foot = !busy && (row || meta || tag || copy) ? `<div class="msgfoot">${row || meta + tag}${copy}</div>` : "";
       const last = this.chat && i === this.chat.messages.length - 1;
       const imgs = (t.images || []).length ? `<div class="imgs">${t.images.map((n) => `<img src="/uploads/${encodeURIComponent(n)}" alt="" onclick="window.open(this.src)">`).join("")}</div>` : "";
-      const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(t.text)}</div>`;
+      // a workshop build's message is IO's own brief, rules and all: its first line says what it is
+      const text = t.source === "workshop" ? t.text.split("\n")[0] : t.text;
+      const said = t.text === "(see the attached image)" && imgs ? "" : `<div class="bubble">${esc(text)}</div>`;
       return `<div class="msg-user">${imgs}${said}</div>${divider}
         <div class="msg-agent ${last ? "last" : ""}">${busy ? drop : ""}${answer}
           ${!busy && !answer ? `<div class="md" style="color:var(--muted)">(no answer)</div>` : ""}${foot}${busy ? "" : drop}</div>`;
+    },
+    // approvals a message led to, shown under its answer (Approvals lists them too)
+    turnApprovals(taskId) { return (this.s.approvals || []).filter((a) => a.task_id === taskId); },
+    approvalAsk(a) {
+      if (a.name === "build_tool") return `I can't do this well yet. Can I build myself a tool for it: ${a.args.name}?`;
+      if (a.name === "enable_tool") return `${a.args.name} is built and its test passed. Turn it on?`;
+      return `Approval needed: ${a.reason}`;
+    },
+    approvalOutcome(a) {
+      const said = { approved: "You said yes", applied: "You said yes", rejected: "You said not now", failed: "Couldn't go ahead" }[a.status] || a.status;
+      return said + (a.result ? `: ${a.result}` : "");
     },
     // the chat's live line: the task actually working (or waiting for you), else the first one queued; only one per chat
     get liveTaskId() {
