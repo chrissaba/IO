@@ -229,6 +229,85 @@ FRONTIER_STYLE = """WORKING STYLE
 """
 
 
+# The API brain's tools: one clear set for code and the desktop, each with its whole description (Claude Code's way: a
+# handful of strong tools, the rest found when needed). It used to get every action at once (124 with the plugins on a C#
+# task, 29 of them Home Assistant's), each parameter cut to 40 characters, with overlapping old and new ways to click
+FRONTIER_TOOLS = [
+    # code and files
+    "read_file", "search_code", "glob_files", "list_files", "find_file", "edit_file", "write_file", "file_op", "run_command",
+    "PowerShell", "start_app", "api_lookup", "install_package", "project_notes",
+    # the desktop
+    "look_at_screen", "list_windows", "open_app", "focus_window", "close_window", "dismiss_dialog", "read_window",
+    "list_controls", "click", "type_into", "set_control", "select_menu", "hotkeys", "scroll_until", "wait_until",
+    "click_on", "find_on_screen", "write_in_app", "open_path", "screenshot",
+    # the web
+    "web_search", "web_answer", "read_page", "browser_open", "web_fill", "web_click",
+    # facts, planning and talking
+    "pc_info", "app_info", "calc", "todo", "steps", "ask_user", "ask_model", "remember", "add_goal", "notes", "about_io",
+    "propose_tool", "wait", "done", "tools", "use",
+]
+PHONE_WORDS = re.compile(r"\b(phone|iphone|ios|android|simulator)\b", re.I)
+
+FRONTIER_SYSTEM = """You are IO, the user's assistant on their Windows PC. You work on their files, programs, browser and \
+apps with real tools, the way Claude Code works in a terminal, and you also drive the desktop (windows, clicks, typing) \
+when a task lives in an app.
+
+HOW TO WORK
+- Chat, or a question you can answer from knowledge: answer in plain text, no tools. You are IO: questions about you are about you.
+- Anything about this PC, its files, the web or live facts: find out with tools first, and state only what they returned.
+- Do what was asked, completely and nothing extra. When it's ambiguous or needs a choice only the user can make, ask_user.
+- Several parts: plan them with todo and keep it current. Put every call you already know you need in one reply (several
+  calls at once, or steps(...) for a sequence that stops at the first failure).
+- Results start ok:, unsure: or error:CODE: with a | try: hint. Never count a failed or unconfirmed step as done.
+- Finish with done(summary): the answer or result itself, what you changed, how you checked it, and anything left
+  unchecked (say exactly what the user should test).
+
+CODE (a repository, a script, a config)
+- Explore before you change anything: search_code finds definitions and uses (a regex over the repository, file:line),
+  glob_files finds files by path, read_file reads them with line numbers (offset/limit for long files). Read a file
+  before editing it, and enough of the code around it to follow its patterns, names and style.
+- Find the root cause before fixing. When one fix touches several places (a rule used in two paths, a setting and its
+  reader), change all of them in the same pass and keep them consistent.
+- Edit with edit_file (exact old text -> new; several changes at once with edits=[...]); write_file only for new files
+  or whole rewrites. Keep each change focused: no unrelated refactors, no files the task doesn't need.
+- run_command runs bash (Git Bash) in a folder: builds, tests, git, scripts. PowerShell cmdlets go to PowerShell;
+  servers and anything that keeps running go to start_app.
+- Verify: build it, run the tests, and test the logic you changed (add unit tests next to the project's own, or a small
+  throwaway check) when the project allows it. What only the user can check (in a game, on a device), say plainly.
+- An installed library, SDK or plugin API may differ from what you remember: api_lookup shows the real one. When a build
+  names a missing member, use its result, never another guess.
+- In a git repository: work on the branch it's on; commit when the user asked for it or the work so far was committed
+  that way, with a clear message; never push unless asked.
+- Project notes (below the request, when there are any) hold what earlier sessions learned there: follow them. When you
+  learn something the next session needs (how it's built and tested, where things are, the user's rules), save it with
+  project_notes(path, notes), rewritten whole, short and current.
+
+DESKTOP
+- Read before you look: list_windows, read_window and list_controls give exact text and controls; look_at_screen when
+  there's nothing to read (games, canvases, images) or to confirm what changed.
+- Act by a control's visible text: click, type_into, set_control, select_menu, hotkeys; write_in_app to write in an
+  app. Games and emulators have no controls: click_on and look_at_screen with window= the app. Never guess coordinates.
+- After an action, check its effect before the next one depends on it. Window titles change as you work: name the app.
+- Never press Esc or Back in BlueStacks (close its menus with their on-screen X); never select-all and copy to read text.
+
+WEB
+- Facts: web_answer(question), or web_search then read_page (always Google). Using a site: browser_open(url) opens it in
+  IO's own tab, then web_fill({{label: value}}) and web_click(text). Never click or type in the user's browser windows.
+
+ALSO
+- Something ongoing ("keep an eye on", "every morning"): add_goal. Packages and programs: install_package (it asks the
+  user). What IO itself can do: about_io. IO's own program files are read-only to you; an ability none of your tools
+  give: propose_tool(name, does, why) once, then carry on.
+- More tools: tools(group) lists the rest ({groups}) or a plugin's tools by its name ({plugins}); use(name, args) runs one.
+{folders}{browser}"""
+
+
+def frontier_system(names: list, browser_where: str = "", plugins_off: str = "") -> str:
+    browser = (f"- Web actions work in IO's own browser tab. {browser_where}\n" if {"web_answer", "read_page"} & set(names) else "")
+    return FRONTIER_SYSTEM.format(groups=", ".join(g for g in actions.GROUPS if g != "END"), plugins=plugins_off or "none installed",
+                                  folders=user_folders(), browser=browser)
+
+
 def layer_system(names: list, browser_where: str = "", frontier: bool = False) -> str:
     """SYSTEM for the action layer: HOW TO DECIDE, the preference ladder limited to this menu, COMMON JOBS and RULES.
     frontier: a large NVIDIA brain, which also gets WORKING STYLE (batching, editing, checking its work)."""
@@ -285,6 +364,20 @@ def claimed_unmade(answer: str, steps_log: list[str]) -> str:
     return f"your answer says {', '.join(missing)} {'was' if len(missing) == 1 else 'were'} made, but no step wrote it." if missing else ""
 
 
+FILE_EDITS = {"edit_file", "edit_lines", "write_file"}
+
+
+def edit_folder(name: str, args: dict) -> "Path | None":
+    """The folder a file edit can be allowed for, for the rest of a chat: its repository, else the file's own folder."""
+    if name not in FILE_EDITS or not args.get("path"):
+        return None
+    try:
+        p = actions._path(str(args["path"]))
+    except Exception:
+        return None
+    return actions.repo_root(p) or p.parent
+
+
 def kill_by_name_problem(name: str) -> str:
     """Why killing by name is the wrong move when the name matches several processes ('' when it matches one or none).
     A run that wanted to stop its own stray web server (it had the pid from netstat) asked to kill 'python.exe', which
@@ -302,6 +395,45 @@ def kill_by_name_problem(name: str) -> str:
         return ""
     return (f"error:BLOCKED: {len(hits)} processes are named {name}, and killing by name stops all of them (other apps and IO's own "
             "helpers too). Kill the one you mean by its pid. They are:\n" + "\n".join(hits[:15]))
+
+
+WIN_PATH = re.compile(r"[A-Za-z]:[\\/][^\s\"'<>|*?`]+")
+
+
+def project_context(texts: list) -> str:
+    """For each repository the request or this chat names (at most two): where it is, its git state (branch, changes,
+    the last commits), its own CLAUDE.md or AGENTS.md, and IO's project notes from earlier sessions. Claude Code starts
+    every session with the repository's state and its CLAUDE.md; IO started each follow-up cold and re-read the same files."""
+    roots: list = []
+    for t in texts:
+        for m in WIN_PATH.finditer(str(t or "")):
+            r = actions.repo_root(m.group(0).rstrip(".,;:)"))
+            if r is not None and r not in roots:
+                roots.append(r)
+    parts = []
+    for root in roots[-2:]:
+        def git(*a: str) -> str:
+            try:
+                r = subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True, timeout=10, creationflags=0x08000000)
+                return r.stdout.strip() if r.returncode == 0 else ""
+            except (OSError, subprocess.TimeoutExpired):
+                return ""
+        changes = git("status", "--short").splitlines()
+        block = [f"Project: {root} (git branch {git('branch', '--show-current') or '?'})"]
+        block.append("Uncommitted changes: " + (", ".join(c.strip() for c in changes[:15]) + (f" (+{len(changes) - 15} more)" if len(changes) > 15 else "")
+                                                if changes else "none"))
+        if log_ := git("log", "--oneline", "-5"):
+            block.append("Last commits:\n" + log_)
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            f = root / name
+            if f.is_file():
+                block.append(f"{name} (the repository's own instructions):\n" + f.read_text(encoding="utf-8", errors="replace")[:6000])
+        notes = actions.project_notes_file(root)
+        if notes.is_file():
+            block.append("IO's project notes (from earlier sessions; keep them current with project_notes):\n" +
+                         notes.read_text(encoding="utf-8", errors="replace")[:8000])
+        parts.append("\n".join(block))
+    return "\n\n".join(parts)
 
 
 def user_folders() -> str:
@@ -1138,7 +1270,7 @@ ULTRA_HELPER_SECS = 240  # a helper's whole budget; the main agent takes over it
 ULTRA_CALLS_PER_TURN = 3  # tool calls a helper may make per reply; the rest are dropped (GLM once sent 54 searches at once)
 ANNOUNCING = re.compile(r"^\s*(i'?ll|i will|let me|i'?m going to|i am going to|first,? i|next,? i|now,? i)\b", re.I)
 # what a sub-agent may run: its own hidden browser and read-only file and PC facts; never the mouse, keyboard or windows
-ULTRA_SUB_TOOLS = ["web_search", "read_page", "list_files", "find_file", "read_file", "pc_info", "app_info", "calc", "api_lookup", "about_io"]
+ULTRA_SUB_TOOLS = ["web_search", "read_page", "list_files", "find_file", "search_code", "glob_files", "read_file", "pc_info", "app_info", "calc", "api_lookup", "about_io"]
 ULTRA_PLAN = """You plan for IO, an AI agent on a Windows PC, in Ultracode mode: helpers work on separate parts of a request
 at the same time, then the main agent finishes it.
 Split the user's request into subtasks. Each has a kind:
@@ -2900,6 +3032,29 @@ async def desktop_context(win: ClientSession) -> str:
     return f"Focused window:{m.group(1).rstrip()}\nOpen windows:{m.group(2).rstrip()}"[:2500] if m else ""
 
 
+def chat_turn(messages: list, start: int, answer: str) -> list:
+    """This task's part of the conversation (from its request to its answer) as the next message in the chat will get it:
+    pictures as a note, every tool call answered (the done that ended the task gets one), the answer as the last word."""
+    out = []
+    for m in messages[max(1, start):]:
+        m = dict(m)
+        if isinstance(m.get("content"), list):
+            m["content"] = [p if p.get("type") == "text" else {"type": "text", "text": "[a picture]"} for p in m["content"]]
+            if all(p.get("type") == "text" for p in m["content"]):
+                m["content"] = "\n".join(p["text"] for p in m["content"])
+        out.append(m)
+    answered = {m.get("tool_call_id") for m in out if m.get("role") == "tool"}
+    fixed = []
+    for m in out:
+        fixed.append(m)
+        if m.get("role") == "assistant":
+            for c in m.get("tool_calls") or []:
+                if c.get("id") not in answered:
+                    fixed.append({"role": "tool", "tool_call_id": c.get("id"), "content": "ok: (the task ended here)"})
+    fixed.append({"role": "assistant", "content": clean_summary(answer or "")[:6000] or "(no answer)"})
+    return fixed
+
+
 async def run(task: str, max_steps: int, options: dict | None = None, ask=None, conversation: list[dict] | None = None,
               images: list[Path] | None = None) -> str:
     """Runs one task (see _run); the focus hint is cleared however it ends. It runs again, from where things are, when
@@ -2907,10 +3062,18 @@ async def run(task: str, max_steps: int, options: dict | None = None, ask=None, 
     (GoPrivate): the second run is private, so nothing it does leaves the PC."""
     hint_focus("")
     now_task, now_options = task, dict(options or {})
+    box: dict = {}
+    now_options["history_box"] = box
     try:
         for _attempt in range(3):
             try:
-                return await _run(now_task, max_steps, now_options, ask, conversation, images)
+                answer = await _run(now_task, max_steps, now_options, ask, conversation, images)
+                if box.get("remote") and box.get("messages") and callable(now_options.get("save_history")) and not now_options.get("private"):
+                    try:
+                        now_options["save_history"](chat_turn(box["messages"], box.get("start", 1), answer))
+                    except Exception as e:
+                        print("couldn't keep the chat's conversation:", e, file=sys.stderr)
+                return answer
             except BaseException as err:
                 # both come out wrapped in the MCP clients' task groups (they're raised inside their sessions), so they
                 # are unwrapped like app.error_text does
@@ -3341,7 +3504,15 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                 log("warning", text=f"browser tools unavailable: {e}")
 
         standalone = task
-        if conversation:
+        if conversation and remote_brain:
+            # the API brain reads the chat itself and knows what "it" and "now add" mean; the local model's one-line
+            # rewrite only added guesses ("Now add a mode() function" became "...to calc-repo/src/stats.py", a path
+            # nobody had named; the work check then held the brain to it, and it moved the module to match). The work
+            # check gets the chat's earlier asks next to this one instead
+            asks = [clean_summary(m["content"])[:300] for m in conversation[-6:] if m.get("role") == "user" and isinstance(m.get("content"), str)]
+            if asks:
+                standalone = task + "\n(Earlier in this chat the user asked: " + " / ".join(a.split("\n(context")[0] for a in asks[-2:]) + ")"
+        elif conversation:
             try:
                 standalone = await asyncio.to_thread(resolve_followup, task, conversation) or task
             except Exception as e:
@@ -3364,6 +3535,19 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         # the local boss has a 32K context: if the enabled plugins' tool lists are too big, keep the ones the task mentions.
         # The NVIDIA brain's 131K holds far more: the 5K cap left Home Assistant's 29 tools out of a task that asked about
         # Home Assistant, and the brain went looking for a configuration.yaml on the disk instead
+        plugin_off: dict = {}  # plugins the API brain can reach through tools(name) and use() instead of its list
+        if remote_brain:
+            # a plugin's tools go on the brain's list only when the request or this chat names it (Home Assistant's 29
+            # rode along on a C# task); otherwise tools("<plugin>") shows them and use() runs them
+            said = (standalone + " " + " ".join(str(m.get("content")) for m in conversation[-6:] if isinstance(m.get("content"), str))).lower()
+            squeezed = re.sub(r"[^a-z0-9]", "", said)
+            sizes: dict = {}
+            for a, _, _ in plugin_tools:
+                sizes[a.split("_", 1)[0]] = sizes.get(a.split("_", 1)[0], 0) + 1
+            # small ones (IO's own workshop tools) always stay; a big plugin only when it's named
+            keep = {k for k, n in sizes.items() if n <= 3 or k in squeezed}
+            plugin_off = {a: plugin_defs[a] for a, _, _ in plugin_tools if a.split("_", 1)[0] not in keep}
+            plugin_tools = [t for t in plugin_tools if t[0] not in plugin_off]
         plugin_tools = plugins.fit_budget(plugin_tools, plugin_defs, task, log=lambda m: log("warning", text=m),
                                           budget=30000 if remote_brain else 0)
         aliases, plugin_meta = {}, {}
@@ -3387,7 +3571,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             memo = "\n".join(f"- {n['text']}" for n in notes[-MAX_MEMORY:])
             prompt = (f"Your saved notes (use them when relevant):\n{memo}\n\n" if notes else "") + (f"{skills}\n\n" if skills else "") + f"Task: {task}"
         if conversation:  # (resolved above)
-            if standalone.strip().lower() != task.strip().lower():
+            if not remote_brain and standalone.strip().lower() != task.strip().lower():
                 log("resolved", text=standalone)
                 prompt += f"\n\n(This continues the conversation above. In context, the user means: {standalone})"
             else:
@@ -3407,6 +3591,16 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         guard.user_images.update(privacy.digest(p["image_url"]["url"]) for p in parts)  # read for the check, not just named
         if loop:
             prompt += "\n\n" + LOOP_NOTE
+        if remote_brain and actions.enabled():
+            # repositories named by this request, by the chat's earlier asks and by the files its tools used (not the saved
+            # notes inside earlier prompts: a note naming another project once put that project's state here)
+            used = [str(tc.get("function", {}).get("arguments") or "") for m in (options.get("chat_history") or [])
+                    for tc in (m.get("tool_calls") or []) if isinstance(tc, dict)]
+            asks = [str(m.get("content")).split("\n(context")[0] for m in conversation if m.get("role") == "user"]
+            known = await asyncio.to_thread(project_context, [*used[-30:], *(options.get("chat_written") or []), *asks, task])
+            if known:
+                prompt += "\n\n" + known
+                log("project", text=known[:300])
         if images:
             where = "earlier in this chat" if options.get("images_from_earlier") else "to this message"
             prompt += (f"\n\n(The user attached {len(images)} image(s) {where}; they are shown above this text. They are the user's own "
@@ -3426,6 +3620,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         # files IO itself wrote earlier in this chat are its own work, like ones it wrote in this task: "fix it" on the
         # plugin it built an hour ago asked "edit Plugin.cs? Allow it?" and waited for the user
         ctx.written.update(str(p).lower() for p in options.get("chat_written") or [])
+        ctx.allowed_folders.extend(str(f).lower() for f in options.get("allowed_folders") or [])
         found_points = ctx.found_points  # vision answers: loop clicks must come from one (shared with the action library)
         route = actions.route_of(standalone, loop, bool(images))
         vague = layer and route.kind == "vague"
@@ -3478,26 +3673,35 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             """The local model's tools (compact registry schemas, plus the plugins) and the SYSTEM that matches them."""
             menu_names[:] = [n for n in dict.fromkeys(names) if executable(n)]
             tools[:] = [ask_model_tool() if t["function"]["name"] == "ask_model" else t
-                        for t in actions.openai_tools(menu_names)] + [plugin_defs[a] for a in plugin_names]
+                        for t in actions.openai_tools(menu_names, full=remote_brain)] + [plugin_defs[a] for a in plugin_names]
             if messages:
-                messages[0]["content"] = layer_system(menu_names, browser_where, remote_brain)
+                messages[0]["content"] = system_for(menu_names)
+
+        def system_for(names: list) -> str:
+            if remote_brain:
+                off = sorted({a.split("_", 1)[0] for a in plugin_off})
+                return frontier_system(names, browser_where, ", ".join(off))
+            return layer_system(names, browser_where, remote_brain)
+
+        ctx.plugin_catalog = plugin_off
 
         if layer:
             first = actions.menu(route, actions.available(ctx, decider="local"), ask=bool(ask) and not loop)
             if loop:
                 first = actions.LOOP_MENU + LOOP_WINDOW_ACTIONS + ["done", "tools", "use"]
-            elif remote_brain and route.kind not in ("chat", "images", "knowledge"):
-                # a frontier brain sees the director's whole action set at once instead of the small model's short menu
-                # (the raw clipboard/process/file tools only when the request is about them, as for the director)
-                raw = {"Clipboard": r"clipboard", "Process": r"process|task manager|kill|running", "FileSystem": r"\bfile|folder"}
-                first = [n for n in actions.available(ctx, decider="director")
-                         if n not in raw or re.search(raw[n], standalone, re.I)] + ["ask_user", "done", "tools"]
+            elif remote_brain:
+                # the API brain: one clear set for code and the desktop (FRONTIER_TOOLS), the iPhone's tools when the
+                # request is about a phone, and everything else through tools() and use()
+                have = set(actions.available(ctx, decider="director")) | {"use"}
+                first = [n for n in FRONTIER_TOOLS if n in have]
+                if PHONE_WORDS.search(standalone):
+                    first += [n for n in have if n.startswith("phone_")]
             if REMEMBER_REQUEST.search(standalone):
                 first.append("remember")
             if api_ok and not remote_brain and not loop and "ask_model" not in first:
                 first.append("ask_model")  # Medium: a hard question can go to an NVIDIA model without handing over the task
             apply_menu(first)
-            system = layer_system(menu_names, browser_where, remote_brain)
+            system = system_for(menu_names)
         elif "browser_navigate" in sessions:
             system = SYSTEM.replace("{browser_where}", browser_where)
         else:  # browser off or failed to start: point web work at Scrape or the desktop tools instead
@@ -3505,7 +3709,18 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                             "launch the browser with App and use Snapshot, Click and Type.\n", SYSTEM, count=1)
             system = system.replace(" It sees the PC's monitors, not IO's browser tab: answer questions about a web page from browser_snapshot "
                                     "(its title, headings and text).", "")
-        messages[:] = [{"role": "system", "content": system}, *conversation, {"role": "user", "content": user_content}]
+        history = options.get("chat_history") if remote_brain else None
+        if history:
+            # the chat so far as the brain itself had it: every file it read and every result, word for word (and cached),
+            # instead of a few lines per earlier message. Follow-ups used to start cold and re-read the same files
+            log("history", messages=len(history), chars=sum(len(str(m.get("content") or "")) for m in history))
+        earlier = history or conversation
+        box = options.get("history_box")
+        if isinstance(box, dict):
+            box.update(remote=remote_brain, start=1 + len(earlier))
+        messages[:] = [{"role": "system", "content": system}, *earlier, {"role": "user", "content": user_content}]
+        if isinstance(box, dict):
+            box["messages"] = messages
         head = len(messages)  # everything after this is the task's own working notes, which can be summarized
         steps_log: list[str] = []  # every action with its result, for checking the work before answering
         redos = 0
@@ -4517,9 +4732,20 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         result = (f"The user already refused to {refused_kinds[kind]} in this task; this ({reason}) is the same kind "
                                   "of action. Don't try it any other way: call done and say what was not done and why.")
                     else:
-                        answer = (await ask(f"The agent wants to {reason}. Allow it? (yes/no)")) if ask else "no"
+                        folder = edit_folder(name, args) if layer else None
+                        if folder is not None and ask:
+                            # a big build edits dozens of files: one answer can cover this folder for the rest of the chat
+                            answer = await ask(f"The agent wants to {reason}. Allow it? (choices: Allow | Allow all edits in "
+                                               f"{folder} for this chat | Don't allow)")
+                            if "all edits" in answer.lower():
+                                ctx.allowed_folders.append(str(folder).lower())
+                                if callable(options.get("on_allow_folder")):
+                                    options["on_allow_folder"](str(folder))
+                                log("progress", step=step, n=0, summary=f"Edits in {folder} are allowed for the rest of this chat")
+                        else:
+                            answer = (await ask(f"The agent wants to {reason}. Allow it? (yes/no)")) if ask else "no"
                         result = f"The user did not allow this action ({reason}). Do not retry it or do it another way; call done saying it wasn't done."
-                    if not answer.strip().lower().startswith("y"):
+                    if not re.match(r"\s*(y|allow)", answer, re.I):
                         refused_kinds.setdefault(kind, reason)
                         log("tool", step=step, name=name, args=args, result=result)
                         messages.append({"role": "tool", "tool_call_id": c.id, "content": result})

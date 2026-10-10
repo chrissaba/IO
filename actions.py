@@ -21,6 +21,7 @@ import difflib
 import hashlib
 import io
 import json
+import fnmatch
 import math
 import os
 import re
@@ -149,8 +150,8 @@ REGISTRY: dict[str, Action] = {}
 
 def _params(spec: str) -> tuple[dict, tuple]:
     """Compact parameter lines -> (JSON-schema properties, required). One per line: `name type[?] [a|b|c] description`.
-    Types: s string, i integer, n number, b boolean, a list of strings, o object."""
-    types = {"s": "string", "i": "integer", "n": "number", "b": "boolean", "a": "array", "o": "object"}
+    Types: s string, i integer, n number, b boolean, a list of strings, o object, j list of objects."""
+    types = {"s": "string", "i": "integer", "n": "number", "b": "boolean", "a": "array", "o": "object", "j": "array"}
     props, required = {}, []
     for line in spec.strip().splitlines():
         line = line.strip()
@@ -161,13 +162,13 @@ def _params(spec: str) -> tuple[dict, tuple]:
         optional = typ.endswith("?")
         prop: dict = {"type": types[typ.rstrip("?")]}
         if prop["type"] == "array":
-            prop["items"] = {"type": "string"}
+            prop["items"] = {"type": "object"} if typ.rstrip("?") == "j" else {"type": "string"}
         m = re.match(r"(\S+\|\S+)\s*(.*)", rest)
         if m:
             prop["enum"] = m.group(1).split("|")
             rest = m.group(2)
         if rest:
-            prop["description"] = rest[:40]
+            prop["description"] = rest  # whole; tool_schema shortens it for the local model
         props[name] = prop
         if not optional:
             required.append(name)
@@ -255,6 +256,8 @@ class Ctx:
     allowed: Callable | None = None                 # (name) -> bool: what this task may run (toggles, a loop's window lock)
     page_chars: int = 6000                          # read_page's length: boss raises it to fit a large-context brain
     written: set = field(default_factory=set)       # files this task created (lowercase paths): its own to overwrite
+    allowed_folders: list = field(default_factory=list)  # folders the user let this chat edit without asking (lowercase)
+    plugin_catalog: dict = field(default_factory=dict)   # plugin tools not on the brain's list: alias -> its definition
     # lowercase path -> (size, mtime_ns, sha1) of each text file as read_file last showed it (and after IO's own writes
     # to it): edit_file / write_file refuse with STALE when the file changed on disk since, instead of undoing that change
     file_prints: dict = field(default_factory=dict)
@@ -300,7 +303,10 @@ def _coerce(a: Action, args: dict) -> tuple[dict, str]:
             elif t == "object" and isinstance(v, str):
                 v = json.loads(v)
             elif t == "string" and not isinstance(v, str):
-                v = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
+                if isinstance(v, (list, tuple)) and 1 <= len(v) <= 2 and all(isinstance(x, (int, float)) for x in v):
+                    v = "-".join(str(int(x)) for x in v)  # lines=[330, 390]: the range 330-390
+                else:
+                    v = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v)
         except (TypeError, ValueError):
             return out, f"{k} should be {t}"
         if "enum" in spec and isinstance(v, str) and v not in spec["enum"]:
@@ -3735,6 +3741,31 @@ def _hh(line: str) -> str:
     return _B36[n // 36] + _B36[n % 36]
 
 
+def _may_write(ctx, path: str) -> bool:
+    """A file this task wrote, or one in a folder the user let this chat edit without asking each time."""
+    try:
+        p = str(_path(path)).lower()
+    except Exception:
+        return False
+    return p in ctx.written or any(p.startswith(f.rstrip("\\") + "\\") for f in getattr(ctx, "allowed_folders", []) or [])
+
+
+def _numbered(rows: list, lo: int, hi: int) -> list[str]:
+    """Lines as cat -n shows them (Claude Code's Read): the number right-aligned, a tab, the line."""
+    return [f"{n:>6}\t{rows[n - 1][0]}" for n in range(lo, hi + 1)]
+
+
+_NUMBERED_LINE = re.compile(r"^ *\d+\t", re.M)
+
+
+def _unnumber(text: str) -> str:
+    """Text copied from read_file's numbered lines, without the numbers (when every line has one)."""
+    lines = text.split("\n")
+    if lines and all(_NUMBERED_LINE.match(ln) for ln in lines if ln.strip()):
+        return _NUMBERED_LINE.sub("", text)
+    return text
+
+
 def _tagged(rows: list, lo: int, hi: int) -> list[str]:
     return [f"{n}:{_hh(rows[n - 1][0])}|{rows[n - 1][0]}" for n in range(lo, hi + 1)]
 
@@ -3842,7 +3873,7 @@ def _big_lines_sync(p: Path, shown: str, spec: str, budget: int) -> str:
 
 def _line_span(spec: str, total: int, shown: str) -> tuple[int, int]:
     """lines="120-180" -> (120, 180), clamped to the file. "120" is that line, "120-" runs to the end."""
-    m = re.fullmatch(r"\s*L?(\d+)\s*(?:(-|–|—|:|\.\.|to|,)\s*L?(\d*))?\s*", str(spec), re.I)
+    m = re.fullmatch(r"\s*L?(\d+)\s*(?:(-|–|—|:|\.\.|to|,)\s*L?(\d*))?\s*", str(spec).strip().strip("[]()"), re.I)
     if not m:
         raise Fail("BAD_ARGS", f"lines={str(spec)[:30]!r}: give one range like 120-180", f'read_file("{shown}", lines="1-200")')
     a = max(1, int(m.group(1)))
@@ -4294,13 +4325,20 @@ def _outline_text(text: str, rows: list, lang: str, ext: str, shown: str, info: 
         find s? only the lines about these words
         lines s? only these lines, like 120-180
         tail i? only the last N lines (any size: logs)
+        offset i? the first line to read (with limit: lines offset to offset+limit-1)
+        limit i? how many lines to read from offset (default 300)
         anchors b? prefix lines N:hh| for edit_lines
         max i? most characters (default: all that fits)
         raw b? full text even for a big code file
         """, cost=0.1, star=True, top="path,find?", fallback='FileSystem(mode="read", path)', hide=("raw",),
-        limits="no PDFs; up to 5 MB whole (tail= or find= read any size); never opens an editor; a big code file gives its outline")
+        limits="no PDFs; up to 5 MB whole (tail= or find= read any size); never opens an editor; a big code file gives its "
+               "outline with line ranges, then read the part you need. Text comes with line numbers (number, tab, line): "
+               "they aren't part of the file, so leave them out of edit_file's old and new")
 async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: str = "", anchors: bool = False, raw: bool = False,
-                    tail: int = 0, **_) -> str:
+                    tail: int = 0, offset: int = 0, limit: int = 0, **_) -> str:
+    if (offset or limit) and not lines:
+        start = builtins_max(1, int(offset or 1))
+        lines = f"{start}-{start + builtins_max(1, int(limit or 300)) - 1}"
     art = _artifact_of(path)
     if art is not None:  # a saved tool result: IO's own data, so no _private refusal and no user-folder rule
         p, shown = art, f"artifact://{art.stem}"
@@ -4337,7 +4375,7 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: st
     note = " (anchors only on plain text files)" if anchors and not tag else ""
     if lines:
         a, b = _line_span(lines, total, shown)
-        part = _tagged(rows, a, b) if tag else [r[0] for r in rows[a - 1:b]]
+        part = _tagged(rows, a, b) if tag else _numbered(rows, a, b) if fp is not None else [r[0] for r in rows[a - 1:b]]
         if find:
             return ok(f"{head}, lines {a}-{b} of {total}{note}:\n" + _h().find_in_text("\n".join(part), find, budget=budget))
         body, kept = _fit(part, budget)
@@ -4357,6 +4395,11 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: st
         more = (f'\n[stopped at line {kept} to fit; next: read_file("{shown}", lines="{kept + 1}-{min(total, kept + 300)}", '
                 f'anchors=true)]') if kept < total else ""
         return ok(f"{head}, {total} lines:\n{body}{more}")
+    if fp is not None:  # plain text: numbered lines, as far as the budget goes
+        body, kept = _fit(_numbered(rows, 1, total), budget)
+        more = (f'\n[stopped at line {kept} of {total} to fit; next: read_file("{shown}", offset={kept + 1}, limit=300)]'
+                if kept < total else "")
+        return ok(f"{head}, {total} lines{note}:\n{body}{more}")
     if len(text) <= budget:
         return ok(f"{head}{note}:\n{text}")
     cut = text.rfind("\n", 0, budget)
@@ -4370,15 +4413,15 @@ async def read_file(ctx: Ctx, path: str, find: str = "", max: int = 0, lines: st
 @action("write_file", group="FILE", summary="write text to a file (new by default; append or overwrite on request)",
         params="""
         path s the file's path
-        text s what to write
+        text s? what to write (empty for an empty file)
         mode s? new|append|overwrite
         """, cost=0.1, star=True, top="path,text", bang=True, fallback='FileSystem(mode="write", path, content)',
         # a file this task wrote itself is its own work in progress (a test file being fixed asked twice in one run,
         # and an unattended run would wait on that forever); anything else that exists is the user's and asks first
         risky=lambda a, c: f"overwrite the file {a.get('path')}" if a.get("mode") == "overwrite" and _path(str(a.get("path", ""))).exists()
-        and str(_path(str(a.get("path", "")))).lower() not in c.written else "",
+        and not _may_write(c, str(a.get("path", ""))) else "",
         limits="only under the user's folders or %TEMP%; new never replaces a file")
-async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> str:
+async def write_file(ctx: Ctx, path: str, text: str = "", mode: str = "new", **_) -> str:
     p = _path(path)
     writable(ctx, p)
     if p.is_dir():
@@ -4411,15 +4454,32 @@ async def write_file(ctx: Ctx, path: str, text: str, mode: str = "new", **_) -> 
 @action("edit_file", group="FILE", summary="change part of a text file: replace exact old text with new (fix code without rewriting it)",
         params="""
         path s the file's path
-        old s the exact text to replace, copied with its spaces
-        new s what goes there instead
+        old s? the exact text to replace, copied with its spaces and indentation (enough lines to be unique in the file)
+        new s? what goes there instead (empty to delete old)
         all b? replace every match (default: old must match once)
+        edits j? several changes to this file at once, in order: [{"old": ..., "new": ..., "all": false}, ...] (instead of old/new)
         """, cost=0.1, star=True, top="path,old,new", bang=True, fallback='write_file(path, text, mode="overwrite")',
-        risky=lambda a, c: "" if str(_path(str(a.get("path", "")))).lower() in c.written else f"edit the file {a.get('path')}",
-        limits="text files; old must be in the file exactly; a file this task made or was allowed to change doesn't ask")
-async def edit_file(ctx: Ctx, path: str, old: str, new: str, all: bool = False, **_) -> str:
-    """Claude Code's Edit: whole-file rewrites to fix one line were slow (every character generated again) and each one
-    risked new slips (a stray line, a mangled date) in the parts that were fine."""
+        risky=lambda a, c: "" if _may_write(c, str(a.get("path", ""))) else f"edit the file {a.get('path')}",
+        limits="text files; old must be in the file exactly; read the file first; a file this task made or was allowed to "
+               "change doesn't ask")
+async def edit_file(ctx: Ctx, path: str, old: str = "", new: str = "", all: bool = False, edits: list | None = None, **_) -> str:
+    """Claude Code's Edit (and MultiEdit, with edits=): whole-file rewrites to fix one line were slow (every character
+    generated again) and each one risked new slips (a stray line, a mangled date) in the parts that were fine."""
+    if edits:
+        done = []
+        for i, e in enumerate(edits if isinstance(edits, list) else [], 1):
+            if not isinstance(e, dict):
+                raise Fail("BAD_ARGS", f"edits[{i}] should be {{\"old\": ..., \"new\": ...}}", "edit_file(path, edits=[{old, new}, ...])")
+            try:
+                r = await edit_file(ctx, path, str(e.get("old") or ""), str(e.get("new") if e.get("new") is not None else ""), bool(e.get("all")))
+            except Fail as f:
+                raise Fail("FAILED", f"edits[{i}] of {len(edits)} stopped (the ones before it were made): {f.result}") from None
+            done.append(r.split(";", 1)[0].removeprefix("ok: "))
+        return ok(f"{len(done)} edits made in {_path(path)}; the last one, and around it now:\n{r.split(';', 1)[-1].strip()}")
+    if not old and not new:
+        raise Fail("BAD_ARGS", "give old (the exact text now in the file) and new (what replaces it), or edits=[{old, new}, ...]",
+                   f'read_file("{path}", find="...") to copy the exact text first')
+    old, new = _unnumber(old), _unnumber(new)  # copied from read_file's numbered lines
     p = _path(path)
     writable(ctx, p)
     if not p.is_file():
@@ -4461,7 +4521,13 @@ async def edit_file(ctx: Ctx, path: str, old: str, new: str, all: bool = False, 
         raise Fail("NOT_FOUND", "old isn't in the file exactly (spaces and line breaks count)" + (f"; closest line: {near[0][:160]!r}" if near else ""),
                    f'read_file("{p}", find="{first[:40]}")')
     if count < 0:
-        raise Fail("AMBIGUOUS", f"old is in the file {-count} times", "include a few surrounding lines in old, or all=true")
+        text = await asyncio.to_thread(_file_text_sync, p)
+        at, where = 0, []
+        while (k := text.find(old.replace("\r\n", "\n"), at)) >= 0 and len(where) < 8:
+            where.append(str(text.count("\n", 0, k) + 1))
+            at = k + 1
+        raise Fail("AMBIGUOUS", f"old is in the file {-count} times (at lines {', '.join(where)})",
+                   "include a few surrounding lines in old so it matches once, or all=true to change every one")
     ctx.written.add(str(p).lower())
     await asyncio.to_thread(_note_written, ctx, p)
     return ok(f"edited {p}: {count} replacement{'s' if count > 1 else ''}; around it now:\n{shown}")
@@ -4498,7 +4564,7 @@ def _stale_view(p: Path, rows: list, tags: list, bad: list, start: int, end: int
         anchors s tags as read, like 12:k3-14:9a
         new_text s? the new lines ("" deletes them)
         """, cost=0.1, top="path,start,end,anchors,new_text", bang=True, fallback="edit_file(path, old, new)",
-        risky=lambda a, c: "" if str(_path(str(a.get("path", "")))).lower() in c.written else f"edit the file {a.get('path')}",
+        risky=lambda a, c: "" if _may_write(c, str(a.get("path", ""))) else f"edit the file {a.get('path')}",
         limits="use it after read_file(anchors=true); exact old text not needed; edit from the bottom up (lines below a change move)")
 async def edit_lines(ctx: Ctx, path: str, start: int, anchors: str, end: int | None = None, new_text: str | None = None, **_) -> str:
     """Hashline edits: the model names whole lines by number and proves it saw them with their tags (read_file
@@ -4758,11 +4824,178 @@ def _app_exe_path(app: str) -> str:
     return ""
 
 
+_BASH: list = []
+
+
+def git_bash() -> str:
+    """Git for Windows' bash.exe ('' when Git isn't installed)."""
+    if not _BASH:
+        found = ""
+        for base in (os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", ""),
+                     os.path.expandvars(r"%LOCALAPPDATA%\Programs")):
+            cand = Path(base) / "Git" / "bin" / "bash.exe" if base else None
+            if cand and cand.is_file():
+                found = str(cand)
+                break
+        if not found and (git := shutil.which("git")):
+            cand = Path(git).resolve().parent.parent / "bin" / "bash.exe"
+            found = str(cand) if cand.is_file() else ""
+        _BASH.append(found)
+    return _BASH[0]
+
+
 def _shell_part(command: str) -> str:
     """The command line as the shell sees it, without quoted text or heredoc bodies: the risky-command words (del, rm,
     format...) are about shell commands, and Python code passed in quotes (".format(") was asked about as if it deleted."""
     s = re.sub(r"<<-?\s*['\"]?(\w+)['\"]?.*?^\s*\1\s*$", " ", str(command or ""), flags=re.S | re.M)
     return re.sub(r"\"(?:[^\"\\]|\\.)*\"|'[^'\n]*'", " ", s)
+
+
+_SKIP_DIRS = {".git", ".vs", ".idea", "node_modules", "bin", "obj", "__pycache__", ".venv", "venv", "dist", "build", ".next",
+              "packages", ".mypy_cache", ".pytest_cache", "target"}
+
+
+def _repo_files(root: Path) -> list[Path]:
+    """The files of a folder worth searching: git's own list in a repository (tracked and new, not ignored), else a walk
+    that skips build output and dependency folders."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z"], capture_output=True, timeout=20,
+                           creationflags=0x08000000)
+        if r.returncode == 0 and r.stdout:
+            return [root / f for f in r.stdout.decode("utf-8", "replace").split("\0") if f]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    out = []
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if x not in _SKIP_DIRS and not x.startswith(".")]
+        out += [Path(d) / f for f in files]
+        if len(out) > 200_000:
+            break
+    return out
+
+
+def _glob_match(rel: str, pattern: str) -> bool:
+    """A glob over a relative path: **/*.cs, src/**/test_*.py, *.{cs,xaml}; a bare *.cs matches at any depth."""
+    pats = [pattern]
+    m = re.search(r"\{([^}]*)\}", pattern)
+    if m:
+        pats = [pattern[:m.start()] + alt + pattern[m.end():] for alt in m.group(1).split(",")]
+    rel = rel.replace("\\", "/")
+    for pat in pats:
+        pat = pat.replace("\\", "/")
+        if "/" not in pat.lstrip("*/") and fnmatch.fnmatch(rel.rsplit("/", 1)[-1], pat.split("/")[-1]):
+            return True
+        rx = re.escape(pat).replace(r"\*\*/", "(?:.*/)?").replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", "[^/]")
+        if re.fullmatch(rx, rel, re.I):
+            return True
+    return False
+
+
+def _search_sync(root: Path, pattern: str, glob: str, ignore_case: bool, context: int, files_only: bool, limit: int) -> str:
+    note = ""
+    try:
+        rx = re.compile(pattern, re.I if ignore_case else 0)
+    except re.error as e:
+        rx = re.compile(re.escape(pattern), re.I if ignore_case else 0)
+        note = f"(not a valid regex ({e}); searched it as plain text)\n"
+    files = [root] if root.is_file() else _repo_files(root)
+    base = root.parent if root.is_file() else root
+    hits, shown, nfiles = [], 0, 0
+    for f in sorted(files):
+        rel = str(f.relative_to(base)) if f.is_relative_to(base) else str(f)
+        if glob and not _glob_match(rel, glob):
+            continue
+        try:
+            if f.stat().st_size > 4_000_000:
+                continue
+            data = f.read_bytes()
+        except OSError:
+            continue
+        if b"\0" in data[:4096]:
+            continue  # binary
+        text = data.decode("utf-8", "replace")
+        if not rx.search(text):
+            continue
+        nfiles += 1
+        if files_only:
+            hits.append(rel)
+            shown += 1
+        else:
+            lines = text.splitlines()
+            marks = [i for i, ln in enumerate(lines) if rx.search(ln)]
+            keep: list[int] = []
+            for i in marks:
+                keep += range(builtins_max(0, i - context), min(len(lines), i + context + 1))
+            last = -2
+            for i in sorted(set(keep)):
+                if context and last >= 0 and i != last + 1:
+                    hits.append("--")
+                hits.append(f"{rel}:{i + 1}{':' if i in marks else '-'}{lines[i][:300]}")
+                last = i
+            shown += len(marks)
+        if shown >= limit:
+            break
+    if not hits:
+        return f"no matches for {pattern!r} in {root}" + (f" ({glob})" if glob else "")
+    more = f"\n[stopped at {limit} matches; narrow it with path= or glob=]" if shown >= limit else ""
+    head = (f"{nfiles} file{'s' if nfiles != 1 else ''}" if files_only else
+            f"{shown} match{'es' if shown != 1 else ''} in {nfiles} file{'s' if nfiles != 1 else ''}")
+    return f"{note}{head} under {base}:\n" + "\n".join(hits) + more
+
+
+@action("search_code", group="FILE", summary="search file contents with a regular expression (like ripgrep): file:line:text",
+        params="""
+        pattern s a regular expression (Python syntax), e.g. class \\w+Controller or TryRetreat\\(
+        path s? the folder (or one file) to search; a repository's root searches its git files, skipping bin/obj/node_modules
+        glob s? only files whose path matches, e.g. *.cs, **/*.py, src/**/*.{ts,tsx}
+        ignore_case b? match upper and lower case alike
+        context i? lines to show before and after each match (0-10)
+        files_only b? only the names of files that match
+        max i? most matches to show (default 100)
+        """, cost=0.5, star=True, top="pattern,path?,glob?", fallback='run_command("git grep -n ...")',
+        limits="text files up to 4 MB; the regex is matched line by line; the way to find where something is defined or used")
+async def search_code(ctx: Ctx, pattern: str, path: str = "", glob: str = "", ignore_case: bool = False, context: int = 0,
+                      files_only: bool = False, max: int = 100, **_) -> str:
+    root = _path(path) if path else known_folder("home")
+    if _private(root):
+        raise Fail("BLOCKED", "that is IO's own data folder", "ask_user")
+    if not root.exists():
+        raise Fail("NOT_FOUND", f"{root} doesn't exist", f'find_file("{Path(path).name}")')
+    return ok(await asyncio.to_thread(_search_sync, root, pattern, glob, bool(ignore_case), builtins_max(0, min(int(context or 0), 10)),
+                                      bool(files_only), builtins_max(1, min(int(max or 100), 500))))
+
+
+@action("glob_files", group="FILE", summary="find files by path pattern (like **/*.cs) under a folder, newest first",
+        params="""
+        pattern s a glob over the path: **/*.cs, src/**/*Controller*.py, *.{json,yml}
+        path s? the folder to look in (a repository's root lists its git files)
+        max i? most files to list (default 100)
+        """, cost=0.3, star=True, top="pattern,path?", fallback="list_files(folder, pattern, recurse=true)",
+        limits="skips bin, obj, node_modules and .git outside a repository's own list")
+async def glob_files(ctx: Ctx, pattern: str, path: str = "", max: int = 100, **_) -> str:
+    root = _path(path) if path else known_folder("home")
+    if _private(root):
+        raise Fail("BLOCKED", "that is IO's own data folder", "ask_user")
+    if not root.is_dir():
+        raise Fail("NOT_FOUND", f"{root} isn't a folder", f'find_file("{Path(path).name}")')
+
+    def go() -> str:
+        found = []
+        for f in _repo_files(root):
+            rel = str(f.relative_to(root)) if f.is_relative_to(root) else str(f)
+            if _glob_match(rel, pattern):
+                try:
+                    found.append((f.stat().st_mtime, rel))
+                except OSError:
+                    pass
+        found.sort(reverse=True)
+        lim = builtins_max(1, min(int(max or 100), 1000))
+        if not found:
+            return f"no files match {pattern!r} under {root}"
+        more = f"\n[{len(found) - lim} more; narrow the pattern]" if len(found) > lim else ""
+        return f"{len(found)} file{'s' if len(found) != 1 else ''} under {root}, newest first:\n" + "\n".join(r for _, r in found[:lim]) + more
+
+    return ok(await asyncio.to_thread(go))
 
 
 @action("run_command", group="PC", summary="run a command line (python, git, npm, a test run) in a folder: its whole output and exit code",
@@ -4774,7 +5007,9 @@ def _shell_part(command: str) -> str:
         """, cost=1.0, star=True, top="command,folder?", fallback="PowerShell(command)", timeout=620,
         risky=lambda a, c: (f"run in {a.get('folder') or known_folder('home')}: {a.get('command', '')}"
                             if _h().risky_reason("PowerShell", {"command": _shell_part(a.get("command", ""))}, c.request) else ""),
-        limits="cmd.exe syntax (2>&1, >, &&), not bash (no << heredocs); for a server or anything that keeps running use start_app")
+        limits="runs in Git Bash (bash syntax: grep, head, sed, pipes, && and heredocs work; Windows paths in quotes or with "
+               "forward slashes); cmd.exe where Git isn't installed; PowerShell cmdlets: the PowerShell tool or powershell -Command; "
+               "for a server or anything that keeps running use start_app")
 async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 120, save_to: str = "", **_) -> str:
     """Programs the way a terminal runs them: stdout and stderr merged in order, the real exit code, no PowerShell
     wrapping (Windows PowerShell 5.1 turns each stderr line into an error record, so a run that redirected its test
@@ -4783,13 +5018,17 @@ async def run_command(ctx: Ctx, command: str, folder: str = "", timeout: int = 1
     if not where.is_dir():
         raise Fail("NOT_FOUND", f"{where} isn't a folder", f'file_op(op="mkdir", src="{where}")')
     limit = builtins_max(5, min(int(timeout or 120), 600))
-    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "MSYS_NO_PATHCONV": "1",
+           "MSYS2_ARG_CONV_EXCL": "*", "CHERE_INVOKING": "1"}
 
     def go() -> tuple[int | None, str]:
         flags = 0x08000000  # CREATE_NO_WINDOW
-        # one string, not a list: Python would escape the command's own quotes with backslashes, which cmd.exe doesn't
-        # read (python -c "print(1)" lost its output); /s strips just the outer pair added here
-        args = f'cmd.exe /d /s /c "{command}"'
+        # Git Bash when it's installed: the models write bash (head, grep, $(...), heredocs), and under cmd.exe a quarter
+        # of one chat's failed commands were bash or PowerShell syntax. Its path conversion is off, so "cmd /c del x"
+        # and /flags reach Windows programs unchanged. Without Git: cmd.exe, one string (Python would escape the
+        # command's own quotes with backslashes, which cmd.exe doesn't read); /s strips just the outer pair added here
+        bash = git_bash()
+        args = [bash, "-c", command] if bash else f'cmd.exe /d /s /c "{command}"'
         try:
             p = subprocess.Popen(args, cwd=str(where), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, creationflags=flags | 0x01000000)  # CREATE_BREAKAWAY_FROM_JOB
@@ -5181,6 +5420,47 @@ SOURCE_MAP = [
     ("workshop_host.py", "runs one workshop tool as an MCP server"),
     ("learned.py", "playbooks IO writes for itself after runs"),
 ]
+
+
+PROJECT_NOTES = HERE / "data" / "projects"
+
+
+def repo_root(path: str | Path) -> Path | None:
+    """The repository (a folder with .git) a path is in, None when it's in none."""
+    try:
+        p = Path(os.path.expandvars(str(path))).expanduser()
+    except Exception:
+        return None
+    for d in [p, *p.parents] if p.is_dir() else list(p.parents):
+        try:
+            if (d / ".git").exists():
+                return d
+        except OSError:
+            return None
+    return None
+
+
+def project_notes_file(root: Path) -> Path:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(root).lower()).strip("-")[-80:]
+    return PROJECT_NOTES / f"{slug}.md"
+
+
+@action("project_notes", group="END", summary="save what the next session in this repository should know (IO's notes for it)",
+        params="""
+        path s the repository (or any file in it)
+        notes s the notes in Markdown: architecture, build and test commands, conventions, the user's rules and decisions
+        mode s? replace|append (replace: the whole notes; append: add to them)
+        """, cost=0.0, top="path,notes",
+        limits="kept in IO's data folder, not in the repository; shown at the start of every later task in that repository; "
+               "keep them short and current (replace them when they go stale)")
+async def project_notes(ctx: Ctx, path: str, notes: str, mode: str = "replace", **_) -> str:
+    root = repo_root(_path(path)) or (_path(path) if _path(path).is_dir() else _path(path).parent)
+    f = project_notes_file(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    old = f.read_text(encoding="utf-8") if f.is_file() else ""
+    text = (old.rstrip() + "\n\n" + notes.strip()) if mode == "append" and old else notes.strip()
+    f.write_text(text[:12000] + "\n", encoding="utf-8")
+    return ok(f"project notes for {root} saved ({len(text):,} characters); they open every later task there")
 
 
 @action("about_io", group="END", summary="what IO itself can do: its tools and limits, effort, plugins, its own code",
@@ -7214,6 +7494,16 @@ async def close_popups(ctx: Ctx, max: int = 3, **_) -> str:
         params="group s WIN, READ, ACT, SEE, FILE, PC, WEB, DO, GAME or RAW", cost=0.0, top="group", fallback="")
 async def tools_(ctx: Ctx, group: str, **_) -> str:
     g = group.strip().upper()
+    key = re.sub(r"[^a-z0-9]", "", group.lower())
+    plug = {a: d for a, d in (ctx.plugin_catalog or {}).items() if key and (a.startswith(key) or key in ("plugins", "plugin"))}
+    if plug:
+        lines = [f"Run one with use(name, args):"]
+        for a, d in list(plug.items())[:60]:
+            f = d.get("function", {})
+            props = ", ".join(f"{k}{'' if k in (f.get('parameters', {}).get('required') or []) else '?'}"
+                              for k in (f.get("parameters", {}).get("properties") or {}))
+            lines.append(f"- {a}({props}): {(f.get('description') or '').split('. ')[0][:160]}")
+        return ok("\n".join(lines))
     if g not in GROUPS:
         return err("BAD_ARGS", f"no group {group!r}", "tools(\"" + "|".join(x for x in GROUPS if x != "END") + "\")")
     return ok(catalog_group(g, [n for n in available(ctx) if ctx.allowed is None or ctx.allowed(n)]))
@@ -7933,31 +8223,37 @@ def catalog_top(avail: list | None = None, loop: bool = False, limit: int = 1300
 QUIET = {"window", "text", "question", "summary", "enter", "timeout", "args", "note", "query", "name"}
 
 
-def tool_schema(name: str) -> dict:
-    """A compact OpenAI function definition. expect= is the director's; the local model checks with READ actions."""
+def tool_schema(name: str, full: bool = False) -> dict:
+    """An OpenAI function definition. expect= is the director's; the local model checks with READ actions. Compact for
+    the local model (each parameter's text cut to 40 characters, its 32K context is short); full for the API brain:
+    whole parameter texts and the action's limits, the way Claude Code describes its tools (a brain that only saw
+    "only these lines, like 120-180" sent lines=[330, 390] nine times in one chat)."""
     a = REGISTRY[name]
     props = {}
     for k, v in a.params.items():
         if k == "expect" or k in a.hide:
             continue
         p = {kk: vv for kk, vv in v.items() if kk != "description"}
-        if v.get("description") and (k not in QUIET or a.fn is None and k == "name"):
-            p["description"] = v["description"][:40]
+        if v.get("description") and (full or k not in QUIET or a.fn is None and k == "name"):
+            p["description"] = v["description"] if full else v["description"][:40]
         props[k] = p
     desc = a.summary + (" " + a.desc if a.desc else "")
+    if full:
+        desc = desc[:1].upper() + desc[1:] + "." + (f" Limits: {a.limits}." if a.limits else "")
     params = {"type": "object", "properties": props}
     if a.required:
         params["required"] = list(a.required)
     return {"type": "function", "function": {"name": name, "description": desc, "parameters": params}}
 
 
-def openai_tools(names: list, defs: dict | None = None) -> list[dict]:
-    """OpenAI function definitions for the local model: compact registry schemas (summary <= 70 chars, parameter text
-    <= 40), or the caller's own definition for names the registry doesn't know (plugins)."""
+def openai_tools(names: list, defs: dict | None = None, full: bool = False) -> list[dict]:
+    """OpenAI function definitions: compact registry schemas for the local model (summary <= 70 chars, parameter text
+    <= 40), whole ones for the API brain (full), or the caller's own definition for names the registry doesn't know
+    (plugins)."""
     out = []
     for n in dict.fromkeys(names):
         if n in REGISTRY:
-            out.append(tool_schema(n))
+            out.append(tool_schema(n, full))
         elif defs and n in defs:
             out.append(defs[n])
     return out

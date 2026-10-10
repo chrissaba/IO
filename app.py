@@ -406,6 +406,56 @@ def chat_written(task: dict) -> list[str]:
 boss.privacy.live_check = lambda: bool(state["settings"].get("privacy_check"))
 
 
+HISTORY = HERE / "data" / "chats"  # each chat's conversation as the API brain had it (data/chats/<chat id>.json)
+HISTORY_CHARS = 160_000  # the most of it a new message carries (~80K tokens: the brain's window keeps room to work)
+
+
+def history_file(chat_id: str) -> Path:
+    return HISTORY / f"{re.sub(r'[^A-Za-z0-9_-]', '', chat_id)}.json"
+
+
+def chat_history(task: dict) -> list:
+    """The chat's earlier messages as the API brain had them, for this task: only when they're complete (the turn saved
+    last is the chat's message right before this one; a turn on the local model or an error breaks the chain, and the
+    short text summaries take over), newest turns first up to HISTORY_CHARS."""
+    chat = next((c for c in state["chats"] if c["id"] == task.get("chat_id")), None)
+    if not chat or chat.get("private"):
+        return []
+    ids = [m.get("task_id") for m in chat["messages"]]
+    if task["id"] not in ids or ids.index(task["id"]) == 0:
+        return []
+    before = ids[ids.index(task["id"]) - 1]
+    try:
+        turns = json.loads(history_file(chat["id"]).read_text(encoding="utf-8")).get("turns", [])
+    except (OSError, ValueError):
+        return []
+    if not turns or turns[-1].get("task_id") != before:
+        return []
+    kept, used = [], 0
+    for t in reversed(turns):
+        size = sum(len(json.dumps(m, ensure_ascii=False)) for m in t["messages"])
+        if kept and used + size > HISTORY_CHARS:
+            break
+        kept.insert(0, t)
+        used += size
+    return [m for t in kept for m in t["messages"]]
+
+
+def history_saver(task: dict):
+    def save(messages: list) -> None:
+        if not task.get("chat_id"):
+            return
+        f = history_file(task["chat_id"])
+        try:
+            turns = json.loads(f.read_text(encoding="utf-8")).get("turns", [])
+        except (OSError, ValueError):
+            turns = []
+        turns = [t for t in turns if t.get("task_id") != task["id"]] + [{"task_id": task["id"], "messages": messages}]
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"turns": turns[-30:]}, ensure_ascii=False), encoding="utf-8")
+    return save
+
+
 def privacy_options(task: dict, options: dict) -> None:
     """The privacy check's settings for a task, and what its chat already decided: private (nothing leaves the PC), and
     what you let through before. When the check keeps a chat on the PC mid-task, the chat turns private for good (the
@@ -420,6 +470,10 @@ def privacy_options(task: dict, options: dict) -> None:
         task.update(private=True, went_private=why)
         if chat is not None:
             chat.update(private=True, private_why=why)
+            try:  # what the API brain had of this chat isn't carried into it any more
+                history_file(chat["id"]).unlink(missing_ok=True)
+            except OSError:
+                pass
         save_state()
 
     def allowed(keys: list) -> None:
@@ -474,6 +528,17 @@ async def worker() -> None:
         options["workshop_propose"] = workshop_proposer(task)  # a missing ability: ask to build it (workshop.py)
         options["workshop_ready"] = workshop_ready_for(task)
         privacy_options(task, options)
+        options["chat_history"] = chat_history(task)  # the chat so far, as the API brain had it (word for word, cached)
+        options["save_history"] = history_saver(task)
+        chat = next((c for c in state["chats"] if c["id"] == task.get("chat_id")), None)
+        options["allowed_folders"] = list((chat or {}).get("allowed_folders") or [])
+
+        def allow_folder(folder: str, chat=chat) -> None:  # "Allow all edits in <folder> for this chat"
+            if chat is not None:
+                chat["allowed_folders"] = list(dict.fromkeys((chat.get("allowed_folders") or []) + [folder]))
+                save_state()
+
+        options["on_allow_folder"] = allow_folder
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -1264,6 +1329,7 @@ async def private_chat(request: Request) -> JSONResponse:
     chat["private"] = on
     if on:
         chat.setdefault("private_why", "you turned it on")
+        history_file(chat["id"]).unlink(missing_ok=True)  # what the API brain had of it isn't carried on
     else:
         chat.pop("private_why", None)
     save_state()
@@ -1313,6 +1379,10 @@ async def rename_chat(request: Request) -> JSONResponse:
 
 async def delete_chat(request: Request) -> JSONResponse:
     state["chats"] = [c for c in state["chats"] if c["id"] != request.path_params["id"]]
+    try:
+        history_file(request.path_params["id"]).unlink(missing_ok=True)
+    except OSError:
+        pass
     save_state()
     return JSONResponse({"ok": True})
 

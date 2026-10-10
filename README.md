@@ -96,6 +96,20 @@ only NVIDIA's models can race each other). IO goes round them in order, skips on
 falls back to the local model if none answers. Without a key, every task runs at Low. Usage shows each provider's
 calls, tokens and cost.
 
+### Code and the desktop
+
+The API brain works like Claude Code in a terminal, and drives the desktop too. It gets one focused set of about 55
+tools with their full descriptions, and finds the rest with `tools(group)` and `use(name, args)`:
+- **Code:** `search_code` (regex over a repository's git files, file:line), `glob_files`, `read_file` with line numbers
+  and offset/limit, `edit_file` with several edits at once, and `run_command` in Git Bash.
+- **The desktop:** reading windows and controls first, clicking by visible text, and looking at the screen when there is
+  nothing to read.
+- **Chats:** each chat keeps its conversation as the brain had it, word for word and cached, so a follow-up starts where
+  the last message ended.
+- **Repositories:** a task in a repository starts with its git state, its CLAUDE.md or AGENTS.md, and IO's own project
+  notes, which the brain keeps up to date with `project_notes`.
+- **File edits:** the first approval in a repository can allow all edits there for the rest of the chat.
+
 ### Privacy
 
 From Medium up, IO sends what it reads to an API model. Before anything leaves the PC it passes a local check
