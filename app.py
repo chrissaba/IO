@@ -73,6 +73,9 @@ DEFAULT_SETTINGS = {
     "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
     "race_width": 0,  # 2-5: the brain's step goes to this many models at once and the fastest answer wins (0 = in turn)
     "debug": False,  # show each message's debug timeline: every model call, screenshot and tool, with timings
+    # the privacy check (privacy.py): what IO reads is screened on this PC before it goes to an API model, for these kinds
+    "privacy_check": True,
+    "privacy_kinds": list(boss.privacy.DEFAULT_KINDS),
 }
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
@@ -399,6 +402,30 @@ def chat_written(task: dict) -> list[str]:
     return out
 
 
+def privacy_options(task: dict, options: dict) -> None:
+    """The privacy check's settings for a task, and what its chat already decided: private (nothing leaves the PC), and
+    what you let through before. When the check keeps a chat on the PC mid-task, the chat turns private for good (the
+    lock in its header turns it back)."""
+    chat = next((c for c in state["chats"] if c["id"] == task.get("chat_id")), None)
+    s = state["settings"]
+    options["privacy"] = {"check": bool(s.get("privacy_check", True)), "kinds": list(s.get("privacy_kinds") or [])}
+    options["private"] = task["private"] = bool(chat and chat.get("private")) or bool(task.get("private"))
+    options["privacy_allowed"] = list((chat or {}).get("privacy_allowed") or [])
+
+    def went_private(why: str) -> None:
+        task.update(private=True, went_private=why)
+        if chat is not None:
+            chat.update(private=True, private_why=why)
+        save_state()
+
+    def allowed(keys: list) -> None:
+        if chat is not None:
+            chat["privacy_allowed"] = list(dict.fromkeys((chat.get("privacy_allowed") or []) + list(keys)))[-500:]
+            save_state()
+
+    options["on_private"], options["on_privacy_allow"] = went_private, allowed
+
+
 def task_effort(task: dict) -> str:
     """The level a task runs at: its message's own pick, else the Settings default. A goal's check-ins get at least
     High from Medium up (goals are the long, unattended work the NVIDIA models are for). Without a key, everything is
@@ -442,6 +469,7 @@ async def worker() -> None:
         options["chat_written"] = chat_written(task)  # files IO wrote earlier in this chat: its own work, edited without asking
         options["workshop_propose"] = workshop_proposer(task)  # a missing ability: ask to build it (workshop.py)
         options["workshop_ready"] = workshop_ready_for(task)
+        privacy_options(task, options)
         own = task.get("images") or []
         imgs = own or earlier_images(task)
         options["images_from_earlier"] = bool(imgs) and not own
@@ -1100,6 +1128,7 @@ def state_body(tasks: list, lite: bool) -> dict:
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
             "providers": providers_public(),
+            "privacy_kinds_all": [{"id": k, "label": label} for k, (label, _on) in boss.privacy.KINDS.items()],
             "brain_models": [nim.label(m) for m in state["settings"].get("brain_models") or nim.BRAIN_MODELS],
             "model_info": {m: {"label": nim.label(m), "vision": nim.is_vision(m), **{k: v for k, v in nim.tests().get(m, {}).items() if k in ("tools", "secs", "note", "when")}}
                            for m in dict.fromkeys(list(state["settings"].get("brain_models") or nim.BRAIN_MODELS) + list(nim.tests()))},
@@ -1196,6 +1225,9 @@ async def chat_message(request: Request) -> JSONResponse:
         task["effort"] = "max"
     if body.get("learn") is False:
         task["learn"] = False
+    if body.get("private") is True:  # the lock, pressed before a new chat's first message
+        chat["private"] = True
+        chat.setdefault("private_why", "you turned it on")
     chat["messages"].append({"task_id": task["id"], "at": time.time()})
     # an image-only first message gets a placeholder name; the first message with text names the chat
     if chat["title"] in ("New chat", "Image", "Images") and text:
@@ -1213,6 +1245,24 @@ async def pin_chat(request: Request) -> JSONResponse:
         chat["pinned"] = bool((await request.json()).get("pinned"))
         save_state()
     return JSONResponse({"ok": True})
+
+
+async def private_chat(request: Request) -> JSONResponse:
+    """The lock in a chat's header: private = nothing in this chat goes to an API model (the local model does it all).
+    From the phone it can be turned on, not off: turning it off lets what the chat holds go to the API."""
+    chat = next((c for c in state["chats"] if c["id"] == request.path_params["id"]), None)
+    if chat is None:
+        return JSONResponse({"error": "no such chat"}, status_code=404)
+    on = bool((await request.json()).get("private"))
+    if not on and remote.is_remote(request.scope):
+        return JSONResponse({"error": "a private chat is opened up on the PC"}, status_code=403)
+    chat["private"] = on
+    if on:
+        chat.setdefault("private_why", "you turned it on")
+    else:
+        chat.pop("private_why", None)
+    save_state()
+    return JSONResponse({"ok": True, "private": on})
 
 
 async def chat_seen(request: Request) -> JSONResponse:
@@ -1371,9 +1421,11 @@ async def save_settings(request: Request) -> JSONResponse:
         if key in body:
             s[key] = str(body[key] or "").strip()[:120]
     for key in ("allow_powershell", "notify", "hotkeys", "confirm_risky", "browser", "files", "watchdog", "focus_glow", "debug",
-                "keep_awake", "remote_access"):
+                "keep_awake", "remote_access", "privacy_check"):
         if key in body:
             s[key] = bool(body[key])
+    if isinstance(body.get("privacy_kinds"), list):
+        s["privacy_kinds"] = [k for k in boss.privacy.KINDS if k in body["privacy_kinds"]]
     if "wake_url" in body:  # Home Assistant's webhook that sends this PC a wake packet (the phone calls it when IO is asleep)
         url = str(body["wake_url"] or "").strip()
         s["wake_url"] = url if re.match(r"^https?://\S+$", url) else ""
@@ -1745,7 +1797,8 @@ def push_question(task: dict) -> None:
     if task.get("approval"):
         push_phones("Approval needed", task.get("question", "").removeprefix("Approval needed: "), "/#approvals", f"approval-{task['approval']}")
     else:
-        push_phones("IO has a question", task.get("question", ""), f"/#chat/{task['chat_id']}" if task.get("chat_id") else "/#history", task["id"])
+        question = re.sub(r"\s*\((yes/no|choices: [^)]*)\)\s*$", "", task.get("question", ""))  # the buttons are in the app
+        push_phones("IO has a question", question, f"/#chat/{task['chat_id']}" if task.get("chat_id") else "/#history", task["id"])
 
 
 finished_listeners.append(push_finished)
@@ -1891,6 +1944,7 @@ app = Starlette(
         Route("/api/chats/{id}/messages", chat_message, methods=["POST"]),
         Route("/api/chats/{id}/rename", rename_chat, methods=["POST"]),
         Route("/api/chats/{id}/pin", pin_chat, methods=["POST"]),
+        Route("/api/chats/{id}/private", private_chat, methods=["POST"]),
         Route("/api/chats/{id}/seen", chat_seen, methods=["POST"]),
         Route("/api/chats/{id}", delete_chat, methods=["DELETE"]),
         Route("/api/tasks/{id}/stop", stop_task, methods=["POST"]),

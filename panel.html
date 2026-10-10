@@ -276,6 +276,11 @@
   .efforttag { font-size: 11.5px; color: var(--faint); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
   .efforttag svg.lucide { width: 13px; height: 13px; }
   .efforttag.max { color: var(--accent-text); }
+  .efforttag.private, .privmark { color: var(--ok); }
+  .privmark { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; }
+  .privnote { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+  .privnote svg.lucide { color: var(--ok); }
+  .composer.private { border-color: color-mix(in srgb, var(--ok) 55%, var(--line-strong)); }
   .msgfoot .meta + .efforttag { margin-left: 6px; }
   .debug { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 6px 10px; margin: 0 0 12px; font-size: 12px; }
   .debughead { cursor: pointer; color: var(--muted); user-select: none; }
@@ -662,6 +667,7 @@
             </div>
           </div>
           <span class="pinmark" x-show="chat.pinned" title="Pinned"><span class="ic" x-html="ic('pin', 'sm')"></span></span>
+          <span class="pinmark privmark" x-show="chat.private" :title="'Private: nothing in this chat goes to an API model (' + (chat.private_why || 'you turned it on') + ')'"><span class="ic" x-html="ic('lock', 'sm')"></span>Private</span>
           <div class="sp"></div>
         </div>
       </template>
@@ -683,7 +689,11 @@
                     <template x-if="isYesNo(taskById(m.task_id))">
                       <div style="display:flex; gap:8px"><button class="btn accent sm" @click="answer(m.task_id, 'yes')">Allow</button><button class="btn sm" @click="answer(m.task_id, 'no')">Don't allow</button></div>
                     </template>
-                    <template x-if="!isYesNo(taskById(m.task_id))">
+                    <template x-if="qChoices(taskById(m.task_id))">
+                      <div style="display:flex; gap:8px; flex-wrap:wrap"><template x-for="(c, ci) in qChoices(taskById(m.task_id))" :key="c">
+                        <button class="btn sm" :class="ci === 0 && 'accent'" @click="answer(m.task_id, c)" x-text="c"></button></template></div>
+                    </template>
+                    <template x-if="!isYesNo(taskById(m.task_id)) && !qChoices(taskById(m.task_id))">
                       <div style="display:flex; gap:8px; flex:1"><input type="text" style="flex:1" x-model="answers[m.task_id]" placeholder="Your answer" @keydown.enter="answer(m.task_id)"><button class="btn accent sm" @click="answer(m.task_id)">Send</button></div>
                     </template>
                   </div>
@@ -744,7 +754,7 @@
             <button @click="post(`/api/tasks/${loopTask.id}/stop`)">Stop</button>
           </div>
         </template>
-        <div class="composer" :class="{ drag: dragging, working: chatRunning }" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
+        <div class="composer" :class="{ drag: dragging, working: chatRunning, private: isPrivate() }" @dragenter.prevent="dragDepth++; dragging = true" @dragover.prevent
              @dragleave="if (--dragDepth <= 0) { dragDepth = 0; dragging = false }"
              @drop.prevent="dragDepth = 0; dragging = false; addFiles($event.dataTransfer.files)">
           <canvas class="spark" aria-hidden="true" x-show="chatRunning && !loopTask" x-transition.opacity.duration.400ms x-init="sparkle($el, { ramp: 0, fill: 0.4, sweep: 2600, max: 1 })"></canvas>
@@ -755,7 +765,7 @@
           </div>
           <div class="typing">
             <div class="ghost" x-ref="ghost" x-show="completion" aria-hidden="true"><span x-text="draft"></span><span class="hint" x-text="completion"></span><kbd>Tab</kbd></div>
-            <textarea x-ref="task" x-model="draft" rows="1" :placeholder="chat && chat.messages.length ? 'Reply…' : 'How can I help you today?'"
+            <textarea x-ref="task" x-model="draft" rows="1" :placeholder="isPrivate() ? 'Private: nothing in this chat leaves this PC' : chat && chat.messages.length ? 'Reply…' : 'How can I help you today?'"
                       @input="autosize($el)" @keydown.enter="if (!$event.shiftKey && !$event.isComposing) { $event.preventDefault(); send(); }" @keydown.tab="acceptCompletion($event)" @keydown.right="acceptCompletion($event)"
 ></textarea>
           </div>
@@ -764,6 +774,8 @@
             <input type="file" accept="image/*" multiple x-ref="file" style="display:none" @change="addFiles($event.target.files); $event.target.value = ''">
             <button class="iconbtn" :class="loopNext && 'on'" @click="loopNext = !loopNext; focusComposer()"
                     :title="loopNext ? 'Loop on: IO will keep working on this until you press Stop' : 'Loop: keep working on a goal until you press Stop'"><span class="ic" x-html="ic('repeat')"></span></button>
+            <button class="iconbtn" :class="isPrivate() && 'on'" @click="togglePrivate()"
+                    :title="isPrivate() ? 'Private: nothing in this chat goes to an API model; the local model does it all. Click to open it up again.' : 'Private: keep this chat on this PC (no API models), for anything confidential'"><span class="ic" x-html="ic(isPrivate() ? 'lock' : 'lock-open')"></span></button>
             <div style="margin-right:auto"></div>
             <button class="iconbtn" x-show="draft.trim()" @click="saveTemplate()" title="Save as a quick start"><span class="ic" x-html="ic('bookmark-plus')"></span></button>
             <button class="send stop" x-show="chatBusy && !draft.trim() && !attachments.length" @click="stopChat()" title="Stop"><span class="ic" x-html="ic('square')"></span></button>
@@ -1204,6 +1216,19 @@
           </div>
         </template>
       </div>
+      <h2>Privacy</h2>
+      <div class="card">
+        <div class="setting"><div class="txt"><div>Check before anything goes to an API model</div>
+            <div>From Medium up, what IO reads (files, windows, pages, command output, pictures you attach) is screened here on the PC first: an instant pattern scan, then the local Muse model for longer text. When it finds one of the kinds below, IO stops and asks: send it anyway, or keep the chat on this PC. Runs nobody is watching (goals, schedules, loops) keep it on the PC by themselves.</div></div>
+          <label class="switch"><input type="checkbox" :checked="s.settings.privacy_check !== false" @change="s.settings.privacy_check = $event.target.checked; saveSettings()"><span></span></label></div>
+        <template x-for="k in (s.privacy_kinds_all || [])" :key="k.id">
+          <div class="setting" :style="s.settings.privacy_check === false ? 'opacity:.5' : ''"><div class="txt"><div x-text="k.label"></div></div>
+            <label class="switch"><input type="checkbox" :checked="(s.settings.privacy_kinds || []).includes(k.id)" :disabled="s.settings.privacy_check === false"
+                   @change="togglePrivacyKind(k.id, $event.target.checked)"><span></span></label></div>
+        </template>
+        <div class="setting"><div class="txt"><div>Private chats</div>
+            <div>The lock beside the message box keeps a chat on this PC: no API models at all, whatever the effort. The local model does everything instead, thinking at its most, with more steps and a careful check before it answers. Web searches still go out, but IO asks first when one carries something from the chat.</div></div></div>
+      </div>
       <h2>Skills IO taught itself</h2>
       <div class="card">
         <div class="setting"><div class="txt"><div>Learned skills</div>
@@ -1426,6 +1451,10 @@ const EFFORTS = [
 ];
 // under an answer: the level it ran at ("High"), or "Medium → High" when a Medium task was handed up
 function effortTag(t) {
+  if (t.private) {
+    const why = t.went_private ? `Private: kept on this PC because ${t.went_private}` : "Private: nothing in this chat goes to an API model";
+    return `<span class="efforttag private" title="${esc(why)}">${ic("lock", "sm")}Private</span>`;
+  }
   const e = EFFORTS.find((x) => x.id === t.effort);
   if (!e) return "";
   const up = t.escalated && e.id !== "medium";
@@ -1828,6 +1857,7 @@ function agent() {
     get chatBusy() { return !!this.chat && this.chatIsBusy(this.chat); },
     get chatRunning() { return !!this.chat && this.chatTasks(this.chat).some((t) => t.status === "running"); },
     loopNext: false,
+    privateNext: false,  // the lock pressed before a new chat's first message
     openSkill: "",
     catalog: [], catalogNote: "", addModel: "", modelNote: "", testing: "",
     info(m) { return (this.s.model_info || {})[m] || (this.catalog.find((c) => c.id === m) || { label: m, vision: false }); },
@@ -1967,7 +1997,27 @@ function agent() {
       }
     },
     isYesNo(t) { return /\(yes\/no\)\s*$/i.test(t?.question || ""); },
-    qText(t) { return String(t?.question || "").replace(/\s*\(yes\/no\)\s*$/i, ""); },
+    // a question with its own buttons: "... (choices: Keep it local | Send anyway)", the first one the safe pick
+    qChoices(t) { const m = /\(choices: ([^)]*)\)\s*$/i.exec(t?.question || ""); return m ? m[1].split("|").map((c) => c.trim()).filter(Boolean) : null; },
+    qText(t) { return String(t?.question || "").replace(/\s*\((yes\/no|choices: [^)]*)\)\s*$/i, ""); },
+    // Private: nothing in the chat goes to an API model. A new chat takes it with its first message
+    isPrivate() { return this.chat ? !!this.chat.private : this.privateNext; },
+    async togglePrivate() {
+      if (!this.chat) { this.privateNext = !this.privateNext; this.focusComposer(); return; }
+      const on = !this.chat.private;
+      const r = await post(`/api/chats/${this.chat.id}/private`, { private: on });
+      if (r.error) { this.notice = r.error; return; }
+      this.chat.private = on;
+      this.notice = on ? "Private: nothing in this chat goes to an API model now. The local model does it all." : "This chat can use the API models again.";
+      this.refresh();
+      this.focusComposer();
+    },
+    togglePrivacyKind(id, on) {
+      const kinds = new Set(this.s.settings.privacy_kinds || []);
+      on ? kinds.add(id) : kinds.delete(id);
+      this.s.settings.privacy_kinds = (this.s.privacy_kinds_all || []).map((k) => k.id).filter((k) => kinds.has(k));
+      this.saveSettings();
+    },
     async answer(id, value) {
       await post(`/api/tasks/${id}/answer`, { answer: value ?? (this.answers[id] || "") });
       delete this.answers[id];
@@ -2029,7 +2079,13 @@ function agent() {
       const waiting = this.chat && !images.length && this.chatTasks(this.chat).find((t) => t.status === "waiting");
       if (waiting) {
         let answer = text;
-        if (this.isYesNo(waiting)) {
+        const choices = this.qChoices(waiting);
+        if (choices) {
+          // typed instead of pressed: the choice it starts like ("keep", "send")
+          const word = text.toLowerCase().split(/\s+/)[0];
+          answer = choices.find((c) => c.toLowerCase() === text.toLowerCase() || c.toLowerCase().split(/\s+/)[0] === word);
+          if (!answer) return restore(`Answer the question above with one of its buttons (${choices.join(" or ")}).`);
+        } else if (this.isYesNo(waiting)) {
           if (/^(y|yes|yeah|yep|ok|okay|sure|allow|go( ahead)?|do it)\b/i.test(text)) answer = "yes";
           else if (/^(n|no|nope|don'?t|stop|cancel|deny)\b/i.test(text)) answer = "no";
           else return restore("Answer the question above with Allow or Don't allow (or type yes or no).");
@@ -2046,8 +2102,9 @@ function agent() {
           try { localStorage.setItem("chatId", c.id); } catch {}
         }
         this.dividerLocked = false;  // replying means you've caught up
-        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext, effort: this.effortNow() }) });
+        const r = await fetch(`/api/chats/${this.chatId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images, loop: this.loopNext, effort: this.effortNow(), ...(this.privateNext ? { private: true } : {}) }) });
         this.loopNext = false;
+        this.privateNext = false;
         if (!r.ok) { const d = await r.json().catch(() => ({})); return restore(d.error || "Couldn't send that. Try again."); }
       } catch { return restore("Couldn't reach IO. Try again."); }
       await this.refresh();
@@ -2101,7 +2158,9 @@ function agent() {
                 ${it.detail && this.open[t.id + ":" + it.key] ? `<div class="ckdetail">${it.detail}</div>` : ""}</div>
             </div>`).join("")}</div>`
         : "";
-      const answer = t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "";
+      // the privacy check kept this chat on the PC while this message ran
+      const priv = t.went_private ? `<div class="privnote">${ic("lock", "sm")}<span>Kept on this PC from here on: ${esc(t.went_private)}.</span></div>` : "";
+      const answer = priv + (t.summary ? `<div class="md ${t.status === "error" ? "bad" : ""}">${md(cleanAnswer(t.summary))}</div>` : "");
       const debug = this.s.settings.debug && (open || !busy) ? debugTimeline(t, this.open[t.id + ":debug"]) : "";
       const drop = open && (card || debug) ? `<div class="workdrop">${card}${debug}</div>` : "";
       const done = this.copied === t.id;
@@ -2624,6 +2683,7 @@ function nowDoing(t, info) {
       case "compact": return "Tidying up its notes";
       case "check": case "finish_check": return "Double-checking the answer";
       case "escalate": return `Moving up to ${String(e.to || "high").replace(/^./, (c) => c.toUpperCase())} effort`;
+      case "privacy": return e.private ? "Carrying on privately, on this PC" : e.sent ? "Sending it as you said" : "Waiting for your privacy choice";
       case "ultra": return "Putting the parts together";
       case "director": return "Planning the next steps";
       case "warning": {
@@ -2674,6 +2734,7 @@ function checklist(t) {
     if (e.event === "warning" && /^the brain is now /.test(e.text || "")) {
       items.push({ key: i, state: "done", text: "Switched to " + e.text.replace(/^the brain is now /, "") }); return;
     }
+    if (e.event === "privacy" && e.text && !e.rerun) { items.push({ key: i, state: "done", text: e.text }); return; }
     if (e.event === "director" && e.thoughts) {
       // which AI decided (the director falls back GLM -> Duck.ai) and how long its round took
       const who = e.model || { NimDirector: "GLM", DuckAI: "Duck.ai", Gemini: "Gemini" }[e.via] || "";
@@ -2785,9 +2846,12 @@ function cleanPlanStep(p) {
 
 function questionBox(t) {
   const yesNo = /\(yes\/no\)\s*$/i.test(t.question || "");
-  const q = yesNo ? t.question.replace(/\s*\(yes\/no\)\s*$/i, "") : t.question;
+  const choices = (/\(choices: ([^)]*)\)\s*$/i.exec(t.question || "") || [])[1];
+  const q = String(t.question || "").replace(/\s*\((yes\/no|choices: [^)]*)\)\s*$/i, "");
   return `<div class="question"><div class="q">${esc(q)}</div>
-    <div class="qrow">${yesNo
+    <div class="qrow">${choices
+      ? choices.split("|").map((c, i) => `<button class="btn sm${i ? "" : " accent"}" onclick="answerTask('${t.id}', ${esc(JSON.stringify(c.trim()))})">${esc(c.trim())}</button>`).join("")
+      : yesNo
       ? `<button class="btn accent sm" onclick="answerTask('${t.id}', 'yes')">Allow</button><button class="btn sm" onclick="answerTask('${t.id}', 'no')">Don't allow</button>`
       : `<input type="text" id="ans-${t.id}" placeholder="Your answer" onkeydown="if(event.key==='Enter')answerTask('${t.id}')"><button class="btn accent sm" onclick="answerTask('${t.id}')">Send</button>`}</div></div>`;
 }

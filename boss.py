@@ -43,6 +43,7 @@ import learned
 import nim
 import planner
 import plugins
+import privacy
 
 # physical pixels everywhere, matching Windows-MCP's virtual-desktop coordinates
 ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -2379,9 +2380,27 @@ EFFORT = {
     "high": {"api": True, "local": "high", "api_reason": "high", "steps": 120, "out": 4096, "check": True, "ultracode": False},
     "max": {"api": True, "local": "high", "api_reason": "max", "steps": 200, "out": 4096, "check": True, "ultracode": True},
 }
+# Private mode (a private chat): nothing leaves the PC at any level, so the local model gets all it has instead: its
+# highest reasoning, High's steps and answer room, and the careful check before the answer
+PRIVATE_EFFORT = {"api": False, "local": "high", "api_reason": "low", "steps": 120, "out": 4096, "check": True, "ultracode": False}
+PRIVATE_NOTE = ("\n\n(This chat just became private: {why}. From here on nothing leaves this PC. Carry on from where things are "
+                "now: files it saved and apps it opened are still there, but IO's browser tab and any dialogs it had open were "
+                "closed, so reopen those if you need them. Don't redo work that is already done.)")
 # extra output tokens for a request whose model thinks first (its thoughts count against max_tokens)
 REASON_ROOM = {"low": 0, "medium": 1500, "high": 3000, "max": 6000}
 EFFORT_NOW: contextvars.ContextVar = contextvars.ContextVar("effort", default="high")  # the running task's level
+# the running task's privacy.Guard: every request to an API model passes it first (nim.create calls privacy_gate), in
+# whichever thread of the task it's made (the race and the Ultracode helpers copy the context along)
+PRIVACY: contextvars.ContextVar = contextvars.ContextVar("privacy", default=None)
+
+
+def privacy_gate(model: str, messages) -> None:
+    guard = PRIVACY.get()
+    if guard is not None:
+        guard.gate(model, messages)
+
+
+nim.send_guards.append(privacy_gate)
 MEDIUM_LOCAL_REPLANS = 1  # Medium: the local model gets one new plan when stuck; stuck again, the NVIDIA brain takes over
 
 
@@ -2445,6 +2464,24 @@ def boss_file() -> str:
 _described: dict = {}  # picture (its hash) -> EvoCUA's description, so an image kept in the conversation is described once
 
 
+def picture_words(p: dict) -> str:
+    """EvoCUA's description of one picture (an image_url part), made once per picture: for a local brain that reads
+    text only, and for the privacy check of a picture the user attached."""
+    url = p["image_url"]["url"]
+    key = hashlib.sha1(url.encode()).hexdigest()
+    if key not in _described:
+        try:
+            r = local_create(OpenAI(base_url=EVO_URL, api_key="local", max_retries=1, timeout=120), EVO_MODEL,
+                             _purpose="describe a picture for the brain", temperature=0.2, max_tokens=1100, extra_body=EVO_THINK_LONG,
+                             messages=[{"role": "user", "content": [p, {"type": "text", "text": (
+                                 "Describe this image for someone who can't see it: what it shows, every piece of text "
+                                 "that matters (exactly as written), and where the main buttons and items are.")}]}])
+            _described[key] = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
+        except Exception as e:
+            _described[key] = f"(couldn't be described: {e})"[:200]
+    return _described[key]
+
+
 def words_for_pictures(messages: list) -> list:
     """The conversation for a local brain that reads text only: each picture becomes EvoCUA's description of it."""
     out = []
@@ -2456,19 +2493,7 @@ def words_for_pictures(messages: list) -> list:
                 if p.get("type") != "image_url":
                     parts.append(p)
                     continue
-                url = p["image_url"]["url"]
-                key = hashlib.sha1(url.encode()).hexdigest()
-                if key not in _described:
-                    try:
-                        r = local_create(OpenAI(base_url=EVO_URL, api_key="local", max_retries=1, timeout=120), EVO_MODEL,
-                                         _purpose="describe a picture for the brain", temperature=0.2, max_tokens=1100, extra_body=EVO_THINK_LONG,
-                                         messages=[{"role": "user", "content": [p, {"type": "text", "text": (
-                                             "Describe this image for someone who can't see it: what it shows, every piece of text "
-                                             "that matters (exactly as written), and where the main buttons and items are.")}]}])
-                        _described[key] = re.sub(r"<think>.*?</think>", "", r.choices[0].message.content or "", flags=re.S).strip()
-                    except Exception as e:
-                        _described[key] = f"(couldn't be described: {e})"[:200]
-                parts.append({"type": "text", "text": f"[a picture, described by the eyes model: {_described[key]}]"})
+                parts.append({"type": "text", "text": f"[a picture, described by the eyes model: {picture_words(p)}]"})
             m = {**m, "content": parts}
         out.append(m)
     return out
@@ -2877,26 +2902,41 @@ async def desktop_context(win: ClientSession) -> str:
 
 async def run(task: str, max_steps: int, options: dict | None = None, ask=None, conversation: list[dict] | None = None,
               images: list[Path] | None = None) -> str:
-    """Runs one task (see _run); the focus hint is cleared however it ends."""
+    """Runs one task (see _run); the focus hint is cleared however it ends. It runs again, from where things are, when
+    Medium's local model hands over to the API brain (Escalate) or when the privacy check keeps the chat on this PC
+    (GoPrivate): the second run is private, so nothing it does leaves the PC."""
     hint_focus("")
+    now_task, now_options = task, dict(options or {})
     try:
-        try:
-            return await _run(task, max_steps, options, ask, conversation, images)
-        except BaseException as err:
-            # Medium: the local model got stuck; the NVIDIA brain takes over from the state the PC is in now, told what
-            # was tried, so it carries on instead of starting over. The Escalate comes out wrapped in the MCP clients'
-            # task groups (it is raised inside their sessions), so it is unwrapped like app.error_text does
-            e = escalation_in(err)
-            if e is None:
-                raise
-            log("escalate", text=str(e)[:300], to="high")
-            hint_focus("")
-            if callable((options or {}).get("on_escalate")):
-                options["on_escalate"]("high")
-            return await _run(task + f"\n\n(A first try on the local model stopped: {e}\nCarry on from where things are now: files "
-                              "it saved and apps it opened are still there, but IO's browser tab and any dialogs it had open were "
-                              "closed, so reopen those if you need them. Don't redo work that is already done.)",
-                              max_steps, {**(options or {}), "effort": "high", "escalated": True}, ask, conversation, images)
+        for _attempt in range(3):
+            try:
+                return await _run(now_task, max_steps, now_options, ask, conversation, images)
+            except BaseException as err:
+                # both come out wrapped in the MCP clients' task groups (they're raised inside their sessions), so they
+                # are unwrapped like app.error_text does
+                p = privacy.private_in(err)
+                if p is not None:
+                    if now_options.get("private"):  # a private run never asks an API model; one that tried is a bug
+                        raise RuntimeError(f"a step of this private chat tried to reach an API model ({p.why})") from None
+                    log("privacy", private=True, rerun=True, text=f"Carrying on privately on this PC: {p.why}")
+                    hint_focus("")
+                    now_task = task + PRIVATE_NOTE.format(why=p.why)
+                    now_options = {**now_options, "private": True}
+                    continue
+                # Medium: the local model got stuck; the NVIDIA brain takes over from the state the PC is in now, told
+                # what was tried, so it carries on instead of starting over
+                e = escalation_in(err)
+                if e is None or now_options.get("escalated") or now_options.get("private"):
+                    raise
+                log("escalate", text=str(e)[:300], to="high")
+                hint_focus("")
+                if callable(now_options.get("on_escalate")):
+                    now_options["on_escalate"]("high")
+                now_task = task + (f"\n\n(A first try on the local model stopped: {e}\nCarry on from where things are now: files "
+                                   "it saved and apps it opened are still there, but IO's browser tab and any dialogs it had open were "
+                                   "closed, so reopen those if you need them. Don't redo work that is already done.)")
+                now_options = {**now_options, "effort": "high", "escalated": True}
+        raise RuntimeError("the task had to start over too many times")
     finally:
         hint_focus("")
 
@@ -2917,8 +2957,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     }
     (HERE / "logs").mkdir(exist_ok=True)
     level = options.get("effort") if options.get("effort") in EFFORT else ("high" if options.get("ask_gemini") else "low")
-    eff = EFFORT[level]
-    EFFORT_NOW.set(level)  # Glimmer's reasoning for this task (local_create reads it, also in worker threads)
+    private = bool(options.get("private"))  # a private chat: nothing leaves the PC, whatever the level says
+    eff = PRIVATE_EFFORT if private else EFFORT[level]
+    if private:
+        options["ask_gemini"] = False  # no web chat AI as a director either
+    EFFORT_NOW.set("max" if private else level)  # Glimmer's reasoning for this task (local_create reads it, also in worker threads)
     prune_artifacts()  # whole tool results saved by earlier tasks (spill) go after a week
     if not loop:
         max_steps = min(max_steps, eff["steps"])
@@ -2947,7 +2990,16 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     if remote_brain:
         use_remote_eyes()
     log("effort", level=level, brain="nvidia" if remote_brain else "local", reasoning_local=eff["local"],
-        reasoning_api=eff["api_reason"] if api_ok else "", steps=max_steps, escalated=bool(options.get("escalated")))
+        reasoning_api=eff["api_reason"] if api_ok else "", steps=max_steps, escalated=bool(options.get("escalated")),
+        **({"private": True} if private else {}))
+    # the privacy check (privacy.py): whatever this task would send to an API model is screened first, here on the PC
+    pv = options.get("privacy") if isinstance(options.get("privacy"), dict) else {}
+    guard = privacy.Guard(check=bool(pv.get("check", True)), kinds=pv.get("kinds"), private=private,
+                          allowed=options.get("privacy_allowed"), ask=ask, loop=asyncio.get_running_loop(),
+                          unattended=bool(options.get("unattended") or loop),  # nobody to ask: it keeps the chat local
+                          local_chat=lambda s, u, n: local_chat(s, u, n, think=False), describe=picture_words,
+                          on_private=options.get("on_private"), on_allow=options.get("on_privacy_allow"), log=log)
+    PRIVACY.set(guard)
     brain_at = [0]  # the NVIDIA model that answered last; each step starts there
     # NVIDIA models this PC runs itself (Balanced mode's Muse Glimmer): their turns in the brain's order go to the local
     # copy, so they don't wait in NVIDIA's queue or count against its rate limit. Its turns as look_at_screen's vision
@@ -3345,6 +3397,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             except Exception as e:  # an unreadable file shouldn't sink the rest of the request
                 log("warning", text=f"couldn't read image {Path(p).name}: {e}")
         images = parts
+        guard.user_images.update(privacy.digest(p["image_url"]["url"]) for p in parts)  # read for the check, not just named
         if loop:
             prompt += "\n\n" + LOOP_NOTE
         if images:
@@ -3912,10 +3965,13 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             steps, window = list(steps_log), (focus if loop else focus_hint) or ""
 
             def work() -> None:
+                PRIVACY.set(guard.quiet())  # the task has answered: private data in its steps skips the playbook, no question
                 try:
                     name = learned.learn(lambda sy, us: brain_chat(sy, us, 2000, "learn a skill"), standalone, steps, outcome, window)
                     if name:
                         print(json.dumps({"event": "learned", "skill": name, "steps": len(steps)}), flush=True)
+                except privacy.GoPrivate as e:
+                    print(f"no playbook from this run: {e.why}", flush=True)
                 except Exception as e:
                     print(f"couldn't learn from the run: {e}", flush=True)
 
@@ -4417,6 +4473,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     reason = plugin_risky(name, plugin_meta[name], args)
                 else:
                     reason = (actions.risky(name, args, ctx) if layer else "") or risky_reason(name, args, ctx.request if layer else task)
+                if not why and not reason and private and (out := privacy.outgoing(name, args)):
+                    # a private chat may still search and browse the web, but not with words taken from what it read
+                    carried = await asyncio.to_thread(guard.query_problem, out, messages)
+                    if carried:
+                        reason = f"send “{out[:80]}” to the web from this private chat (it looks like it carries {carried})"
                 if reason and reason in (options.get("preapproved") or []):
                     reason = ""  # you approved exactly this in Approvals; this task exists to carry it out
                 if reason and options.get("unattended") and callable(options.get("approve_later")):

@@ -94,6 +94,19 @@ Nemotron 3 Nano Omni, Llama 3.2 90B Vision and others; Settings can test any mod
 round them in order, skips ones that are failing or slow, and falls back to the local model if none answers.
 Without a key, every task runs at Low.
 
+### Privacy
+
+From Medium up, IO sends what it reads to an API model. Before anything leaves the PC it passes a local check
+(`privacy.py`): a pattern scan for keys and tokens, card and bank numbers, ID numbers and chat logs, then Muse Glimmer
+for longer text that carries signs of health records, confidential work documents or private chats. A screenshot of a
+private app (Discord, Slack, mail, a password manager) counts too. On a hit IO stops and asks: **Keep it local** or
+**Send anyway**. Keeping it local makes the chat private and the task carries on from where it was, on the PC only.
+Runs nobody watches (goals, schedules, loops) keep it local without asking. The kinds are in Settings > Privacy.
+
+The **lock** beside the message box makes a chat private before you paste anything into it: no API model at all,
+whatever the effort. Glimmer does everything instead, at its highest reasoning, with High's steps and a careful check
+before it answers. Web searches still go out, but IO asks first when one carries a name or number from what it read.
+
 ## Using it
 
 IO installs as a normal per-user app: open it from the Start menu, pin it to the taskbar, or turn on
@@ -189,6 +202,7 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 | `actions.py` | The action library, routing and tool catalog |
 | `nim.py` | NVIDIA models: pacing, health, tests and strengths |
 | `learned.py` | Playbooks IO writes for itself after runs |
+| `privacy.py` | The privacy check on everything sent to an API model, and Private mode |
 | `plugins.py`, `catalog.json` | One-click MCP plugins |
 | `workshop.py`, `workshop_host.py` | Tools IO builds for itself: proposals, tests, approvals, and the host that runs each one |
 | `tools/apilens/` | Reads a .NET library's public API from its metadata, for `api_lookup` (built on first use) |

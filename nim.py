@@ -124,6 +124,8 @@ def brain_order(start: int, models: list[str] | None = None) -> list[int]:
 
 
 listeners: list = []  # called with a timing record for every request (IO's debug timeline)
+# called with (model, messages) before any request leaves the PC; one may raise to stop it (boss's privacy check)
+send_guards: list = []
 
 
 def size_of(messages) -> tuple[int, int]:
@@ -308,6 +310,8 @@ def create(client, _purpose: str = "", **kw):
     the per-minute limit. Each request is reported to `listeners`: how long it waited for IO's own limits, how long
     the model took, and how big it was. A "<provider>:<id>" model (PROVIDERS) goes to that provider instead, whatever
     client the caller had."""
+    for guard in send_guards:  # before anything else: a request that may not go never takes a slot
+        guard(kw.get("model", ""), kw.get("messages"))
     t0 = time.time()
     chars, images = size_of(kw.get("messages"))
     rec = {"model": kw.get("model", ""), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or [])}
@@ -952,6 +956,8 @@ class NimDirector:
         self.history.append({"role": "user", "content": content})
         self._trim()
         messages = ([{"role": "system", "content": self.system}] if self.system else []) + self.history
+        for guard in send_guards:  # it calls NVIDIA itself, not through create: the privacy check goes here too
+            guard("", messages)
         self.rounds += 1
         text, last_error = "", "error: no NVIDIA model answered"
         for model in self._pick():
