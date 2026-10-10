@@ -181,6 +181,8 @@ class IOConsole(App):
         elif ev == "llm":
             ok = r.get("ok")
             tokens = f" · {r.get('in_tokens')}→{r.get('out_tokens')} tokens" if r.get("in_tokens") is not None else ""
+            if r.get("cached_tokens"):
+                tokens += f" ({r['cached_tokens']} cached)"
             waited = f" (waited {r['wait']}s)" if r.get("wait") else ""
             line = (f"   ⇄ {who}{model_name(r.get('model', ''))} · {r.get('purpose')} · {r.get('secs')}s{waited}{tokens}"
                     + (f" · reasoning {r['reasoning']}" if r.get("reasoning") else "")

@@ -237,7 +237,8 @@ def create(client, _purpose: str = "", **kw):
     if label := reasoning_label(kw):
         rec["reasoning"] = label
     prov = provider_of(rec["model"])
-    if prov:
+    native = prov == "anthropic"  # Claude through its own API (claude_call), with prompt caching
+    if prov and not native:
         client, kw = provider_client(prov), provider_request(prov, kw)
     slots = _model_slots(rec["model"]) if prov else _slots
     if not slots.acquire(timeout=SLOT_WAIT):
@@ -248,7 +249,8 @@ def create(client, _purpose: str = "", **kw):
             _pace()  # NVIDIA's 40 a minute; the others limit per model, in their own ways
         t1 = time.time()
         try:
-            r = call(client, {"model": rec["model"], "purpose": _purpose, **({"reasoning": rec["reasoning"]} if rec.get("reasoning") else {})}, **kw)
+            label = {"model": rec["model"], "purpose": _purpose, **({"reasoning": rec["reasoning"]} if rec.get("reasoning") else {})}
+            r = claude_call(kw, label) if native else call(client, label, **kw)
         except Exception as e:
             trace({**rec, "ok": False, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
                    "error": f"{type(e).__name__}: {scrub(str(e))[:120]}"})
@@ -256,13 +258,184 @@ def create(client, _purpose: str = "", **kw):
         u = getattr(r, "usage", None)
         m = r.choices[0].message if r.choices else None
         extra = (getattr(m, "model_extra", None) or {}) if m is not None else {}
+        cached = getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", None) if u is not None else None
         trace({**rec, "ok": True, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
                "in_tokens": getattr(u, "prompt_tokens", None), "out_tokens": getattr(u, "completion_tokens", None),
+               **({"cached_tokens": cached} if cached else {}),
                "calls": [c.function.name for c in (m.tool_calls or [])] if m else [], "finish": r.choices[0].finish_reason if r.choices else "",
                **({"thought_chars": n} if (n := len(str(extra.get("reasoning_content") or extra.get("reasoning") or ""))) else {})})
         return r
     finally:
         slots.release()
+
+
+# ---------- Claude through its own API (the anthropic SDK). IO's requests are in the OpenAI shape; they're translated
+# here, and the answer comes back as the same kind of ChatCompletion every other model returns, so nothing else in IO
+# changes. Over its OpenAI-compatible endpoint Claude can't cache; here the whole prompt so far is cached (the system
+# prompt, ~70 tools and the conversation, at a tenth of the input price on the next step), Claude's own effort levels
+# apply, and its thinking comes back as a summary (shown in IO Console).
+_claude_turns: dict = {}  # a Claude reply's first tool-call id -> its own content blocks (thinking with its signature)
+
+
+def _claude_client():
+    import anthropic  # noqa: PLC0415
+    key = provider_key("anthropic")
+    if not key:
+        raise RuntimeError("no Claude key saved (Settings > Brain)")
+    p = _prov["anthropic"]
+    if p.get("native") is None or p.get("native_key") != key:
+        p.update(native=anthropic.Anthropic(api_key=key, max_retries=0, timeout=240), native_key=key)
+    return p["native"]
+
+
+def _claude_image(url: str) -> dict:
+    if url.startswith("data:"):
+        head, _, data = url.partition(",")
+        return {"type": "image", "source": {"type": "base64", "media_type": head[5:].split(";")[0] or "image/png", "data": data}}
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
+def _claude_id(call_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", str(call_id or "")) or "call"  # Kimi's "functions.name:0" isn't allowed
+
+
+def _claude_blocks(content) -> list:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content.strip() else []
+    out = []
+    for p in content or []:
+        if p.get("type") == "text" and str(p.get("text") or "").strip():
+            out.append({"type": "text", "text": p["text"]})
+        elif p.get("type") == "image_url":
+            out.append(_claude_image(str((p.get("image_url") or {}).get("url") or "")))
+    return out
+
+
+def claude_params(kw: dict) -> dict:
+    """An OpenAI-shaped request as Claude's Messages API takes it."""
+    import json  # noqa: PLC0415
+    system: list = []
+    msgs: list = []
+
+    def push(role: str, blocks: list) -> None:
+        if blocks:
+            if msgs and msgs[-1]["role"] == role:
+                msgs[-1]["content"].extend(blocks)
+            else:
+                msgs.append({"role": role, "content": list(blocks)})
+
+    for m in kw.get("messages") or []:
+        if not isinstance(m, dict):
+            m = m.model_dump(exclude_none=True)
+        role = m.get("role")
+        if role in ("system", "developer"):
+            system += [b for b in _claude_blocks(m.get("content")) if b["type"] == "text"]
+        elif role == "user":
+            push("user", _claude_blocks(m.get("content")))
+        elif role == "assistant":
+            calls = m.get("tool_calls") or []
+            mine = _claude_turns.get(calls[0].get("id")) if calls else None
+            if mine:
+                push("assistant", mine)  # its own blocks, thinking and its signature included
+                continue
+            blocks = _claude_blocks(m.get("content"))
+            for c in calls:
+                fn = c.get("function") or {}
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except ValueError:
+                    args = {"_raw": fn.get("arguments")}
+                blocks.append({"type": "tool_use", "id": _claude_id(c.get("id")), "name": fn.get("name") or "tool",
+                               "input": args if isinstance(args, dict) else {"value": args}})
+            push("assistant", blocks or [{"type": "text", "text": "(no reply)"}])
+        elif role == "tool":
+            push("user", [{"type": "tool_result", "tool_use_id": _claude_id(m.get("tool_call_id")), "content": str(m.get("content") or "(empty)")}])
+    for mm in msgs:  # a user turn's tool results come before anything else in it
+        if mm["role"] == "user":
+            mm["content"].sort(key=lambda b: 0 if b["type"] == "tool_result" else 1)
+    if not msgs or msgs[0]["role"] != "user":
+        msgs.insert(0, {"role": "user", "content": [{"type": "text", "text": "(continuing)"}]})
+    params = {"model": str(kw["model"]).partition(":")[2], "max_tokens": int(kw.get("max_tokens") or 4096), "messages": msgs,
+              "cache_control": {"type": "ephemeral"}}  # caches everything up to the newest message, for the next step
+    if system:
+        params["system"] = system
+    if kw.get("tools"):
+        params["tools"] = [{"name": t["function"]["name"], "description": t["function"].get("description") or "",
+                            "input_schema": t["function"].get("parameters") or {"type": "object", "properties": {}}} for t in kw["tools"]]
+        choice = kw.get("tool_choice")
+        if choice == "required" and not re.search(r"opus|sonnet|fable|mythos", params["model"]):
+            params["tool_choice"] = {"type": "any"}  # (the big models refuse forced tool use; they call one anyway)
+        elif choice == "none":
+            params["tool_choice"] = {"type": "none"}
+    effort = kw.get("reasoning_effort")
+    if effort in ("low", "medium", "high", "xhigh", "max"):
+        params["output_config"] = {"effort": effort}
+    # Claude 5 decides how much to think (measured: fine after another model's tool call too); summarized, for IO Console
+    params["thinking"] = {"type": "adaptive", "display": "summarized"}
+    if kw.get("timeout"):
+        params["timeout"] = kw["timeout"]
+    return params
+
+
+def claude_completion(msg):
+    """Claude's Message as a ChatCompletion; its content blocks are kept for the next request (thinking signatures)."""
+    import json  # noqa: PLC0415
+    from openai.types.chat import ChatCompletion  # noqa: PLC0415
+    text, think, calls = [], [], []
+    for b in msg.content:
+        if b.type == "text":
+            text.append(b.text)
+        elif b.type == "thinking":
+            think.append(b.thinking or "")
+        elif b.type == "tool_use":
+            calls.append({"id": b.id, "type": "function", "function": {"name": b.name, "arguments": json.dumps(b.input, ensure_ascii=False)}})
+    if calls:
+        _claude_turns[calls[0]["id"]] = [b.model_dump(exclude_none=True) for b in msg.content]
+        while len(_claude_turns) > 400:
+            _claude_turns.pop(next(iter(_claude_turns)))
+    u = msg.usage
+    cached = u.cache_read_input_tokens or 0
+    prompt = (u.input_tokens or 0) + cached + (u.cache_creation_input_tokens or 0)
+    message: dict = {"role": "assistant", "content": "".join(text) or None}
+    if think:
+        message["reasoning_content"] = "\n".join(think)
+    if calls:
+        message["tool_calls"] = calls
+    finish = {"tool_use": "tool_calls", "max_tokens": "length", "refusal": "content_filter"}.get(msg.stop_reason, "stop")
+    return ChatCompletion.model_validate({
+        "id": msg.id, "object": "chat.completion", "created": int(time.time()), "model": msg.model,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+        "usage": {"prompt_tokens": prompt, "completion_tokens": u.output_tokens, "total_tokens": prompt + u.output_tokens,
+                  "prompt_tokens_details": {"cached_tokens": cached}}})
+
+
+def claude_call(kw: dict, label: dict):
+    """One request to Claude, streamed to IO Console when one is open."""
+    params = claude_params(kw)
+    client = _claude_client()
+    if not stream_listeners:
+        return claude_completion(client.messages.create(**params))
+    rid = f"{time.time():.3f}-{id(kw) % 10000}"
+    emit({"kind": "start", "rid": rid, **label, **context_label()})
+    try:
+        with client.messages.stream(**params) as stream:
+            for ev in stream:
+                if ev.type == "content_block_start" and getattr(ev.content_block, "type", "") == "tool_use":
+                    emit({"kind": "tool", "rid": rid, "text": ev.content_block.name})
+                elif ev.type == "content_block_delta":
+                    d = ev.delta
+                    if d.type == "text_delta":
+                        emit({"kind": "text", "rid": rid, "text": d.text})
+                    elif d.type == "thinking_delta":
+                        emit({"kind": "thinking", "rid": rid, "text": d.thinking})
+                    elif d.type == "input_json_delta":
+                        emit({"kind": "args", "rid": rid, "text": d.partial_json})
+            final = stream.get_final_message()
+    except Exception as e:
+        emit({"kind": "end", "rid": rid, "error": type(e).__name__})
+        raise
+    emit({"kind": "end", "rid": rid, "finish": final.stop_reason or ""})
+    return claude_completion(final)
 
 
 # ---------- other OpenAI-compatible providers. A brain model named "<provider>:<its own id>" is sent there by create(),
@@ -276,9 +449,9 @@ def create(client, _purpose: str = "", **kw):
 #     and magistral 0 until the plan opens them); it takes tool-call ids of exactly 9 letters and digits.
 PROVIDERS = {
     "synthetic": {"label": "Synthetic", "url": "https://api.synthetic.new/openai/v1", "site": "synthetic.new", "per_model": 1},
-    # Claude, through its OpenAI-compatible endpoint (paid per token; a Max plan's monthly API credits cover it). That
-    # endpoint has no prompt caching; Claude 5 models refuse a temperature below 1, and Opus/Sonnet/Fable refuse forced
-    # tool calls, so both are left to the model (platform.claude.com/docs/en/api/openai-sdk)
+    # Claude (paid per token; a Max plan's monthly API credits cover it), through its own API: claude_call below, with
+    # prompt caching. Measured 2026-10-09 on real IO steps: Sonnet 5.5 about 1 s and $0.002 a step once the prompt is
+    # cached ($0.03 uncached), Haiku 5.5 $0.0002. The url and the OpenAI-shape settings are for its model list only.
     "anthropic": {"label": "Claude", "url": "https://api.anthropic.com/v1", "site": "platform.claude.com", "per_model": 4,
                   "no_temperature": True},
     "mistral": {"label": "Mistral", "url": "https://api.mistral.ai/v1", "site": "console.mistral.ai", "per_model": 4, "short_ids": True},
@@ -394,11 +567,14 @@ def provider_catalog(name: str) -> list[dict]:
                 continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
             entry = {"vision": bool(caps.get("vision")), "efforts": [], "context": m.get("max_context_length"),
                      "label": mid.replace("-latest", "").replace("-", " ").title()}
-        elif name == "anthropic":  # every current Claude model sees pictures and calls tools
+        elif name == "anthropic":  # its model list says what each one supports, effort levels included
             if not mid.startswith("claude-"):
                 continue
-            entry = {"vision": True, "efforts": [], "context": m.get("max_input_tokens") or 200000,
-                     "label": m.get("display_name") or mid}
+            caps = m.get("capabilities") or {}
+            effort = caps.get("effort") or {}
+            entry = {"vision": bool((caps.get("image_input") or {"supported": True}).get("supported")),
+                     "efforts": [e for e in ("low", "medium", "high", "xhigh", "max") if (effort.get(e) or {}).get("supported")],
+                     "context": m.get("max_input_tokens") or 200000, "label": m.get("display_name") or mid}
         else:  # Synthetic: its own models are "hf:<org>/<model>" ("syn:" names are aliases that move)
             if not mid.startswith("hf:") or "text" not in (m.get("output_modalities") or ["text"]):
                 continue
