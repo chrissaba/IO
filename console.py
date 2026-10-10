@@ -45,6 +45,17 @@ def short(value, n: int = 160) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+try:  # the models' names as IO shows them elsewhere
+    from nim import BRAIN_LABELS
+except Exception:  # noqa: BLE001 - the console works without them
+    BRAIN_LABELS = {}
+LOCAL_LABELS = {"local: boss": "Muse Glimmer (local)", "local: eyes": "EvoCUA (local)"}
+
+
+def model_name(model: str) -> str:
+    return LOCAL_LABELS.get(model) or BRAIN_LABELS.get(model) or model
+
+
 def tool_args(text: str) -> dict:
     """key=value pairs; quoted values keep their spaces and backslashes; numbers, true/false and JSON lists are parsed."""
     out = {}
@@ -98,13 +109,15 @@ class IOConsole(App):
         self.query_one("#log", RichLog).write(text if isinstance(text, Text) else Text(str(text)))
 
     def repaint_status(self) -> None:
+        if not self.is_running or not self.query("#status"):
+            return  # closing: the widgets are gone, the timer isn't yet
         state = "connected" if self.connected else "not connected (is IO running?)"
         chat = self.chat_id or "new chat"
         busy = f" · working on task {self.task_id}" if self.task_id else ""
         self.query_one("#status", Static).update(f"IO Console · effort {self.effort} · {chat} · {state}{busy}")
 
     def repaint_live(self) -> None:
-        if not self.dirty:
+        if not self.dirty or not self.is_running or not self.query("#live"):
             return
         self.dirty = False
         live = self.query_one("#live", Static)
@@ -162,17 +175,20 @@ class IOConsole(App):
         elif ev == "effort":
             self.log_line(Text(f"   effort {r.get('level')} · brain {r.get('brain')} · reasoning {r.get('reasoning_api') or '-'} (API) / "
                                f"{r.get('reasoning_local')} (local) · up to {r.get('steps')} steps", style="grey58"))
+        elif ev == "llm" and not r.get("ok") and "(race)" in str(r.get("purpose")) and "Connection" in str(r.get("error")):
+            self.log_line(Text(f"   ⇄ {who}{model_name(r.get('model', ''))} · {r.get('purpose')} · cut off after {r.get('secs')}s "
+                               "(another model won the race)", style="grey50"))
         elif ev == "llm":
             ok = r.get("ok")
             tokens = f" · {r.get('in_tokens')}→{r.get('out_tokens')} tokens" if r.get("in_tokens") is not None else ""
             waited = f" (waited {r['wait']}s)" if r.get("wait") else ""
-            line = (f"   ⇄ {who}{r.get('model')} · {r.get('purpose')} · {r.get('secs')}s{waited}{tokens}"
+            line = (f"   ⇄ {who}{model_name(r.get('model', ''))} · {r.get('purpose')} · {r.get('secs')}s{waited}{tokens}"
                     + (f" · reasoning {r['reasoning']}" if r.get("reasoning") else "")
                     + (f" · {r['finish']}" if r.get("finish") and r.get("finish") != "stop" else "")
                     + ("" if ok else f" · {short(r.get('error', 'failed'), 120)}"))
             self.log_line(Text(line, style="green" if ok else "red"))
         elif ev == "race":
-            self.log_line(Text(f"   ⚑ race won by {r.get('winner')} in {r.get('secs')}s", style="cyan"))
+            self.log_line(Text(f"   ⚑ race won by {model_name(r.get('winner', ''))} in {r.get('secs')}s", style="cyan"))
         elif ev == "tool":
             result = str(r.get("result", ""))
             bad = result.startswith(("error", "unsure")) or "refused" in result[:80]
@@ -207,7 +223,7 @@ class IOConsole(App):
     def on_stream(self, r: dict) -> None:
         rid, kind = r.get("rid", ""), r.get("kind")
         if kind == "start":
-            label = f"{r.get('model', '?')} · {r.get('purpose', '')}" + (f" · reasoning {r['reasoning']}" if r.get("reasoning") else "")
+            label = f"{model_name(r.get('model', '?'))} · {r.get('purpose', '')}" + (f" · reasoning {r['reasoning']}" if r.get("reasoning") else "")
             if r.get("agent"):
                 label = f"[{r['agent'][:40]}] " + label
             self.streams[rid] = {"label": label, "think": "", "text": "", "tool": "", "args": "", "t0": time.time()}

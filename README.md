@@ -44,6 +44,9 @@ take over hard tasks or all of them, while the local models stay on as eyes and 
 - **Code against what's really installed.** A model remembers a library's API from whatever version it trained on.
   `api_lookup` reads the real one from the installed files (a .NET project, dll or NuGet package, or a Python module),
   and a failed build lists each error once with the library's real API for the names it couldn't find.
+- **IO Console.** The Console button opens a terminal window where you can chat with IO, call any of its tools
+  directly (`/tool read_file path=...`), and watch each model call's thinking as it's written, every API request
+  (model, wait, time, tokens, reasoning) and every tool result, live, without cluttering the chat.
 - **A workshop for its own tools.** When a task needs an ability none of IO's tools give, IO asks in Approvals whether
   it may build one. It writes and tests the tool in its own workshop folder (its program files are read-only to it),
   and asks again before turning it on. Customize > Workshop lists what it built.
