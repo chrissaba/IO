@@ -396,8 +396,14 @@ def _claude_blocks(content) -> list:
     return out
 
 
-def claude_params(kw: dict) -> dict:
-    """An OpenAI-shaped request as Claude's Messages API takes it."""
+THINKING = ("thinking", "redacted_thinking")
+
+
+def claude_params(kw: dict, no_thinking_replay: bool = False) -> dict:
+    """An OpenAI-shaped request as Claude's Messages API takes it. Claude's own thinking blocks go back only on the
+    newest assistant turn (the one a tool loop continues from; the API drops older ones anyway). Sent on older turns,
+    they were refused ("Invalid `signature` in `thinking` block") as soon as IO had summarized the steps around them,
+    and every run fell off Claude after its first summary. no_thinking_replay: none at all (the retry after a refusal)."""
     import json  # noqa: PLC0415
     system: list = []
     msgs: list = []
@@ -409,9 +415,9 @@ def claude_params(kw: dict) -> dict:
             else:
                 msgs.append({"role": role, "content": list(blocks)})
 
-    for m in kw.get("messages") or []:
-        if not isinstance(m, dict):
-            m = m.model_dump(exclude_none=True)
+    raw = [m if isinstance(m, dict) else m.model_dump(exclude_none=True) for m in kw.get("messages") or []]
+    last_assistant = max((i for i, m in enumerate(raw) if m.get("role") == "assistant"), default=-1)
+    for i, m in enumerate(raw):
         role = m.get("role")
         if role in ("system", "developer"):
             system += [b for b in _claude_blocks(m.get("content")) if b["type"] == "text"]
@@ -421,7 +427,8 @@ def claude_params(kw: dict) -> dict:
             calls = m.get("tool_calls") or []
             mine = _claude_turns.get(calls[0].get("id")) if calls else None
             if mine:
-                push("assistant", mine)  # its own blocks, thinking and its signature included
+                keep = i == last_assistant and not no_thinking_replay and not (msgs and msgs[-1]["role"] == "assistant")
+                push("assistant", [b for b in mine if keep or b.get("type") not in THINKING])  # its own blocks
                 continue
             blocks = _claude_blocks(m.get("content"))
             for c in calls:
@@ -496,7 +503,15 @@ def claude_completion(msg):
 
 def claude_call(kw: dict, label: dict):
     """One request to Claude, streamed to IO Console when one is open."""
-    params = claude_params(kw)
+    try:
+        return _claude_call(claude_params(kw), kw, label)
+    except Exception as e:  # a thinking block it won't take back: once more without any (the step goes on, on Claude)
+        if "thinking" not in str(e) or getattr(e, "status_code", 0) != 400:
+            raise
+        return _claude_call(claude_params(kw, no_thinking_replay=True), kw, label)
+
+
+def _claude_call(params: dict, kw: dict, label: dict):
     # the step's own deadline (boss.prepare: 45 s plus thinking room). It was dropped here, so Claude got the client's
     # 240 s, and a stream never timed out at all: Claude's stream sends ping events while it stalls, each one resetting
     # the read timeout (a task sat 31 minutes on one step). Now the whole request has to finish inside it

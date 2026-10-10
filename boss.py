@@ -3184,7 +3184,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             width = min(int(options.get("race_width") or 0), nim.MAX_PARALLEL)
             racing = width >= 2 and role == "decide next step" and not strong  # the main agent's steps; helpers go in turn
             n, last = len(brain_models), None
-            order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
+            # your order every step (the first model unless it failed in the last 2 minutes or turned slow): starting from
+            # the one that answered last kept a whole run on a fallback after one refusal from the first
+            order = nim.brain_order(0, brain_models)
             if strong:
                 # the quickest model wins a race, often a small one; a step that just failed deserves the best reasoning on
                 # offer (healthy ones first, by planner strength), at the cost of a slower answer
@@ -3949,10 +3951,17 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
         # sends the same conversation to several), less the reply. Everything it has read stays word for word until the
         # run fills ~3/4 of that; only then are the oldest steps folded into a summary
         ctx_tokens = (min(nim.context_tokens(m) for m in brain_models) - BRAIN_MAX_OUT) if remote_brain else await asyncio.to_thread(model_context)
-        room = max(6000, int((ctx_tokens - 1400) * 2.5) - fixed)
+        # ~2 characters a token for the API brain (measured on a real run: 133K characters of code, logs and JSON were
+        # 78K tokens; at the 2.5 assumed before, a run could outgrow the window before folding)
+        room = max(6000, int((ctx_tokens - 1400) * (2.0 if remote_brain else 2.5)) - fixed)
         compact_at = min(compact_at, int(room * 0.6))
+        keep_room = 0  # API brain: what a summary leaves word for word (characters), instead of a count of messages
         if remote_brain:
-            compact_at, keep_recent = int(room * 0.75), 30
+            # context over summaries, like Claude Code: everything stays word for word (and cached) until the run fills
+            # ~80% of the window; then the oldest steps fold until the newest ~40% is left. Keeping the newest 30
+            # messages instead left most of the window full, so the next summary came 4-6 steps later (5 summaries in a
+            # 55-call run), each one 13-34 s and a cold prompt cache
+            compact_at, keep_recent, keep_room = int(room * 0.8), 6, int(room * 0.4)
         snaps_kept = KEEP_FULL_SNAPSHOTS if room > 40000 else 1
         tool_cap = min(room // 6, 60000) if remote_brain else min(MAX_TOOL_TEXT, room // 3)
         ctx.page_chars = min(tool_cap - 500, 40000) if remote_brain else 6000  # read_page: how much of a page comes back
@@ -4184,6 +4193,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     await get_plan("\n".join(s[:700] for s in steps_log[-12:]))
             if sum(len(str(m.get("content") or "")) for m in messages[head:]) > compact_at:
                 cut = len(messages) - keep_recent
+                if keep_room:  # keep the newest messages up to keep_room characters (at least keep_recent of them)
+                    kept = sum(len(str(m.get("content") or "")) for m in messages[cut:])
+                    while cut - 1 > head and kept + len(str(messages[cut - 1].get("content") or "")) <= keep_room:
+                        cut -= 1
+                        kept += len(str(messages[cut].get("content") or ""))
                 while cut > head and messages[cut]["role"] != "assistant":  # never split a call from its result
                     cut -= 1
                 if cut - head >= 4:
