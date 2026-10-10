@@ -42,13 +42,14 @@ STRENGTHS = {"moonshotai/kimi-k3": "strongest planner of the fast ones; best for
              "deepseek-ai/deepseek-v4.1-flash": "deep reasoning on text, but queues for minutes: only when time doesn't matter"}
 # strongest planner first: after a failed step the next decision goes down this list instead of racing (a race is won by
 # the quickest model, often a small one, which kept retrying a broken approach on a hard build)
-PLANNER_ORDER = ["moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "meta/muse-glimmer-30b",
-                 "meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]
+PLANNER_ORDER = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5",  # when they're in the list (Claude, paid per token)
+                 "moonshotai/kimi-k3", "zai-org/glm-5.3", "z-ai/glm-5.3-flash", "deepseek-ai/deepseek-v4.1-flash", "claude-haiku-5-5",
+                 "meta/muse-glimmer-30b", "meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]
 
 
 def planner_rank(model: str) -> int:
     """By the model itself, wherever it's served: Synthetic's "hf:moonshotai/Kimi-K3" ranks as NVIDIA's Kimi K3."""
-    base = str(model).rsplit("/", 1)[-1].lower()
+    base = (str(model).partition(":")[2] if provider_of(model) else str(model)).rsplit("/", 1)[-1].lower()
     return next((i for i, m in enumerate(PLANNER_ORDER) if m.rsplit("/", 1)[-1].lower() == base), len(PLANNER_ORDER))
 
 
@@ -275,6 +276,11 @@ def create(client, _purpose: str = "", **kw):
 #     and magistral 0 until the plan opens them); it takes tool-call ids of exactly 9 letters and digits.
 PROVIDERS = {
     "synthetic": {"label": "Synthetic", "url": "https://api.synthetic.new/openai/v1", "site": "synthetic.new", "per_model": 1},
+    # Claude, through its OpenAI-compatible endpoint (paid per token; a Max plan's monthly API credits cover it). That
+    # endpoint has no prompt caching; Claude 5 models refuse a temperature below 1, and Opus/Sonnet/Fable refuse forced
+    # tool calls, so both are left to the model (platform.claude.com/docs/en/api/openai-sdk)
+    "anthropic": {"label": "Claude", "url": "https://api.anthropic.com/v1", "site": "platform.claude.com", "per_model": 4,
+                  "no_temperature": True},
     "mistral": {"label": "Mistral", "url": "https://api.mistral.ai/v1", "site": "console.mistral.ai", "per_model": 4, "short_ids": True},
 }
 _prov: dict = {name: {"key": "", "client": None, "at": 0.0, "models": []} for name in PROVIDERS}
@@ -343,6 +349,11 @@ def provider_request(name: str, kw: dict) -> dict:
     text another server put on them); short tool-call ids where the provider needs them."""
     out = {k: v for k, v in kw.items() if k != "extra_body"}
     out["model"] = str(kw["model"]).partition(":")[2]
+    if PROVIDERS[name].get("no_temperature"):
+        out.pop("temperature", None)
+        out.pop("top_p", None)
+        if out.get("tool_choice") == "required":  # Opus, Sonnet and Fable 5.x refuse it; the others call a tool anyway
+            out["tool_choice"] = "auto"
     short = PROVIDERS[name].get("short_ids")
     messages = []
     for m in kw.get("messages") or []:
@@ -366,7 +377,10 @@ def provider_catalog(name: str) -> list[dict]:
         return p["models"]
     import json  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
-    req = urllib.request.Request(PROVIDERS[name]["url"] + "/models", headers={"Authorization": f"Bearer {provider_key(name)}"})
+    headers = {"Authorization": f"Bearer {provider_key(name)}"}
+    if name == "anthropic":  # its model list is the native API's, which reads its own headers
+        headers.update({"x-api-key": provider_key(name), "anthropic-version": "2023-06-01"})
+    req = urllib.request.Request(PROVIDERS[name]["url"] + "/models", headers=headers)
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.load(r).get("data", [])
     models, seen = [], set()
@@ -380,6 +394,11 @@ def provider_catalog(name: str) -> list[dict]:
                 continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
             entry = {"vision": bool(caps.get("vision")), "efforts": [], "context": m.get("max_context_length"),
                      "label": mid.replace("-latest", "").replace("-", " ").title()}
+        elif name == "anthropic":  # every current Claude model sees pictures and calls tools
+            if not mid.startswith("claude-"):
+                continue
+            entry = {"vision": True, "efforts": [], "context": m.get("max_input_tokens") or 200000,
+                     "label": m.get("display_name") or mid}
         else:  # Synthetic: its own models are "hf:<org>/<model>" ("syn:" names are aliases that move)
             if not mid.startswith("hf:") or "text" not in (m.get("output_modalities") or ["text"]):
                 continue
