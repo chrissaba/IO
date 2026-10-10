@@ -7,3 +7,4 @@ pillow==12.3.0
 uvicorn==0.54.0
 starlette==1.7.0
 pywin32==312
+textual==8.2.8

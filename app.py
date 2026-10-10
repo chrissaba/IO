@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,8 +34,9 @@ from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import approvals
 import boss
@@ -379,6 +381,24 @@ def error_text(e: BaseException) -> str:
     return str(e) or type(e).__name__
 
 
+def chat_written(task: dict) -> list[str]:
+    """Files IO created or changed itself in the earlier turns of this task's chat (write_file, edit_file, edit_lines)."""
+    chat = next((c for c in state["chats"] if c["id"] == task.get("chat_id")), None)
+    if not chat:
+        return []
+    by_id = {t["id"]: t for t in state["tasks"]}
+    out = []
+    for m in chat["messages"]:
+        t = by_id.get(m.get("task_id"))
+        if t is None or t["id"] == task["id"]:
+            continue
+        for e in t.get("events", []):
+            if (e.get("event") == "tool" and e.get("name") in ("write_file", "edit_file", "edit_lines") and not e.get("agent")
+                    and str(e.get("result", "")).startswith("ok") and (e.get("args") or {}).get("path")):
+                out.append(str(boss.actions._path(str(e["args"]["path"]))))
+    return out
+
+
 def task_effort(task: dict) -> str:
     """The level a task runs at: its message's own pick, else the Settings default. A goal's check-ins get at least
     High from Medium up (goals are the long, unattended work the NVIDIA models are for). Without a key, everything is
@@ -419,6 +439,7 @@ async def worker() -> None:
         options["approve_later"] = approve_later_for(task)
         options["preapproved"] = list(task.get("preapproved") or [])
         options["add_goal"] = add_goal  # "keep an eye on X": the brain turns ongoing asks into goals
+        options["chat_written"] = chat_written(task)  # files IO wrote earlier in this chat: its own work, edited without asking
         options["workshop_propose"] = workshop_proposer(task)  # a missing ability: ask to build it (workshop.py)
         options["workshop_ready"] = workshop_ready_for(task)
         own = task.get("images") or []
@@ -903,7 +924,95 @@ async def watchdog() -> None:
 async def startup() -> None:
     (HERE / "logs").mkdir(exist_ok=True)
     boss.listeners.append(on_event)
+    boss.listeners.append(live_event)
     await ensure_boss()
+
+
+# ---------- IO Console (console.py): a live feed of everything IO does, and its tools called directly ----------
+
+live: dict = {"loop": None, "clients": set()}  # each open console's queue
+
+
+def _live_put(q: asyncio.Queue, record: dict) -> None:
+    if q.qsize() < 5000:  # a console that stopped reading doesn't grow IO's memory forever
+        q.put_nowait(record)
+
+
+def live_send(record: dict) -> None:
+    """From any thread (boss logs from helpers' threads, model streams from the brain's): to every open console."""
+    loop = live["loop"]
+    if loop is None or not live["clients"]:
+        return
+    task = current["task"]
+    record = {**record, "task_id": task["id"] if task else ""}
+    for q in list(live["clients"]):
+        loop.call_soon_threadsafe(_live_put, q, record)
+
+
+def live_event(record: dict) -> None:
+    live_send(record)
+
+
+def live_stream(record: dict) -> None:
+    live_send({"event": "stream", **record})
+
+
+async def live_ws(ws: WebSocket) -> None:
+    """ws://127.0.0.1:8765/api/live: every event and model stream as JSON lines. A web page can't listen in: browsers
+    send their page's address as Origin, and only IO's own window and the console (no Origin) are let in."""
+    origin = ws.headers.get("origin")
+    if origin is not None and origin not in ALLOWED_ORIGINS:
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    live["loop"] = asyncio.get_running_loop()
+    q: asyncio.Queue = asyncio.Queue()
+    live["clients"].add(q)
+    if live_stream not in nim.stream_listeners:
+        nim.stream_listeners.append(live_stream)  # model calls stream only while a console is open
+    task = current["task"]
+    await ws.send_text(json.dumps({"event": "hello", "effort": state["settings"].get("effort", "high"),
+                                   "task_id": task["id"] if task else "", "task": task["text"][:300] if task else ""}))
+    try:
+        while True:
+            await ws.send_text(json.dumps(await q.get(), ensure_ascii=False, default=str))
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        pass
+    finally:
+        live["clients"].discard(q)
+        if not live["clients"] and live_stream in nim.stream_listeners:
+            nim.stream_listeners.remove(live_stream)
+
+
+async def console_tools(_request: Request) -> JSONResponse:
+    reg = boss.actions.REGISTRY
+    return JSONResponse({"tools": [{"name": a.name, "group": a.group, "signature": a.signature(), "summary": a.summary, "limits": a.limits}
+                                   for a in reg.values() if a.fn is not None and "internal" not in a.modes]})
+
+
+async def console_tool(request: Request) -> JSONResponse:
+    """One of IO's tools, called directly from the console (by you, so no confirmation: you typed it). Tools that need a
+    window session or IO's browser tab only work inside a task; they say so."""
+    body = await request.json()
+    ctx = boss.actions.Ctx(options={**{k: state["settings"].get(k) for k in ("allow_powershell", "files", "browser_mode")},
+                                    "effort": state["settings"].get("effort", "high")})
+    ctx.page_chars = 12000
+    result = await boss.actions.call(str(body.get("name", "")), body.get("args") if isinstance(body.get("args"), dict) else {}, ctx)
+    return JSONResponse({"result": result})
+
+
+async def console_open(_request: Request) -> JSONResponse:
+    """The Console button: IO Console in its own terminal window (Windows Terminal when it's there)."""
+    py = Path(sys.executable).with_name("python.exe")
+    script = HERE / "console.py"
+    wt = shutil.which("wt.exe")
+    args = ([wt, "-w", "new", "--title", "IO Console", str(py), str(script)] if wt else
+            ["cmd.exe", "/c", "start", "IO Console", str(py), str(script)])
+    try:
+        subprocess.Popen(args, cwd=str(HERE), creationflags=0x01000000)  # CREATE_BREAKAWAY_FROM_JOB
+    except OSError:
+        subprocess.Popen(args, cwd=str(HERE))
+    return JSONResponse({"ok": True})
 
 
 @asynccontextmanager
@@ -1648,8 +1757,8 @@ ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 # devices, the browser bridge, tool checks). Everything about using IO (chats, runs, goals, approvals) works.
 REMOTE_DENY = ("/api/remote/", "/api/keys/", "/api/plugins/", "/api/settings", "/api/browser", "/api/skills", "/api/toolcheck",
                "/api/learned/", "/api/nim/", "/api/open",  # /api/open: a tapped path would open on the PC's screen
-               "/api/quit", "/api/show", "/api/customize", "/api/workshop/")  # quitting would leave the phone nothing to reach
-
+               "/api/quit", "/api/show", "/api/customize", "/api/workshop/",  # quitting would leave the phone nothing to reach
+               "/api/live", "/api/console/")  # IO Console is for this PC
 
 class SameOriginOnly:
     """Web pages on other sites can't send commands here (queue a task, change settings, install plugins). A remote
@@ -1751,6 +1860,10 @@ app = Starlette(
         Route("/api/goals/{id}/{action}", goal_action, methods=["POST"]),
         Route("/api/approvals/{id}", decide_approval, methods=["POST"]),
         Route("/api/workshop/{id}", workshop_action, methods=["POST"]),
+        WebSocketRoute("/api/live", live_ws),
+        Route("/api/console/tools", console_tools, methods=["GET"]),
+        Route("/api/console/tool", console_tool, methods=["POST"]),
+        Route("/api/console/open", console_open, methods=["POST"]),
         Route("/api/paths", existing_paths, methods=["POST"]),
         Route("/api/memory", get_memory, methods=["GET"]),
         Route("/api/memory", add_memory, methods=["POST"]),

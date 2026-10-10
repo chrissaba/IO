@@ -2496,7 +2496,8 @@ def local_create(client, model: str, _purpose: str = "", **kw):
     rec = {"model": "local: " + str(model), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or []),
            "wait": 0, **({"reasoning": level} if glimmer and level else {})}
     try:
-        r = client.chat.completions.create(model=model, **kw)
+        r = nim.call(client, {"model": rec["model"], "purpose": _purpose, **({"reasoning": level} if glimmer and level else {})},
+                     model=model, **kw)
     except Exception as e:
         nim.trace({**rec, "ok": False, "secs": round(time.time() - t0, 1), "error": f"{type(e).__name__}: {str(e)[:120]}"})
         raise
@@ -2531,6 +2532,7 @@ def log(event: str, **data) -> None:
 
 
 nim.listeners.append(lambda rec: log("llm", **rec))
+nim.context_label = lambda: ({"agent": a["label"]} if (a := AGENT.get()) else {})  # IO Console: whose stream it is
 
 
 # ---------- memory: short notes that carry across tasks (data/memory.json) ----------
@@ -2814,8 +2816,12 @@ def check_work(task: str, steps: list[str], answer: str, constraints: str = "", 
     """'' when the work looks done; otherwise what is missing, in one sentence. constraints: what the user said not to do;
     evidence: what the director saw on its screenshots (this checker sees no image). careful (High and Max): the
     checker thinks it over briefly instead of answering straight away."""
+    # the last 8 steps, plus every earlier step that changed something: a fix made 12 steps before the answer was outside
+    # the window, and the checker ruled that the fix had never been made
+    changes = [s[:400] for s in steps[:-8] if s.startswith(WRITE_TOOLS)][-12:]
+    shown = (["(earlier changes)"] + changes + ["(the last steps)"] if changes else []) + steps[-8:]
     verdict = local_chat(CHECK_SYSTEM, f"Request: {task}" + (f"\nThe user's constraints: {constraints}" if constraints else "") +
-                         "\n\nActions and results:\n" + "\n".join(steps[-8:]) +
+                         "\n\nActions and results:\n" + "\n".join(shown) +
                          # the director's own words, not proof: only the results above show what really happened
                          (f"\n\nThe deciding model's own (unverified) claim: {evidence[:300]}" if evidence else "") +
                          f"\n\nAnswer it wants to give:\n{answer[:1500]}", max_tokens=1500 if careful else 200, think="low" if careful else False)
@@ -3352,6 +3358,9 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                           eyes=eyes, ask=None if loop else ask, loop=loop, request=standalone,
                           constraints=actions.constraints_of(standalone, conversation) if layer else [],
                           log=lambda m: log("warning", text=str(m)[:300]))
+        # files IO itself wrote earlier in this chat are its own work, like ones it wrote in this task: "fix it" on the
+        # plugin it built an hour ago asked "edit Plugin.cs? Allow it?" and waited for the user
+        ctx.written.update(str(p).lower() for p in options.get("chat_written") or [])
         found_points = ctx.found_points  # vision answers: loop clicks must come from one (shared with the action library)
         route = actions.route_of(standalone, loop, bool(images))
         vague = layer and route.kind == "vague"

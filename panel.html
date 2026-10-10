@@ -569,6 +569,9 @@
       <template x-for="v in views" :key="v.id">
         <button class="navbtn" :class="view === v.id && 'on'" @click="go(v.id)"><span class="ic" x-html="ic(v.icon)"></span><span x-text="v.label"></span><span class="count" x-show="navCount(v.id)" x-text="navCount(v.id)"></span></button>
       </template>
+      <!-- IO Console (console.py) in its own terminal window: chat, call tools, watch each model call think, live -->
+      <button class="navbtn" x-show="!remote" @click="post('/api/console/open')"
+              title="Chat with IO, call its tools and watch the models think and every API call, live, in a terminal window"><span class="ic" x-html="ic('square-terminal')"></span><span>Console</span></button>
     </nav>
 
     <div class="chats">

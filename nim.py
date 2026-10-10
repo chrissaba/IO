@@ -146,6 +146,82 @@ def trace(record: dict) -> None:
             pass
 
 
+# ---------- live streams (IO Console): while a console listens, model calls stream, and their thinking, answer and
+# tool-call arguments go to stream_listeners piece by piece. The call still returns one finished completion, as before,
+# so nothing else in IO changes; with no console open, nothing streams at all.
+stream_listeners: list = []
+context_label = lambda: {}  # noqa: E731  boss sets it: which Ultracode helper is asking, if any
+
+
+def emit(record: dict) -> None:
+    for f in list(stream_listeners):
+        try:
+            f(record)
+        except Exception:
+            pass
+
+
+def call(client, label: dict, **kw):
+    """client.chat.completions.create, streamed piece by piece to IO Console when one is open."""
+    if not stream_listeners or kw.get("stream"):
+        return client.chat.completions.create(**kw)
+    return create_streamed(client, {**label, **context_label()}, **kw)
+
+
+def create_streamed(client, label: dict, **kw):
+    """client.chat.completions.create with stream=True, put back together as one ChatCompletion (content, the model's
+    reasoning_content, tool calls, finish reason and usage), emitting each piece as it arrives."""
+    from openai.types.chat import ChatCompletion  # noqa: PLC0415
+    rid = f"{time.time():.3f}-{id(kw) % 10000}"
+    text: list[str] = []
+    think: list[str] = []
+    calls: dict[int, dict] = {}
+    finish, usage, model, cid, created = None, None, kw.get("model", ""), "", int(time.time())
+    emit({"kind": "start", "rid": rid, **label})
+    try:
+        for chunk in client.chat.completions.create(**kw, stream=True, stream_options={"include_usage": True}):
+            cid, model, created = chunk.id or cid, chunk.model or model, chunk.created or created
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            d = choice.delta
+            extra = getattr(d, "model_extra", None) or {}
+            r = extra.get("reasoning_content") or extra.get("reasoning")
+            if r:
+                think.append(r)
+                emit({"kind": "thinking", "rid": rid, "text": r})
+            if d.content:
+                text.append(d.content)
+                emit({"kind": "text", "rid": rid, "text": d.content})
+            for tc in d.tool_calls or []:
+                slot = calls.setdefault(tc.index or 0, {"id": "", "name": "", "args": ""})
+                slot["id"] = tc.id or slot["id"]
+                if tc.function and tc.function.name:
+                    slot["name"] += tc.function.name
+                    emit({"kind": "tool", "rid": rid, "text": tc.function.name})
+                if tc.function and tc.function.arguments:
+                    slot["args"] += tc.function.arguments
+                    emit({"kind": "args", "rid": rid, "text": tc.function.arguments})
+            finish = choice.finish_reason or finish
+    except Exception as e:
+        emit({"kind": "end", "rid": rid, "error": type(e).__name__})
+        raise
+    emit({"kind": "end", "rid": rid, "finish": finish or ""})
+    message: dict = {"role": "assistant", "content": "".join(text) or None}
+    if think:
+        message["reasoning_content"] = "".join(think)
+    if calls:
+        message["tool_calls"] = [{"id": c["id"] or f"call_{i}", "type": "function",
+                                  "function": {"name": c["name"], "arguments": c["args"] or "{}"}} for i, c in sorted(calls.items())]
+    if finish not in ("stop", "length", "tool_calls", "content_filter", "function_call"):
+        finish = "tool_calls" if calls else "stop"
+    return ChatCompletion.model_validate({"id": cid or rid, "object": "chat.completion", "created": created, "model": model,
+                                          "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+                                          **({"usage": usage.model_dump()} if usage else {})})
+
+
 def create(client, _purpose: str = "", **kw):
     """client.chat.completions.create, holding one of the MAX_PARALLEL slots while the request is out, and paced under
     the per-minute limit. Each request is reported to `listeners`: how long it waited for IO's own limits, how long
@@ -162,7 +238,7 @@ def create(client, _purpose: str = "", **kw):
         _pace()
         t1 = time.time()
         try:
-            r = client.chat.completions.create(**kw)
+            r = call(client, {"model": rec["model"], "purpose": _purpose, **({"reasoning": rec["reasoning"]} if rec.get("reasoning") else {})}, **kw)
         except Exception as e:
             trace({**rec, "ok": False, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
                    "error": f"{type(e).__name__}: {scrub(str(e))[:120]}"})
@@ -191,8 +267,10 @@ def create(client, _purpose: str = "", **kw):
 #   Llama 3.2 90B Vision never reasons; DeepSeek V4.1 Flash couldn't be measured (its queue outlasted every request),
 #     and a field it rejects only comes back after the whole queue wait, so it gets nothing
 REASONING_FIELDS: dict[str, dict[str, dict]] = {
+    # High asks GLM for "high", not "max": at "max" on a 27K-token step it timed out at 165 s again and again (2026-10-09),
+    # where "high" answered the same step in 17 s; Max keeps "max"
     "z-ai/glm-5.3-flash": {"low": {"reasoning_effort": "low"}, "medium": {"reasoning_effort": "high"},
-                           "high": {"reasoning_effort": "max"}, "max": {"reasoning_effort": "max"}},
+                           "high": {"reasoning_effort": "high"}, "max": {"reasoning_effort": "max"}},
     "moonshotai/kimi-k3": {"low": {"reasoning_effort": "none"}, "medium": {}, "high": {}, "max": {"reasoning_effort": "max"}},
     "meta/muse-glimmer-30b": {"low": {"reasoning_effort": "low"}, "medium": {"reasoning_effort": "medium"},
                               "high": {"reasoning_effort": "high"}, "max": {"reasoning_effort": "xhigh"}},
