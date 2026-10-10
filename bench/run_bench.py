@@ -1112,7 +1112,7 @@ def base_options(cell: dict, task: dict, boss) -> dict:
     skip = ("theme", "debug", "notify", "hotkeys", "focus_glow") + LEGACY_OPTIONS
     options = {**defaults, **{k: v for k, v in settings.items() if k not in skip}}
     options["chrome_token"] = chrome_token()
-    options["max_steps"] = settings.get("max_steps", 30)  # what app.worker gives a task (run_direct takes it out again)
+    options["max_steps"] = max(e["steps"] for e in boss.EFFORT.values())  # what app.new_task gives a task (run_direct takes it out again)
     options["effort"] = cell["effort"] if nim_key_set() else "low"  # app.task_effort: without a key every task runs at Low
     options["focus_glow"] = False
     options["learn"] = False  # bench tasks must not teach IO playbooks (six had piled up and one derailed a later task)

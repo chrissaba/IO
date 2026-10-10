@@ -526,16 +526,13 @@ def claude_call(kw: dict, label: dict):
 #     more. Measured 2026-10-09 on one real IO step (8.6K-token prompt, 67 tools): GLM-5.3 Flash 2-3 s and Kimi K3 2.5 s,
 #     against 26 s and 205 s for the same models on NVIDIA's free queue. Its plan allows one request at a time per
 #     model, and counts a request by the model's price (Kimi K3 = 1, GLM-5.3 Flash about 0.1).
-#   Mistral (api.mistral.ai): limits per model (on a free key ministral-8b 188 a minute, ministral-14b 30; mistral-medium
-#     and magistral 0 until the plan opens them); it takes tool-call ids of exactly 9 letters and digits.
 PROVIDERS = {
-    "synthetic": {"label": "Synthetic", "url": "https://api.synthetic.new/openai/v1", "site": "synthetic.new", "per_model": 1},
     # Claude (paid per token; a Max plan's monthly API credits cover it), through its own API: claude_call below, with
     # prompt caching. Measured 2026-10-09 on real IO steps: Sonnet 5.5 about 1 s and $0.002 a step once the prompt is
     # cached ($0.03 uncached), Haiku 5.5 $0.0002. The url and the OpenAI-shape settings are for its model list only.
     "anthropic": {"label": "Claude", "url": "https://api.anthropic.com/v1", "site": "platform.claude.com", "per_model": 4,
                   "no_temperature": True},
-    "mistral": {"label": "Mistral", "url": "https://api.mistral.ai/v1", "site": "console.mistral.ai", "per_model": 4, "short_ids": True},
+    "synthetic": {"label": "Synthetic", "url": "https://api.synthetic.new/openai/v1", "site": "synthetic.new", "per_model": 1},
 }
 _prov: dict = {name: {"key": "", "client": None, "at": 0.0, "models": []} for name in PROVIDERS}
 _model_sem: dict = {}
@@ -588,19 +585,9 @@ def _model_slots(model: str) -> threading.BoundedSemaphore:
         return _model_sem[model]
 
 
-def _short_id(call_id: str) -> str:
-    """Mistral takes tool-call ids of exactly 9 letters and digits; ids other models made earlier in the conversation
-    become such an id, the same one every time."""
-    s = str(call_id or "")
-    if re.fullmatch(r"[A-Za-z0-9]{9}", s):
-        return s
-    import hashlib  # noqa: PLC0415
-    return hashlib.sha1(s.encode()).hexdigest()[:9]
-
-
 def provider_request(name: str, kw: dict) -> dict:
     """The request as the provider takes it: its own model id, and messages with only the standard fields (no reasoning
-    text another server put on them); short tool-call ids where the provider needs them."""
+    text another server put on them)."""
     out = {k: v for k, v in kw.items() if k != "extra_body"}
     out["model"] = str(kw["model"]).partition(":")[2]
     if PROVIDERS[name].get("no_temperature"):
@@ -608,17 +595,11 @@ def provider_request(name: str, kw: dict) -> dict:
         out.pop("top_p", None)
         if out.get("tool_choice") == "required":  # Opus, Sonnet and Fable 5.x refuse it; the others call a tool anyway
             out["tool_choice"] = "auto"
-    short = PROVIDERS[name].get("short_ids")
     messages = []
     for m in kw.get("messages") or []:
         if not isinstance(m, dict):
             m = m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else dict(m)
-        m = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_call_id", "name")}
-        if short and m.get("tool_calls"):
-            m["tool_calls"] = [{**c, "id": _short_id(c.get("id"))} for c in m["tool_calls"]]
-        if short and m.get("tool_call_id"):
-            m["tool_call_id"] = _short_id(m["tool_call_id"])
-        messages.append(m)
+        messages.append({k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_call_id", "name")})
     out["messages"] = messages
     return out
 
@@ -642,13 +623,7 @@ def provider_catalog(name: str) -> list[dict]:
         mid = str(m.get("id") or "")
         if not mid or mid in seen:
             continue
-        if name == "mistral":
-            caps = m.get("capabilities") or {}
-            if not (caps.get("completion_chat") and caps.get("function_calling")) or re.search(r"-\d{4}$", mid):
-                continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
-            entry = {"vision": bool(caps.get("vision")), "efforts": [], "context": m.get("max_context_length"),
-                     "label": mid.replace("-latest", "").replace("-", " ").title()}
-        elif name == "anthropic":  # its model list says what each one supports, effort levels included
+        if name == "anthropic":  # its model list says what each one supports, effort levels included
             if not mid.startswith("claude-"):
                 continue
             caps = m.get("capabilities") or {}

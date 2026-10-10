@@ -503,7 +503,12 @@
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 6px; }
   .stat { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 14px 16px; }
   .stat b { display: block; font: 400 26px/1.2 Lora, Georgia, serif; } .stat span { font-size: 12.5px; color: var(--muted); }
-  .urow { display: grid; grid-template-columns: 1fr 2fr auto; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
+  .card.usage { padding: 4px 16px; }
+  .urow { display: grid; grid-template-columns: minmax(110px, 1.2fr) repeat(3, 1fr); gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .urow:first-child { border-top: 0; }
+  .urow.uhead { color: var(--muted); font-size: 11.5px; padding: 8px 0 4px; }
+  .uname b { display: block; font-weight: 500; font-size: 13.5px; } .uname small { display: block; color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+  .ucell { color: var(--muted); line-height: 1.45; } .ucell b { color: var(--text); font-weight: 500; }
   .bar { height: 6px; border-radius: 6px; background: var(--raised); overflow: hidden; } .bar i { display: block; height: 100%; background: var(--accent); }
   .search { display: flex; gap: 8px; margin-bottom: 12px; } .search input { flex: 1; }
   .prow { display: grid; grid-template-columns: 86px 1fr 76px 1fr auto; gap: 8px; align-items: center; margin: 10px 0 3px; font-size: 13.5px; }
@@ -617,7 +622,7 @@
       </div>
       <button class="me" @click="menuOpen = !menuOpen">
         <span class="av" x-text="(s.user || 'You').slice(0, 1).toUpperCase()"></span>
-        <span class="who"><span x-text="s.user || 'You'"></span> <small x-text="s.status.paused ? '· paused' : remote ? '· remote' : '· local'"></small></span>
+        <span class="who"><span x-text="s.user || 'You'"></span> <small x-text="s.status.paused ? '· paused' : remote ? '· from your phone' : '· on this PC'"></small></span>
         <span class="ic" x-html="ic('chevrons-up-down', 'sm')" style="color:var(--faint)"></span>
       </button>
     </div>
@@ -802,11 +807,12 @@
           <div class="effortpick" @mousedown.outside="effortOpen = false">
             <div class="menu effortmenu" x-show="effortOpen" x-transition.opacity.duration.100ms>
               <div class="menuhead" x-text="'Effort · your default is ' + effortInfo(effortDefault()).name"></div>
+              <div class="menuhead" x-show="isPrivate()">This chat is private: it runs on this PC whatever you pick</div>
               <template x-for="e in EFFORTS" :key="e.id">
                 <button @click="pickEffort(e.id)" :disabled="!effortUsable(e.id)" role="menuitemradio" :aria-checked="effortNow() === e.id">
                   <span class="ic" x-html="ic(e.icon)"></span>
-                  <span class="opt"><span x-text="e.name"></span><small x-text="e.about"></small>
-                    <small class="need" x-show="!effortUsable(e.id)">needs an NVIDIA key (Settings &gt; Brain)</small></span>
+                  <span class="opt"><span x-text="e.name"></span><small x-text="effortAbout(e)"></small>
+                    <small class="need" x-show="!effortUsable(e.id)">needs an API key (Settings &gt; Brain)</small></span>
                   <span class="ic tick" x-show="effortNow() === e.id" x-html="ic('check', 'sm')"></span>
                 </button>
               </template>
@@ -921,13 +927,24 @@
 
     <!-- ===== usage ===== -->
     <div class="page" x-show="view === 'usage'">
-      <div class="pagehead"><h1>Usage</h1><p>How much I've done today.</p></div>
+      <div class="pagehead"><h1>Usage</h1><p>What I've done, and what the models I used for it cost.</p></div>
       <div class="stats">
-        <div class="stat"><b x-text="usage.today"></b><span>tasks today</span></div>
-        <div class="stat"><b x-text="usage.success"></b><span>finished successfully</span></div>
-        <div class="stat"><b x-text="usage.avg"></b><span>average time</span></div>
+        <div class="stat"><b x-text="todayStats.today"></b><span>tasks today</span></div>
+        <div class="stat"><b x-text="todayStats.success"></b><span>finished successfully</span></div>
+        <div class="stat"><b x-text="todayStats.avg"></b><span>average time</span></div>
       </div>
-      <p class="note">Everything runs on this PC: no cloud requests, no limits.</p>
+      <h2>Models</h2>
+      <div class="card usage">
+        <div class="urow uhead"><span></span><span>Today</span><span>7 days</span><span>30 days</span></div>
+        <template x-for="p in usageRows()" :key="p.id">
+          <div class="urow">
+            <span class="uname"><b x-text="p.label"></b><small x-text="p.models"></small></span>
+            <template x-for="span in ['today', 'week', 'month']" :key="span"><span class="ucell" x-html="usageCell(p.id, span)"></span></template>
+          </div>
+        </template>
+        <div class="empty" x-show="!usageRows().length">No model calls recorded yet.</div>
+      </div>
+      <p class="note">Low and private chats run on this PC only. From Medium up, the brain models in Settings &gt; Brain do the thinking, and the privacy check screens what I send them first. Claude's cost comes out of your API credits and Synthetic's out of its $24 weekly credits (both at their list prices); NVIDIA's free API and the models on this PC cost nothing.</p>
     </div>
 
     <!-- ===== schedules ===== -->
@@ -1110,8 +1127,6 @@
       <div class="pagehead"><h1>Settings</h1><p>What I'm allowed to do, how hard I work, and which AI does the thinking.</p></div>
       <h2>Permissions</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Most steps per task</div><div>An upper limit. Each effort level takes its own number of steps (High and Max the most), never more than this; then I stop and report back.</div></div>
-          <input type="number" min="5" max="200" style="width:76px" x-model.number="s.settings.max_steps" @change="saveSettings()"></div>
         <div class="setting"><div class="txt"><div>Ask before risky actions</div><div>Deleting or moving files, closing programs, shutting down and similar need your OK.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.confirm_risky" @change="saveSettings()"><span></span></label></div>
         <div class="setting"><div class="txt"><div>PowerShell</div><div>Run commands on your PC. Off means click-and-type only.</div></div>
@@ -1139,29 +1154,31 @@
       <div class="card">
         <div class="setting" style="flex-wrap:wrap">
           <div class="txt" style="flex-basis:100%"><div>Default effort</div>
-            <div>How hard I work on a new message: how much I think, how many steps I take, and which models do the work. The picker under the message box changes it for the messages you send from there.</div></div>
+            <div>How hard I work on a new message: which models do the work, how much they think, and how many steps I take. The picker under the message box changes it for the messages you send from there.</div></div>
           <div class="levels" role="radiogroup" aria-label="Default effort">
             <template x-for="e in EFFORTS" :key="e.id">
               <button role="radio" :aria-checked="effortDefault() === e.id" :class="effortDefault() === e.id && 'on'" :disabled="!effortUsable(e.id)" @click="setEffortDefault(e.id)">
                 <span class="ic" x-html="ic(e.icon)"></span>
-                <span class="opt"><span x-text="e.name"></span><small x-text="e.about"></small>
-                  <small class="need" x-show="!effortUsable(e.id)">needs an NVIDIA key (Settings &gt; Brain)</small></span>
+                <span class="opt"><span x-text="e.name"></span><small x-text="effortAbout(e)"></small>
+                  <small class="need" x-show="!effortUsable(e.id)">needs an API key (Settings &gt; Brain)</small></span>
                 <span class="ic tick" x-show="effortDefault() === e.id" x-html="ic('check', 'sm')"></span>
               </button>
             </template>
           </div>
-          <div class="note" style="flex-basis:100%" x-show="!effortUsable(effortDefault())" x-text="'Until an NVIDIA key is saved, messages run at Low instead of ' + effortInfo(effortDefault()).name + '.'"></div>
+          <div class="note" style="flex-basis:100%" x-show="!effortUsable(effortDefault())" x-text="'Until an API key is saved, messages run at Low instead of ' + effortInfo(effortDefault()).name + '.'"></div>
+          <div class="note" style="flex-basis:100%">A private chat (the lock beside the message box) runs on this PC whatever the effort: Glimmer at its highest thinking, with High's steps and a careful check.</div>
         </div>
       </div>
       <h2>Brain</h2>
       <div class="card">
         <div class="setting" style="flex-wrap:wrap">
-          <div class="txt" style="flex-basis:100%"><div>NVIDIA models, in order</div>
-            <div>Used from Medium up: at Medium for hard tasks and goals, at High and Max for every task. Low never uses them. Each step starts with the model that answered last; if one fails or turns slow, the next takes over. Models that can't see pictures get the screen described instead. Test a model to see if it takes screenshots and calls tools, and how fast its queue is.</div></div>
+          <div class="txt" style="flex-basis:100%"><div>Brain models, in order</div>
+            <div>They do the thinking from Medium up: at Medium for hard tasks and goals, at High and Max for every step. Low and private chats never use them. Each step goes to the model that answered last; if it fails or turns slow, the next one takes over, and after a failed step the strongest one decides. Models that can't see pictures get the screen described instead. Test a model to see if it takes screenshots and calls tools, and how fast it answers.</div></div>
           <template x-for="(m, i) in (s.settings.brain_models || [])" :key="m">
             <div class="modelrow">
               <span class="num" x-text="i + 1"></span>
-              <span class="mname" x-text="info(m).label"></span>
+              <span class="mname" x-text="modelName(m)"></span>
+              <span class="tag off" x-text="provName(m)"></span>
               <span class="tag" x-show="info(m).vision">sees</span><span class="tag off" x-show="!info(m).vision">text only</span>
               <span class="mnote" x-text="info(m).secs ? info(m).secs + 's' + (info(m).tools === false ? ', no tools' : '') : ''"></span>
               <span style="margin-left:auto"></span>
@@ -1173,48 +1190,50 @@
           </template>
           <div class="modelrow" style="flex-basis:100%">
             <select x-model="addModel" @focus="loadCatalog()" style="flex:1">
-              <option value="" x-text="catalogNote || 'Add a model (NVIDIA, or Mistral with its key)…'"></option>
-              <template x-for="c in catalog.filter((c) => !(s.settings.brain_models || []).includes(c.id))" :key="c.id">
-                <option :value="c.id" x-text="c.label + (c.vision ? '  (sees)' : '') + '   ' + c.id"></option>
+              <option value="" x-text="catalogNote || 'Add a model from Claude, Synthetic or NVIDIA…'"></option>
+              <template x-for="g in catalogGroups()" :key="g.name">
+                <optgroup :label="g.name">
+                  <template x-for="c in g.models" :key="c.id"><option :value="c.id" x-text="modelName(c.id, c.label) + (c.vision ? ' · sees' : '')"></option></template>
+                </optgroup>
               </template>
             </select>
             <button class="btn sm" @click="addToBrain()" :disabled="!addModel">Add and test</button>
           </div>
           <div class="note" style="flex-basis:100%" x-show="modelNote" x-text="modelNote"></div>
         </div>
-        <div class="setting"><div class="txt"><div>How a model is chosen</div>
-            <div x-show="!(s.settings.race_width >= 2)">In turn: the model that answered last goes first; the next one only if it fails.</div>
-            <div x-show="s.settings.race_width >= 2">Race: each step goes to the first models above at once (skipping any that just failed, and DeepSeek's slow queue); the fastest good answer is used and the others are cut off. Uses more of NVIDIA's 40 requests a minute.</div></div>
+        <div class="setting" x-show="nvidiaInBrain() >= 2"><div class="txt"><div>NVIDIA's models: in turn, or a race</div>
+            <div x-show="!(s.settings.race_width >= 2)">In turn: when a step gets to NVIDIA's models, they're asked one at a time.</div>
+            <div x-show="s.settings.race_width >= 2">Race: when a step gets to NVIDIA's models, it goes to several of them at once (skipping any that just failed, and DeepSeek's slow queue) and the fastest good answer is used. Their free queue is slow when busy; Claude and Synthetic answer in seconds, so they're always asked one at a time.</div></div>
           <select :value="String(s.settings.race_width || 0)" @change="s.settings.race_width = +$event.target.value; saveSettings()">
             <option value="0">In turn</option><option value="2">Race 2 at once</option><option value="3">Race 3 at once</option>
             <option value="4">Race 4 at once</option><option value="5">Race 5 at once</option></select></div>
         <div class="setting"><div class="txt"><div>Looks at the screen</div>
-            <div>From Medium up, the model look_at_screen asks first, for close looks the NVIDIA models ask for. A quick one (like Nemotron Omni) keeps those short.</div></div>
+            <div>From Medium up, the model asked first when the brain wants a close look at a window (look_at_screen). A quick one, like Claude Haiku, keeps those short.</div></div>
           <select x-model="s.settings.vision_model" @change="saveSettings()"><option value="">The brain's first model that sees</option>
-            <template x-for="m in (s.settings.brain_models || []).filter((m) => info(m).vision)" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.vision_model === m"></option></template></select></div>
+            <template x-for="m in (s.settings.brain_models || []).filter((m) => info(m).vision)" :key="m"><option :value="m" x-text="modelLabel(m)" :selected="s.settings.vision_model === m"></option></template></select></div>
         <div class="setting"><div class="txt"><div>Ultracode helpers start on</div>
             <div>At Max, helpers work on parts of a task at once. They do simple searches and reads, so a fast model suits them; they fall back to the others in order.</div></div>
           <select x-model="s.settings.helper_model" @change="saveSettings()"><option value="">The brain's first model</option>
-            <template x-for="m in (s.settings.brain_models || [])" :key="m"><option :value="m" x-text="info(m).label" :selected="s.settings.helper_model === m"></option></template></select></div>
-        <div class="setting" style="flex-wrap:wrap">
-          <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
-            <div>Medium, High and Max need it. Get a free key at <span class="url">build.nvidia.com</span> and paste it here. It's kept in IO's data folder on this PC and never shown again. Save it blank to remove it.</div></div>
-          <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
-          <button class="btn sm" @click="saveNimKey()">Save</button>
-          <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
-          <div class="note" style="flex-basis:100%" x-show="nimNote || !anyApiKey" x-text="nimNote || 'No API key saved yet: IO works at Low, on this PC only, until you add one (this one, or a provider below).'"></div>
-        </div>
-        <!-- other OpenAI-compatible providers (nim.PROVIDERS): their models join the list above as "<provider>: model" -->
+            <template x-for="m in (s.settings.brain_models || [])" :key="m"><option :value="m" x-text="modelLabel(m)" :selected="s.settings.helper_model === m"></option></template></select></div>
+        <!-- API keys: Claude and Synthetic (nim.PROVIDERS, their models are "<provider>:<id>"), then NVIDIA's free API -->
         <template x-for="p in (s.providers || [])" :key="p.id">
           <div class="setting" style="flex-wrap:wrap">
-            <div class="txt" style="flex-basis:100%"><div x-text="p.label + ' API key (optional)'"></div>
-              <div>Adds <span x-text="p.label"></span>'s models to the list above. Get a key at <span class="url" x-text="p.site"></span>. Kept on this PC like the NVIDIA key; save it blank to remove it.</div></div>
+            <div class="txt" style="flex-basis:100%"><div x-text="p.label + ' API key'"></div>
+              <div><span x-text="PROVIDER_ABOUT[p.id] || `Adds ${p.label}'s models to the list above.`"></span> Get a key at <span class="url" x-text="p.site"></span>. It's kept on this PC and never shown again; save it blank to remove it.</div></div>
             <input type="password" style="flex:1" x-model="providerKeys[p.id]" autocomplete="off" :placeholder="p.key_set ? 'key saved (paste a new one to replace it)' : p.label + ' key'">
             <button class="btn sm" @click="saveProviderKey(p)">Save</button>
             <button class="btn sm ghost" x-show="p.key_set" @click="providerNotes[p.id] = 'Testing…'; post(`/api/keys/provider/${p.id}/test`, {}).then((r) => providerNotes[p.id] = r.result)">Test</button>
             <div class="note" style="flex-basis:100%" x-show="providerNotes[p.id]" x-text="providerNotes[p.id]"></div>
           </div>
         </template>
+        <div class="setting" style="flex-wrap:wrap">
+          <div class="txt" style="flex-basis:100%"><div>NVIDIA API key</div>
+            <div>NVIDIA's free API: open models (GLM, Kimi, DeepSeek) at no cost, but its queue is slow when it's busy. Get a key at <span class="url">build.nvidia.com</span>. It's kept on this PC and never shown again; save it blank to remove it.</div></div>
+          <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
+          <button class="btn sm" @click="saveNimKey()">Save</button>
+          <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
+          <div class="note" style="flex-basis:100%" x-show="nimNote || !anyApiKey" x-text="nimNote || 'No API key saved yet: everything runs at Low, on this PC, until you add one.'"></div>
+        </div>
       </div>
       <h2>Privacy</h2>
       <div class="card">
@@ -1245,7 +1264,7 @@
       </div>
       <h2>Local models</h2>
       <div class="card">
-        <div class="setting"><div class="txt"><div>Local models</div><div>Muse Glimmer 30B thinks; EvoCUA-8B sees and clicks.</div></div></div>
+        <div class="setting"><div class="txt"><div>Local models</div><div>Muse Glimmer 30B is the brain at Low and Medium and in private chats, and makes the checks on this PC (the work check before an answer, the privacy check before anything goes to an API model). EvoCUA-8B sees and clicks at every level.</div></div></div>
         <div class="setting"><div class="txt"><div>Watchdog</div><div>Restart the local models automatically if they stop.</div></div>
           <label class="switch"><input type="checkbox" x-model="s.settings.watchdog" @change="saveSettings()"><span></span></label></div>
       </div>
@@ -1442,12 +1461,20 @@ document.addEventListener("click", async (ev) => {
 const cleanAnswer = (s) => String(s ?? "").replace(/\s*done\s*[({]\s*summary\s*[=:]\s*(<\|"\|>|["'])([\s\S]*?)\1\s*[)}]\s*/g, "")
   .replace(/\s*\[actions taken:[\s\S]*?\]\s*$/, "").trim() || String(s ?? "");
 const BUSY = ["queued", "running", "waiting"];
-// how hard IO works on a message. Medium and up need an NVIDIA key; without one everything runs at Low.
+// Settings > Brain: what each provider's key brings
+const PROVIDER_ABOUT = {
+  anthropic: "Claude's own API, with prompt caching: a cached step costs a fraction of a cent, out of your API credits. Use a workspace key.",
+  synthetic: "Open models (GLM, Kimi, DeepSeek) on Synthetic's flat monthly plan, answering in seconds.",
+};
+// Usage > Models: the providers, in the order they're shown
+const USAGE_NAMES = { anthropic: "Claude", synthetic: "Synthetic", nvidia: "NVIDIA", local: "On this PC" };
+// how hard IO works on a message. Medium and up need an API key (Claude, Synthetic or NVIDIA); without one everything runs
+// at Low. {brain} is the brain's first model (Settings > Brain); each level's steps come from boss.EFFORT
 const EFFORTS = [
-  { id: "low", name: "Low", icon: "signal-low", about: "Everything on this PC. Muse Glimmer thinks briefly; EvoCUA clicks. Nothing leaves the PC." },
-  { id: "medium", name: "Medium", icon: "signal-medium", about: "Glimmer does the work and thinks more. Hard tasks and goals go to the NVIDIA models." },
-  { id: "high", name: "High", icon: "signal-high", about: "NVIDIA's models run the task and think hard, with more steps and a double check before finishing." },
-  { id: "max", name: "Max", icon: "signal", about: "High, plus Ultracode helpers working on parts of the task at once. Deepest reasoning." },
+  { id: "low", name: "Low", icon: "signal-low", about: "Everything on this PC: Muse Glimmer thinks briefly, EvoCUA sees and clicks. Nothing leaves the PC." },
+  { id: "medium", name: "Medium", icon: "signal-medium", about: "Glimmer does the work and thinks more. Hard tasks and goals go to {brain}." },
+  { id: "high", name: "High", icon: "signal-high", about: "{Brain} runs every step and thinks hard, with a double check before finishing." },
+  { id: "max", name: "Max", icon: "signal", about: "High at its deepest thinking, plus Ultracode helpers working on parts of the task at once." },
 ];
 // under an answer: the level it ran at ("High"), or "Medium → High" when a Medium task was handed up
 function effortTag(t) {
@@ -1606,7 +1633,7 @@ function agent() {
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
-    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", providerKeys: {}, providerNotes: {}, usage: {},
+    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", providerKeys: {}, providerNotes: {}, modelUsage: {},
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
     clock: Date.now(),  // ticks every second for the live line's elapsed time (only it reads this, so nothing else re-renders)
@@ -1696,7 +1723,7 @@ function agent() {
       });
       if (this.chat) this.lockDividerIfUnseen(); else this.chatId = "";
       this.ready = true;
-      this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "settings") this.loadUsage(); if (v === "chat") this.scrollToStart(); });
+      this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "usage") this.loadUsage(); if (v === "chat") this.scrollToStart(); });
       setInterval(() => this.refresh(), REMOTE ? 2500 : 1000);
       setInterval(() => { this.clock = Date.now(); }, 1000);
       this.scrollToStart();
@@ -1861,6 +1888,16 @@ function agent() {
     openSkill: "",
     catalog: [], catalogNote: "", addModel: "", modelNote: "", testing: "",
     info(m) { return (this.s.model_info || {})[m] || (this.catalog.find((c) => c.id === m) || { label: m, vision: false }); },
+    // who serves a brain model: "anthropic:..." Claude, "synthetic:..." Synthetic, anything else NVIDIA's free API
+    provName(m) { return { anthropic: "Claude", synthetic: "Synthetic" }[String(m).split(":")[0]] || "NVIDIA"; },
+    modelName(m, label) { return String(label || this.info(m).label).replace(/\s*\((Claude|Synthetic|NVIDIA)\)$/, ""); },
+    modelLabel(m) { return `${this.modelName(m)} (${this.provName(m)})`; },
+    nvidiaInBrain() { return (this.s.settings.brain_models || []).filter((m) => this.provName(m) === "NVIDIA").length; },
+    catalogGroups() {
+      const have = this.s.settings.brain_models || [];
+      return ["Claude", "Synthetic", "NVIDIA"].map((name) => ({ name, models: this.catalog.filter((c) => !have.includes(c.id) && this.provName(c.id) === name) }))
+        .filter((g) => g.models.length);
+    },
     async loadCatalog() {
       if (this.catalog.length) return;
       this.catalogNote = "Loading the models your keys offer…";
@@ -1887,6 +1924,11 @@ function agent() {
     effortNext: null,  // the picker's level: null follows the Settings default, then it sticks for the session
     effortInfo(id) { return EFFORTS.find((e) => e.id === id) || EFFORTS[0]; },
     effortUsable(id) { return id === "low" || this.anyApiKey; },
+    effortAbout(e) {
+      const first = (this.s.settings.brain_models || [])[0], brain = first ? this.modelName(first) : "the brain models";
+      const steps = (this.s.effort_steps || {})[e.id];
+      return e.about.replace("{brain}", brain).replace("{Brain}", brain.replace(/^./, (c) => c.toUpperCase())) + (steps ? ` Up to ${steps} steps.` : "");
+    },
     effortDefault() { const d = this.s.settings.effort; return EFFORTS.some((e) => e.id === d) ? d : "high"; },
     effortNow() { const e = this.effortNext ?? this.effortDefault(); return this.effortUsable(e) ? e : "low"; },  // what a message is sent at
     effortPicked() { return this.effortNext !== null && this.effortNow() === this.effortNext && this.effortNext !== this.effortDefault(); },
@@ -1894,7 +1936,7 @@ function agent() {
       const now = this.effortInfo(this.effortNow()).name, def = this.effortInfo(this.effortDefault()).name;
       if (this.effortNow() === this.effortDefault()) return `Effort: ${now}`;
       return this.effortUsable(this.effortDefault()) ? `Effort: ${now} for messages you send from here (your default is ${def})`
-        : `Effort: ${now} (your default, ${def}, needs an NVIDIA key)`;
+        : `Effort: ${now} (your default, ${def}, needs an API key)`;
     },
     pickEffort(id) {
       if (!this.effortUsable(id)) return;
@@ -2255,16 +2297,27 @@ function agent() {
       this.catalog = [];  // the model list now includes (or drops) this provider's
       this.providerNotes = { ...this.providerNotes, [p.id]: key ? `Key saved. ${p.label}'s models are in the list above; Test shows which ones answer.` : "Key removed." };
     },
-    async loadUsage() { if (!REMOTE) this.usage = await fetch("/api/usage").then((r) => r.json()).catch(() => ({})); },
-    // one line under a provider's key: how much IO used it lately (what to weigh when deciding whether to keep a plan)
-    usageLine(id) {
-      const m = (this.usage.month || {})[id], w = (this.usage.week || {})[id];
-      if (!m || !m.calls) return "";
+    async loadUsage() { this.modelUsage = await fetch("/api/usage").then((r) => r.json()).catch(() => ({})); },
+    // Usage > Models: one row per provider with calls in the last 30 days, its models by how often they were asked
+    usageRows() {
+      const month = this.modelUsage.month || {};
+      const local = (m) => (/boss/.test(m) ? "Muse Glimmer" : /evo/i.test(m) ? "EvoCUA" : m.replace(/^local:\s*/, ""));
+      return Object.keys(USAGE_NAMES).filter((id) => (month[id] || {}).calls).map((id) => ({
+        id, label: USAGE_NAMES[id],
+        models: Object.entries(month[id].models || {}).sort((x, y) => y[1] - x[1]).slice(0, 4)
+          .map(([m, n]) => `${id === "local" ? local(m) : this.modelName(m)} (${n.toLocaleString()})`).join(" · "),
+      }));
+    },
+    usageCell(id, span) {
+      const u = (this.modelUsage[span] || {})[id];
+      if (!u || !u.calls) return "–";
       const tok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n));
-      let s = `Last 30 days: ${m.calls.toLocaleString()} calls${m.failed ? ` (${m.failed} failed)` : ""}, ${tok(m.in)} tokens in (${tok(m.cached)} cached), ${tok(m.out)} out`;
-      if (id === "anthropic" && m.dollars) s += ` · about $${m.dollars.toFixed(2)} of API credits`;
-      if (id === "synthetic") s += ` · this week about $${((w || {}).dollars || 0).toFixed(2)} of the $24 weekly credits`;
-      return s;
+      const usd = (d) => (d > 0 && d < 0.01 ? "under $0.01" : `$${d.toFixed(2)}`);
+      let cost = "free";
+      if (id === "anthropic") cost = usd(u.dollars);
+      if (id === "synthetic") cost = usd(u.dollars) + (span === "week" ? " of $24" : "");
+      return `<b>${u.calls.toLocaleString()} call${u.calls === 1 ? "" : "s"}</b>${u.failed ? ` (${u.failed} failed)` : ""}<br>` +
+        `${tok(u.in)} in${u.cached ? ` (${tok(u.cached)} cached)` : ""} · ${tok(u.out)} out<br>${cost}`;
     },
     get anyApiKey() { return !!this.s.nim_key_set || (this.s.providers || []).some((p) => p.key_set); },
     async saveNimKey() {
@@ -2368,9 +2421,9 @@ function agent() {
     },
 
     // ----- usage -----
-    get usage() {
+    get todayStats() {
       const today = this.s.today || { count: 0, done: 0, avg: 0 };
-      return { today: today.count, success: today.done, avg: today.avg ? `${today.avg}s` : "–" };
+      return { today: today.count, success: today.done, avg: today.avg ? fmtDur(today.avg) : "–" };
     },
 
     // ----- tools -----

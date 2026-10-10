@@ -3104,12 +3104,14 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             return leaked_call(m.content or "", {t["function"]["name"] for t in kw["tools"]}) is not None  # a call written as text
 
         def race(kw: dict, purpose: str, width: int):
-            """The same step sent to up to `width` models at once (healthy, quick-queue ones, in order); the first usable
-            answer wins and the others' connections are closed, which frees their slots. None when fewer than two can
-            run or none answers (then the models are tried in turn as usual)."""
+            """The same step sent to up to `width` of the brain's NVIDIA models at once (healthy, quick-queue ones, in
+            order); the first usable answer wins and the others' connections are closed, which frees their slots. None
+            when fewer than two can run or none answers (then they're tried in turn as usual). Only NVIDIA's: its free
+            queue is what's slow at busy times; Claude and Synthetic answer in seconds, one at a time."""
             now = time.time()
             entrants = [i for i in nim.brain_order(at[0], brain_models)
-                        if brain_models[i] not in nim.SLOW_QUEUE and now - nim._health.get(brain_models[i], {}).get("failed", 0) > 120][:width]
+                        if not nim.provider_of(brain_models[i]) and brain_models[i] not in nim.SLOW_QUEUE
+                        and now - nim._health.get(brain_models[i], {}).get("failed", 0) > 120][:width]
             if len(entrants) < 2:
                 return None
             box, lock, finished, clients = {}, threading.Lock(), threading.Event(), []
@@ -3171,18 +3173,16 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             return box["r"]
 
         def create(**kw):
-            """One step of the agent loop. With the NVIDIA brain it goes round the brain's models in order (starting
-            from the one that answered last) until one answers, two full rounds, or races several at once (Settings);
-            the local model is only the main agent's very last resort. Without it, the local model as before."""
+            """One step of the agent loop. With the API brain it goes round the brain's models in order (starting from
+            the one that answered last) until one answers, two full rounds; when its turn comes to NVIDIA's models it can
+            race several of them at once (Settings). The local model is only the main agent's very last resort. Without
+            the API brain, the local model as before."""
             purpose = kw.pop("purpose", role)
             strong = kw.pop("strong", False)  # after a failed step: the strongest planner decides, no race
             if not remote_brain:
                 return local_create(boss, BOSS_MODEL, _purpose=purpose, **kw)
             width = min(int(options.get("race_width") or 0), nim.MAX_PARALLEL)
-            if width >= 2 and role == "decide next step" and not strong:  # the main agent's steps; helpers go in turn
-                r = race(kw, purpose, width)
-                if r is not None:
-                    return r
+            racing = width >= 2 and role == "decide next step" and not strong  # the main agent's steps; helpers go in turn
             n, last = len(brain_models), None
             order = nim.brain_order(at[0], brain_models)  # the last one that answered first, unless it has turned slow or just failed
             if strong:
@@ -3199,6 +3199,11 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                     raise RuntimeError("stopped")  # every model failed once: a short breather before the second round
                 i = order[attempt % n]
                 client, model = brain_chain[i]
+                if racing and not nim.provider_of(model):  # NVIDIA's turn: its models get the step at once
+                    racing = False
+                    r = race(kw, purpose, width)
+                    if r is not None:
+                        return r
                 t_req = time.time()
                 try:
                     r = ask(client, model, purpose, kw)
@@ -3225,7 +3230,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
                         raise RuntimeError("stopped")  # too many requests: a moment before the next model
             if not local_fallback:
                 raise last
-            log("warning", text=f"no NVIDIA model answered ({type(last).__name__}); the local model takes this step")
+            log("warning", text=f"no brain model answered ({type(last).__name__}); the local model takes this step")
             return local_create(boss, BOSS_MODEL, _purpose=purpose + " (fallback)", **kw)
 
         return create
@@ -3346,7 +3351,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             if early.decider == "director":
                 remote_brain = True
                 use_remote_eyes()
-                log("effort", level=level, brain="nvidia", why=f"a {early.kind} task: the NVIDIA models take the hard ones")
+                log("effort", level=level, brain="nvidia", why=f"a {early.kind} task: the API brain takes the hard ones")
         # installed plugins from the Customize page, exposed as "<plugin>_<tool>"
         plugin_tools = await plugins.start_enabled(stack, log=lambda m: log("warning", text=m))
         plugin_defs = {}
@@ -4126,7 +4131,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
 
         if eff["ultracode"] and layer and not loop and route.kind not in ("chat", "images", "knowledge"):
             if not remote_brain:
-                log("warning", text="Ultracode needs the NVIDIA brain (Settings > Brain); working step by step")
+                log("warning", text="Ultracode needs the API brain (Settings > Brain); working step by step")
             elif images:
                 log("warning", text="Ultracode skipped: this message works from pictures" +
                     (" from earlier in the chat" if options.get("images_from_earlier") else "") + "; working step by step")

@@ -82,17 +82,19 @@ Glimmer reads EvoCUA's descriptions of pictures.
 How hard IO works is one setting, **Effort**. Pick it in Settings, or for a single message when you send it.
 Changing it reloads nothing: every level uses the same two local models.
 
-| Effort | Who decides | Reasoning | What it does |
-| --- | --- | --- | --- |
-| **Low** | Muse Glimmer, on your PC | Low | Nothing leaves the PC. Quickest |
-| **Medium** | Muse Glimmer; hard tasks and goals go to NVIDIA's models | Medium | Tasks that need a stronger brain start on NVIDIA's, and a local run that keeps failing hands over to it |
-| **High** | NVIDIA's models | High | More steps, and a second look at the work before the answer |
-| **Max** | NVIDIA's models | Max | High, plus Ultracode: the brain can split a task among helpers that work on its parts at once |
+| Effort | Who decides | Reasoning | Steps | What it does |
+| --- | --- | --- | --- | --- |
+| **Low** | Muse Glimmer, on your PC | Low | 30 | Nothing leaves the PC |
+| **Medium** | Muse Glimmer; hard tasks and goals go to the brain models | Medium | 60 | Tasks that need a stronger brain start on the API brain, and a local run that keeps failing hands over to it |
+| **High** | The brain models | High | 120 | A second look at the work before the answer |
+| **Max** | The brain models | Max | 200 | High, plus Ultracode: the brain can split a task among helpers that work on its parts at once |
 
-**NVIDIA models:** paste an NVIDIA API key in Settings and choose the models (GLM-5.3 Flash, Kimi K3,
-Nemotron 3 Nano Omni, Llama 3.2 90B Vision and others; Settings can test any model in NVIDIA's catalog). IO goes
-round them in order, skips ones that are failing or slow, and falls back to the local model if none answers.
-Without a key, every task runs at Low.
+**Brain models:** Settings > Brain lists them in order, from three providers, each with its own key: **Claude**
+(its own API with prompt caching; Haiku 5.5 is the everyday brain, about a second and a fraction of a cent a step),
+**Synthetic** (open models on a flat monthly plan, a few seconds a step) and **NVIDIA** (free, but slow when busy;
+only NVIDIA's models can race each other). IO goes round them in order, skips ones that are failing or slow, and
+falls back to the local model if none answers. Without a key, every task runs at Low. Usage shows each provider's
+calls, tokens and cost.
 
 ### Privacy
 
@@ -200,7 +202,7 @@ desktop app's terminal) lands in that app's private storage, where Windows can't
 | `app.py`, `panel.html` | The local web panel and its API |
 | `boss.py` | The agent loop: brain, eyes, checks, loops and race mode |
 | `actions.py` | The action library, routing and tool catalog |
-| `nim.py` | NVIDIA models: pacing, health, tests and strengths |
+| `nim.py` | The API models (Claude, Synthetic, NVIDIA): requests, caching, pacing, health, tests and usage |
 | `learned.py` | Playbooks IO writes for itself after runs |
 | `privacy.py` | The privacy check on everything sent to an API model, and Private mode |
 | `plugins.py`, `catalog.json` | One-click MCP plugins |

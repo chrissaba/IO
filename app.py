@@ -60,15 +60,15 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 MAX_EVENTS_PER_TASK = 1500  # an Ultracode task logs for up to 5 helpers at once, plus a timing record per model call
 MAX_HISTORY = 300
 DEFAULT_SETTINGS = {
-    "max_steps": 200, "allow_powershell": True, "notify": True, "hotkeys": True,
+    "allow_powershell": True, "notify": True, "hotkeys": True,
     "confirm_risky": True, "browser": True, "files": True, "watchdog": True, "keep_awake": True,
     "remote_access": False, "wake_url": "",
     "browser_mode": "edge", "focus_glow": True, "theme": "system",
     # how hard IO works, by default (a message can pick its own): low = everything on this PC; medium = the local model,
-    # with hard tasks and goals going to the NVIDIA models; high = the NVIDIA brain runs the task; max = high plus
-    # Ultracode helpers. Each level also sets how much the models reason (boss.EFFORT). Medium and up need a key.
+    # with hard tasks and goals going to the API brain; high = the API brain runs the task; max = high plus Ultracode
+    # helpers. Each level also sets how much the models reason and its steps (boss.EFFORT). Medium and up need a key.
     "effort": "high",
-    "brain_models": list(nim.BRAIN_MODELS),  # the NVIDIA models the brain goes round, in order
+    "brain_models": list(nim.BRAIN_MODELS),  # the API models the brain goes round, in order (Claude, Synthetic, NVIDIA)
     "vision_model": "",  # the one look_at_screen asks first ("" = the brain's first vision model)
     "helper_model": "",  # the one Ultracode helpers start on ("" = the brain's first)
     "race_width": 0,  # 2-5: the brain's step goes to this many models at once and the fastest answer wins (0 = in turn)
@@ -77,6 +77,7 @@ DEFAULT_SETTINGS = {
     "privacy_check": True,
     "privacy_kinds": list(boss.privacy.DEFAULT_KINDS),
 }
+MOST_STEPS = max(e["steps"] for e in boss.EFFORT.values())  # a task's own cap (another app may ask for fewer)
 ASK_TIMEOUT = 30 * 60  # how long a task waits for your answer before giving up on it
 
 state: dict = {"tasks": [], "schedules": [], "templates": [], "triggers": [], "chats": [], "goals": [], "approvals": [],
@@ -114,8 +115,8 @@ def load_state() -> None:
         s["brain_v2"] = True
     if "effort" not in saved.get("settings", {}):  # from the local-model modes and the brain/Ultracode toggles to one scale
         s["effort"] = ("max" if s.get("ultracode") else "high") if s.get("ask_gemini") and nim.nim_key() else "low"
-        s["max_steps"] = DEFAULT_SETTINGS["max_steps"]  # was the step count itself (30 by default); now a cap over each level's
-    for old in ("model_mode", "ask_gemini", "gemini_mode", "ultracode"):
+    # max_steps: a cap over every level's own steps, until each level's count was enough (2026-10-10)
+    for old in ("model_mode", "ask_gemini", "gemini_mode", "ultracode", "max_steps"):
         s.pop(old, None)
     if s.get("effort") not in boss.EFFORT:
         s["effort"] = DEFAULT_SETTINGS["effort"]
@@ -297,7 +298,7 @@ def new_task(text: str, source: str = "you", max_steps: int | None = None, chat_
         "text": text,
         "source": source,
         "chat_id": chat_id,
-        "max_steps": max_steps or state["settings"]["max_steps"],
+        "max_steps": max_steps or MOST_STEPS,  # each effort level takes its own number of steps, up to this
         "status": "queued",
         "summary": "",
         "events": [],
@@ -433,7 +434,7 @@ def task_effort(task: dict) -> str:
     level = task.get("effort") if task.get("effort") in boss.EFFORT else state["settings"].get("effort", "high")
     if level not in boss.EFFORT:
         level = "high"
-    if not nim.any_key():  # an API brain from any provider (NVIDIA, Synthetic, Mistral)
+    if not nim.any_key():  # an API brain from any provider (Claude, Synthetic, NVIDIA)
         return "low"
     if level == "medium" and (task.get("goal") or str(task.get("source", "")).startswith("goal: ")):
         return "high"
@@ -1128,6 +1129,7 @@ def state_body(tasks: list, lite: bool) -> dict:
             "chrome_token_set": bool(chrome_token()),
             "nim_key_set": bool(nim.nim_key()),  # never the key itself
             "providers": providers_public(),
+            "effort_steps": {k: e["steps"] for k, e in boss.EFFORT.items()},
             "privacy_kinds_all": [{"id": k, "label": label} for k, (label, _on) in boss.privacy.KINDS.items()],
             "brain_models": [nim.label(m) for m in state["settings"].get("brain_models") or nim.BRAIN_MODELS],
             "model_info": {m: {"label": nim.label(m), "vision": nim.is_vision(m), **{k: v for k, v in nim.tests().get(m, {}).items() if k in ("tools", "secs", "note", "when")}}
@@ -1401,7 +1403,6 @@ async def delete_template(request: Request) -> JSONResponse:
 async def save_settings(request: Request) -> JSONResponse:
     body = await request.json()
     s = state["settings"]
-    s["max_steps"] = max(5, min(200, int(body.get("max_steps", s["max_steps"]))))  # the cap; each level has its own steps
     if body.get("theme") in ("system", "light", "dark"):
         s["theme"] = body["theme"]
     if body.get("browser_mode") in ("edge", "chrome"):
@@ -1486,9 +1487,10 @@ async def nim_catalog(_request: Request) -> JSONResponse:
 
 
 async def get_usage(_request: Request) -> JSONResponse:
-    """How much each provider was used: the last 30 days, and the last 7 (Synthetic's credits are weekly)."""
-    month, week = await asyncio.to_thread(nim.usage_summary, 30), await asyncio.to_thread(nim.usage_summary, 7)
-    return JSONResponse({"month": month, "week": week})
+    """How much each provider was used (and the models on this PC): today, the last 7 days (Synthetic's credits are
+    weekly) and the last 30."""
+    today, week, month = [await asyncio.to_thread(nim.usage_summary, d) for d in (1, 7, 30)]
+    return JSONResponse({"today": today, "week": week, "month": month})
 
 
 def providers_public() -> list[dict]:
