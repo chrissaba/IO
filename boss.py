@@ -3013,7 +3013,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
             # text-only one, gets longer). Thinking takes time of its own, at ~25 tokens a second on the free API: the
             # Ultracode plan at Max timed out on both racers at 90 s once it had room to think
             room = REASON_ROOM.get(level, 0) // 40 if think else 0
-            kw2["timeout"] = min(timeout or 999, (240 if model in nim.SLOW_QUEUE else 90) + room)
+            if nim.provider_of(model):
+                # Synthetic and Claude answer a step in 1-5 s; one that stalls is stuck (Synthetic once sat 196 s and
+                # then returned a 408), so the next model gets the step much sooner than on NVIDIA's queue
+                kw2["timeout"] = min(timeout or 999, 45 + room // 2)
+            else:
+                kw2["timeout"] = min(timeout or 999, (240 if model in nim.SLOW_QUEUE else 90) + room)
             return kw2
 
         def ask(client, model: str, purpose: str, kw: dict):
