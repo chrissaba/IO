@@ -1029,6 +1029,7 @@ async def lifespan(_app):
     yield
     overlay.stop()
     save_state()
+    nim.save_usage()
 
 
 def visible_tasks() -> list[dict]:
@@ -1430,6 +1431,12 @@ async def nim_catalog(_request: Request) -> JSONResponse:
         except Exception as e:
             errors.append(f"Couldn't reach NVIDIA: {type(e).__name__}")
     return JSONResponse({"models": models, **({"error": "; ".join(errors)} if errors and not models else {})})
+
+
+async def get_usage(_request: Request) -> JSONResponse:
+    """How much each provider was used: the last 30 days, and the last 7 (Synthetic's credits are weekly)."""
+    month, week = await asyncio.to_thread(nim.usage_summary, 30), await asyncio.to_thread(nim.usage_summary, 7)
+    return JSONResponse({"month": month, "week": week})
 
 
 def providers_public() -> list[dict]:
@@ -1898,6 +1905,7 @@ app = Starlette(
         Route("/api/browser", save_browser, methods=["POST"]),
         Route("/api/keys/nim", save_nim_key, methods=["POST"]),
         Route("/api/keys/nim/test", test_nim_key, methods=["POST"]),
+        Route("/api/usage", get_usage, methods=["GET"]),
         Route("/api/keys/provider/{name}", save_provider_key, methods=["POST"]),
         Route("/api/keys/provider/{name}/test", test_provider_key, methods=["POST"]),
         Route("/api/learned/delete", delete_learned, methods=["POST"]),

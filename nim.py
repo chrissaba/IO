@@ -143,11 +143,88 @@ def size_of(messages) -> tuple[int, int]:
 
 
 def trace(record: dict) -> None:
+    count_usage(record)
     for f in listeners:
         try:
             f(record)
         except Exception:
             pass
+
+
+# ---------- usage per model and day (data/usage.json), for Settings: how much each provider is really used, and what
+# Claude costs from a Max plan's API credits or Synthetic's weekly credits
+USAGE_FILE = HERE / "data" / "usage.json"
+USAGE_DAYS = 120
+# Claude's prices, $ per million tokens: input, cache read, cache write, output (claude.com/pricing, 2026-10-09)
+CLAUDE_PRICES = {"claude-haiku-5-5": (0.10, 0.01, 0.125, 0.50), "claude-sonnet-5-5": (2.0, 0.10, 2.5, 10.0),
+                 "claude-opus-5-5": (4.0, 0.20, 5.0, 20.0), "claude-fable-5-1": (10.0, 0.25, 12.5, 50.0)}
+_usage: dict = {"data": None, "saved": 0.0}
+_usage_lock = threading.Lock()
+
+
+def _usage_data() -> dict:
+    if _usage["data"] is None:
+        try:
+            import json  # noqa: PLC0415
+            _usage["data"] = json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _usage["data"] = {}
+    return _usage["data"]
+
+
+def count_usage(record: dict) -> None:
+    """One model request into today's tally (calls, failures, tokens in, of them cached, out). Saved at most every 20 s."""
+    model = str(record.get("model") or "")
+    if not model or record.get("error") == "no free slot":
+        return
+    try:
+        with _usage_lock:
+            data = _usage_data()
+            day = data.setdefault(time.strftime("%Y-%m-%d"), {})
+            t = day.setdefault(model, {"calls": 0, "failed": 0, "in": 0, "cached": 0, "out": 0})
+            t["calls"] += 1
+            t["failed"] += 0 if record.get("ok") else 1
+            t["in"] += int(record.get("in_tokens") or 0)
+            t["cached"] += int(record.get("cached_tokens") or 0)
+            t["out"] += int(record.get("out_tokens") or 0)
+            if time.time() - _usage["saved"] > 20:
+                save_usage()
+    except Exception:
+        pass  # counting never breaks a request
+
+
+def save_usage() -> None:
+    import json  # noqa: PLC0415
+    data = _usage_data()
+    for d in sorted(data)[:-USAGE_DAYS]:
+        data.pop(d, None)
+    USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = USAGE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    tmp.replace(USAGE_FILE)
+    _usage["saved"] = time.time()
+
+
+def usage_summary(days: int) -> dict:
+    """Per provider over the last `days` days: calls, failures, tokens, and dollars where a price is known (Claude's
+    list price; Synthetic's own prices, which is what its weekly credits are spent at)."""
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    out: dict = {}
+    with _usage_lock:
+        data = {d: v for d, v in _usage_data().items() if d > since}
+    for day in data.values():
+        for model, t in day.items():
+            prov = provider_of(model) or ("local" if model.startswith("local:") else "nvidia")
+            p = out.setdefault(prov, {"calls": 0, "failed": 0, "in": 0, "cached": 0, "out": 0, "dollars": 0.0, "models": {}})
+            for k in ("calls", "failed", "in", "cached", "out"):
+                p[k] += t[k]
+            p["models"][model] = p["models"].get(model, 0) + t["calls"]
+            base = model.partition(":")[2] if prov != "nvidia" else model
+            prices = CLAUDE_PRICES.get(base) if prov == "anthropic" else ((provider_model(model) or {}).get("price") if prov == "synthetic" else None)
+            if prices:
+                fresh = max(0, t["in"] - t["cached"])
+                p["dollars"] += (fresh * prices[2 if prov == "anthropic" else 0] + t["cached"] * prices[1] + t["out"] * prices[3]) / 1e6
+    return out
 
 
 # ---------- live streams (IO Console): while a console listens, model calls stream, and their thinking, answer and
@@ -578,9 +655,19 @@ def provider_catalog(name: str) -> list[dict]:
         else:  # Synthetic: its own models are "hf:<org>/<model>" ("syn:" names are aliases that move)
             if not mid.startswith("hf:") or "text" not in (m.get("output_modalities") or ["text"]):
                 continue
+            price = m.get("pricing") or {}
+
+            def per_million(v) -> float:
+                try:
+                    return float(str(v or "0").lstrip("$")) * 1e6
+                except ValueError:
+                    return 0.0
             entry = {"vision": "image" in (m.get("input_modalities") or []),
                      "efforts": list((m.get("reasoning_parameters") or {}).get("efforts") or []),
-                     "context": m.get("context_length"), "label": m.get("display_name") or mid.split("/")[-1]}
+                     "context": m.get("context_length"), "label": m.get("display_name") or mid.split("/")[-1],
+                     # $ per million tokens: Synthetic's weekly credits are spent at these prices
+                     "price": (per_million(price.get("prompt")), per_million(price.get("input_cache_reads") or price.get("prompt")),
+                               per_million(price.get("prompt")), per_million(price.get("completion")))}
         seen.add(mid)
         models.append({"id": f"{name}:{mid}", **entry, "label": f"{entry['label']} ({PROVIDERS[name]['label']})"})
     p.update(at=time.time(), models=sorted(models, key=lambda x: x["id"]))

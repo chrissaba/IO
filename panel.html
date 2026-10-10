@@ -1577,7 +1577,7 @@ function agent() {
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
-    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", providerKeys: {}, providerNotes: {},
+    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", providerKeys: {}, providerNotes: {}, usage: {},
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
     clock: Date.now(),  // ticks every second for the live line's elapsed time (only it reads this, so nothing else re-renders)
@@ -1667,7 +1667,7 @@ function agent() {
       });
       if (this.chat) this.lockDividerIfUnseen(); else this.chatId = "";
       this.ready = true;
-      this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "chat") this.scrollToStart(); });
+      this.$watch("view", (v) => { if (v === "memory") this.loadNotes(); if (v === "customize") this.loadCustomize(); if (v === "settings") this.loadUsage(); if (v === "chat") this.scrollToStart(); });
       setInterval(() => this.refresh(), REMOTE ? 2500 : 1000);
       setInterval(() => { this.clock = Date.now(); }, 1000);
       this.scrollToStart();
@@ -2195,6 +2195,17 @@ function agent() {
       if (key && EFFORTS.some((e) => e.id === r.effort)) this.s.settings.effort = r.effort;  // a first API key moves the default up
       this.catalog = [];  // the model list now includes (or drops) this provider's
       this.providerNotes = { ...this.providerNotes, [p.id]: key ? `Key saved. ${p.label}'s models are in the list above; Test shows which ones answer.` : "Key removed." };
+    },
+    async loadUsage() { if (!REMOTE) this.usage = await fetch("/api/usage").then((r) => r.json()).catch(() => ({})); },
+    // one line under a provider's key: how much IO used it lately (what to weigh when deciding whether to keep a plan)
+    usageLine(id) {
+      const m = (this.usage.month || {})[id], w = (this.usage.week || {})[id];
+      if (!m || !m.calls) return "";
+      const tok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n));
+      let s = `Last 30 days: ${m.calls.toLocaleString()} calls${m.failed ? ` (${m.failed} failed)` : ""}, ${tok(m.in)} tokens in (${tok(m.cached)} cached), ${tok(m.out)} out`;
+      if (id === "anthropic" && m.dollars) s += ` · about $${m.dollars.toFixed(2)} of API credits`;
+      if (id === "synthetic") s += ` · this week about $${((w || {}).dollars || 0).toFixed(2)} of the $24 weekly credits`;
+      return s;
     },
     get anyApiKey() { return !!this.s.nim_key_set || (this.s.providers || []).some((p) => p.key_set); },
     async saveNimKey() {
