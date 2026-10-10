@@ -47,7 +47,9 @@ PLANNER_ORDER = ["moonshotai/kimi-k3", "z-ai/glm-5.3-flash", "deepseek-ai/deepse
 
 
 def planner_rank(model: str) -> int:
-    return PLANNER_ORDER.index(model) if model in PLANNER_ORDER else len(PLANNER_ORDER)
+    """By the model itself, wherever it's served: Synthetic's "hf:moonshotai/Kimi-K3" ranks as NVIDIA's Kimi K3."""
+    base = str(model).rsplit("/", 1)[-1].lower()
+    return next((i for i, m in enumerate(PLANNER_ORDER) if m.rsplit("/", 1)[-1].lower() == base), len(PLANNER_ORDER))
 
 
 # context windows in tokens, where known; anything else is assumed to take CONTEXT_DEFAULT. A race sends the same
@@ -58,7 +60,8 @@ CONTEXT_DEFAULT = 131072
 
 def context_tokens(model: str) -> int:
     t = tests().get(model) or {}
-    return int(t.get("context") or CONTEXT.get(model) or CONTEXT_DEFAULT)
+    known = provider_model(model) if provider_of(model) else None
+    return int(t.get("context") or (known or {}).get("context") or CONTEXT.get(model) or CONTEXT_DEFAULT)
 
 
 NEEDS_REQUIRED_TOOLS = {"moonshotai/kimi-k3"}
@@ -225,22 +228,23 @@ def create_streamed(client, label: dict, **kw):
 def create(client, _purpose: str = "", **kw):
     """client.chat.completions.create, holding one of the MAX_PARALLEL slots while the request is out, and paced under
     the per-minute limit. Each request is reported to `listeners`: how long it waited for IO's own limits, how long
-    NVIDIA took, and how big it was. A "mistral:" model goes to Mistral instead, whatever client the caller had."""
+    the model took, and how big it was. A "<provider>:<id>" model (PROVIDERS) goes to that provider instead, whatever
+    client the caller had."""
     t0 = time.time()
     chars, images = size_of(kw.get("messages"))
     rec = {"model": kw.get("model", ""), "purpose": _purpose, "chars": chars, "images": images, "tools": len(kw.get("tools") or [])}
     if label := reasoning_label(kw):
         rec["reasoning"] = label
-    mistral = is_mistral(rec["model"])
-    if mistral:
-        client, kw = mistral_client(), mistral_request(kw)
-    slots = _mistral_slots if mistral else _slots
+    prov = provider_of(rec["model"])
+    if prov:
+        client, kw = provider_client(prov), provider_request(prov, kw)
+    slots = _model_slots(rec["model"]) if prov else _slots
     if not slots.acquire(timeout=SLOT_WAIT):
         trace({**rec, "ok": False, "wait": round(time.time() - t0, 1), "secs": 0, "error": "no free slot"})
-        raise TimeoutError(f"all of {'Mistral' if mistral else 'NVIDIA'}'s request slots stayed busy for {SLOT_WAIT}s")
+        raise TimeoutError(f"{label_of_provider(prov)}'s request slots stayed busy for {SLOT_WAIT}s")
     try:
-        if not mistral:
-            _pace()  # NVIDIA's 40 a minute; Mistral's limits are per model and much higher
+        if not prov:
+            _pace()  # NVIDIA's 40 a minute; the others limit per model, in their own ways
         t1 = time.time()
         try:
             r = call(client, {"model": rec["model"], "purpose": _purpose, **({"reasoning": rec["reasoning"]} if rec.get("reasoning") else {})}, **kw)
@@ -250,53 +254,81 @@ def create(client, _purpose: str = "", **kw):
             raise
         u = getattr(r, "usage", None)
         m = r.choices[0].message if r.choices else None
+        extra = (getattr(m, "model_extra", None) or {}) if m is not None else {}
         trace({**rec, "ok": True, "wait": round(t1 - t0, 1), "secs": round(time.time() - t1, 1),
                "in_tokens": getattr(u, "prompt_tokens", None), "out_tokens": getattr(u, "completion_tokens", None),
                "calls": [c.function.name for c in (m.tool_calls or [])] if m else [], "finish": r.choices[0].finish_reason if r.choices else "",
-               **({"thought_chars": n} if m is not None and (n := len(str((getattr(m, "model_extra", None) or {}).get("reasoning_content") or ""))) else {})})
+               **({"thought_chars": n} if (n := len(str(extra.get("reasoning_content") or extra.get("reasoning") or ""))) else {})})
         return r
     finally:
         slots.release()
 
 
-# ---------- Mistral (api.mistral.ai): a second OpenAI-compatible provider. A brain model named "mistral:<id>" is sent
-# there by create(), so the brain, races, ask_model and Settings' Test all work with it unchanged. Its limits are per
-# model (measured 2026-10-09 on a free key: ministral-8b 188 requests a minute, ministral-14b 30, codestral 125, while
-# mistral-medium, mistral-small and magistral said 0 until the plan opens them).
-MISTRAL_URL = "https://api.mistral.ai/v1"
-MISTRAL_KEY_FILE = HERE / "data" / "mistral_key.txt"
-MISTRAL_PREFIX = "mistral:"
-_mistral_slots = threading.BoundedSemaphore(4)
-_mistral: dict = {"key": "", "client": None, "at": 0.0, "models": []}
+# ---------- other OpenAI-compatible providers. A brain model named "<provider>:<its own id>" is sent there by create(),
+# so the brain, races, ask_model, look_at_screen and Settings' Test all work with it unchanged. Each key is pasted in
+# Settings > Brain and kept in data/<provider>_key.txt.
+#   Synthetic (synthetic.new), a flat monthly plan: GLM-5.3 and its Flash, Kimi K3, DeepSeek V4.1 Flash, Qwen 3.8 and
+#     more. Measured 2026-10-09 on one real IO step (8.6K-token prompt, 67 tools): GLM-5.3 Flash 2-3 s and Kimi K3 2.5 s,
+#     against 26 s and 205 s for the same models on NVIDIA's free queue. Its plan allows one request at a time per
+#     model, and counts a request by the model's price (Kimi K3 = 1, GLM-5.3 Flash about 0.1).
+#   Mistral (api.mistral.ai): limits per model (on a free key ministral-8b 188 a minute, ministral-14b 30; mistral-medium
+#     and magistral 0 until the plan opens them); it takes tool-call ids of exactly 9 letters and digits.
+PROVIDERS = {
+    "synthetic": {"label": "Synthetic", "url": "https://api.synthetic.new/openai/v1", "site": "synthetic.new", "per_model": 1},
+    "mistral": {"label": "Mistral", "url": "https://api.mistral.ai/v1", "site": "console.mistral.ai", "per_model": 4, "short_ids": True},
+}
+_prov: dict = {name: {"key": "", "client": None, "at": 0.0, "models": []} for name in PROVIDERS}
+_model_sem: dict = {}
+_prov_lock = threading.Lock()
 
 
-def is_mistral(model: str) -> bool:
-    return str(model or "").startswith(MISTRAL_PREFIX)
+def provider_of(model: str) -> str:
+    """"synthetic" for "synthetic:hf:zai-org/GLM-5.3-Flash"; "" for NVIDIA's own models."""
+    head, sep, _rest = str(model or "").partition(":")
+    return head if sep and head in PROVIDERS else ""
 
 
-def mistral_key() -> str:
+def label_of_provider(name: str) -> str:
+    return PROVIDERS[name]["label"] if name in PROVIDERS else "NVIDIA"
+
+
+def provider_key(name: str) -> str:
     try:
-        return MISTRAL_KEY_FILE.read_text(encoding="utf-8").strip()
+        return (HERE / "data" / f"{name}_key.txt").read_text(encoding="utf-8").strip()
     except OSError:
         return ""
 
 
-def save_mistral_key(key: str) -> None:
-    MISTRAL_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MISTRAL_KEY_FILE.write_text(key.strip(), encoding="utf-8")
-    _mistral.update(key="", client=None, at=0.0, models=[])
+def save_provider_key(name: str, key: str) -> None:
+    f = HERE / "data" / f"{name}_key.txt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(key.strip(), encoding="utf-8")
+    _prov[name].update(key="", client=None, at=0.0, models=[])
 
 
-def mistral_client() -> OpenAI:
-    key = mistral_key()
+def any_key() -> bool:
+    """Whether any API brain can be used (NVIDIA's or another provider's key)."""
+    return bool(nim_key()) or any(provider_key(n) for n in PROVIDERS)
+
+
+def provider_client(name: str) -> OpenAI:
+    key = provider_key(name)
     if not key:
-        raise RuntimeError("no Mistral key saved (Settings > Brain)")
-    if _mistral["client"] is None or _mistral["key"] != key:
-        _mistral.update(key=key, client=OpenAI(base_url=MISTRAL_URL, api_key=key, max_retries=0, timeout=120))
-    return _mistral["client"]
+        raise RuntimeError(f"no {PROVIDERS[name]['label']} key saved (Settings > Brain)")
+    p = _prov[name]
+    if p["client"] is None or p["key"] != key:
+        p.update(key=key, client=OpenAI(base_url=PROVIDERS[name]["url"], api_key=key, max_retries=0, timeout=240))
+    return p["client"]
 
 
-def _mistral_id(call_id: str) -> str:
+def _model_slots(model: str) -> threading.BoundedSemaphore:
+    with _prov_lock:
+        if model not in _model_sem:
+            _model_sem[model] = threading.BoundedSemaphore(PROVIDERS[provider_of(model)]["per_model"])
+        return _model_sem[model]
+
+
+def _short_id(call_id: str) -> str:
     """Mistral takes tool-call ids of exactly 9 letters and digits; ids other models made earlier in the conversation
     become such an id, the same one every time."""
     s = str(call_id or "")
@@ -306,43 +338,93 @@ def _mistral_id(call_id: str) -> str:
     return hashlib.sha1(s.encode()).hexdigest()[:9]
 
 
-def mistral_request(kw: dict) -> dict:
-    """The request as Mistral takes it: its own model id, tool-call ids it accepts, and none of the extra fields other
-    servers put on messages (reasoning text)."""
-    out = {k: v for k, v in kw.items() if k not in ("extra_body",)}
-    out["model"] = str(kw["model"])[len(MISTRAL_PREFIX):]
+def provider_request(name: str, kw: dict) -> dict:
+    """The request as the provider takes it: its own model id, and messages with only the standard fields (no reasoning
+    text another server put on them); short tool-call ids where the provider needs them."""
+    out = {k: v for k, v in kw.items() if k != "extra_body"}
+    out["model"] = str(kw["model"]).partition(":")[2]
+    short = PROVIDERS[name].get("short_ids")
     messages = []
     for m in kw.get("messages") or []:
         if not isinstance(m, dict):
             m = m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else dict(m)
         m = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_call_id", "name")}
-        if m.get("tool_calls"):
-            m["tool_calls"] = [{**c, "id": _mistral_id(c.get("id"))} for c in m["tool_calls"]]
-        if m.get("tool_call_id"):
-            m["tool_call_id"] = _mistral_id(m["tool_call_id"])
+        if short and m.get("tool_calls"):
+            m["tool_calls"] = [{**c, "id": _short_id(c.get("id"))} for c in m["tool_calls"]]
+        if short and m.get("tool_call_id"):
+            m["tool_call_id"] = _short_id(m["tool_call_id"])
         messages.append(m)
     out["messages"] = messages
     return out
 
 
-def mistral_catalog() -> list[dict]:
-    """The chat models with tool calling that Mistral offers the saved key (cached 10 minutes), as "mistral:<id>"."""
-    if time.time() - _mistral["at"] < 600 and _mistral["models"]:
-        return _mistral["models"]
+def provider_catalog(name: str) -> list[dict]:
+    """The provider's chat models with tool calling for this key (cached 10 minutes): {"id": "<name>:<id>", "label",
+    "vision", "efforts" (its reasoning levels, when it says), "context"}."""
+    p = _prov[name]
+    if time.time() - p["at"] < 600 and p["models"]:
+        return p["models"]
     import json  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
-    req = urllib.request.Request(MISTRAL_URL + "/models", headers={"Authorization": f"Bearer {mistral_key()}"})
+    req = urllib.request.Request(PROVIDERS[name]["url"] + "/models", headers={"Authorization": f"Bearer {provider_key(name)}"})
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.load(r).get("data", [])
-    seen, models = set(), []
+    models, seen = [], set()
     for m in data:
-        caps = m.get("capabilities") or {}
-        if not (caps.get("completion_chat") and caps.get("function_calling")) or m.get("id") in seen or re.search(r"-\d{4}$", m.get("id", "")):
-            continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
-        seen.add(m["id"])
-        models.append({"id": MISTRAL_PREFIX + m["id"], "vision": bool(caps.get("vision"))})
-    _mistral.update(at=time.time(), models=sorted(models, key=lambda m: m["id"]))
-    return _mistral["models"]
+        mid = str(m.get("id") or "")
+        if not mid or mid in seen:
+            continue
+        if name == "mistral":
+            caps = m.get("capabilities") or {}
+            if not (caps.get("completion_chat") and caps.get("function_calling")) or re.search(r"-\d{4}$", mid):
+                continue  # (dated copies like ministral-14b-2512 are the same model as its -latest name)
+            entry = {"vision": bool(caps.get("vision")), "efforts": [], "context": m.get("max_context_length"),
+                     "label": mid.replace("-latest", "").replace("-", " ").title()}
+        else:  # Synthetic: its own models are "hf:<org>/<model>" ("syn:" names are aliases that move)
+            if not mid.startswith("hf:") or "text" not in (m.get("output_modalities") or ["text"]):
+                continue
+            entry = {"vision": "image" in (m.get("input_modalities") or []),
+                     "efforts": list((m.get("reasoning_parameters") or {}).get("efforts") or []),
+                     "context": m.get("context_length"), "label": m.get("display_name") or mid.split("/")[-1]}
+        seen.add(mid)
+        models.append({"id": f"{name}:{mid}", **entry, "label": f"{entry['label']} ({PROVIDERS[name]['label']})"})
+    p.update(at=time.time(), models=sorted(models, key=lambda x: x["id"]))
+    return p["models"]
+
+
+def provider_model(model: str, fetch: bool = False) -> dict | None:
+    """What the provider's catalog says about one of its models. fetch: read the catalog now if it isn't (a model call,
+    already in a worker thread); otherwise the page's state never waits on the network: the catalog is read in the
+    background and the answer comes from the next call."""
+    name = provider_of(model)
+    if not name or not provider_key(name):
+        return None
+    p = _prov[name]
+    if fetch or (p["models"] and time.time() - p["at"] < 600):
+        try:
+            return next((m for m in provider_catalog(name) if m["id"] == model), None)
+        except Exception:
+            return None
+    if not p.get("loading"):
+        def load() -> None:
+            try:
+                provider_catalog(name)
+            except Exception:
+                pass
+            finally:
+                p["loading"] = False
+        p["loading"] = True
+        threading.Thread(target=load, daemon=True).start()
+    return next((m for m in p["models"] if m["id"] == model), None)  # the last catalog read, if any
+
+
+def provider_effort(efforts: list, level: str) -> str:
+    """IO's level (low / medium / high / max) in a model's own reasoning levels, as its provider lists them."""
+    if not efforts:
+        return ""
+    want = {"low": ["low", "none"], "medium": ["medium", "high", "low"], "high": ["high", "xhigh", "medium"],
+            "max": ["max", "xhigh", "high"]}.get(level, [level])
+    return next((e for e in want if e in efforts), efforts[-1] if level in ("high", "max") else efforts[0])
 
 # How much each model reasons, in its own words (boss.EFFORT's low / medium / high / max). Models expose different
 # switches, and a field one ignores another rejects, so each gets only what was measured to work for it (2026-10-09,
@@ -374,6 +456,10 @@ REASONING_FIELDS: dict[str, dict[str, dict]] = {
 def reasoning(model: str, level: str) -> dict:
     """Keyword arguments for chat.completions.create that ask `model` for `level` of reasoning ({} for a model with no
     switch IO knows, which then reasons as it does by default)."""
+    if provider_of(model):  # its provider lists each model's own levels
+        known = provider_model(model, fetch=True)
+        effort = provider_effort(known["efforts"] if known else [], level)
+        return {"reasoning_effort": effort} if effort else {}
     fields = REASONING_FIELDS.get(model, {}).get(level, {})
     return {k: (dict(v) if isinstance(v, dict) else v) for k, v in fields.items()}
 
@@ -413,8 +499,9 @@ def tests() -> dict:
 def label(model: str) -> str:
     if model in BRAIN_LABELS:
         return BRAIN_LABELS[model]
-    if is_mistral(model):
-        return model[len(MISTRAL_PREFIX):].replace("-latest", "").replace("-", " ").title() + " (Mistral)"
+    if provider_of(model):
+        known = provider_model(model)
+        return known["label"] if known else model.partition(":")[2].split("/")[-1].replace("-latest", "") + f" ({label_of_provider(provider_of(model))})"
     name = model.split("/")[-1].replace("-instruct", "").replace("-it", "")
     return name.replace("-", " ").replace("_", " ").title()
 
@@ -424,9 +511,9 @@ def is_vision(model: str) -> bool:
     t = tests().get(model)
     if t and "vision" in t:
         return bool(t["vision"])
-    if is_mistral(model):  # its catalog says; before that's been read, its chat models see and its code models don't
-        known = next((m for m in _mistral["models"] if m["id"] == model), None)
-        return known["vision"] if known else "code" not in model
+    if provider_of(model):  # its provider's catalog says
+        known = provider_model(model)
+        return bool(known and known["vision"])
     return model in VISION
 
 
@@ -517,7 +604,7 @@ def save_nim_key(key: str) -> None:
 
 def scrub(text: str) -> str:
     """Text with the key masked, for anything that may reach a log or the screen."""
-    for key in (nim_key(), mistral_key()):
+    for key in (nim_key(), *(provider_key(n) for n in PROVIDERS)):
         if key and len(key) > 8:
             text = text.replace(key, "***")
     return text

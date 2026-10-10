@@ -1190,16 +1190,19 @@
           <input type="password" style="flex:1" x-model="nimKey" autocomplete="off" :placeholder="s.nim_key_set ? 'key saved (paste a new one to replace it)' : 'nvapi-...'">
           <button class="btn sm" @click="saveNimKey()">Save</button>
           <button class="btn sm ghost" x-show="s.nim_key_set" @click="nimNote = 'Testing…'; post('/api/keys/nim/test', {}).then((r) => nimNote = r.result)">Test</button>
-          <div class="note" style="flex-basis:100%" x-show="nimNote || !s.nim_key_set" x-text="nimNote || 'No key saved yet: IO works at Low, on this PC only, until you add one.'"></div>
+          <div class="note" style="flex-basis:100%" x-show="nimNote || !anyApiKey" x-text="nimNote || 'No API key saved yet: IO works at Low, on this PC only, until you add one (NVIDIA's or another provider's below).'"></div>
         </div>
-        <div class="setting" style="flex-wrap:wrap">
-          <div class="txt" style="flex-basis:100%"><div>Mistral API key (optional)</div>
-            <div>Adds Mistral's models to the list above (they answer in about a second). Get a key at <span class="url">console.mistral.ai</span>. Kept on this PC like the NVIDIA key; save it blank to remove it.</div></div>
-          <input type="password" style="flex:1" x-model="mistralKey" autocomplete="off" :placeholder="s.mistral_key_set ? 'key saved (paste a new one to replace it)' : 'Mistral key'">
-          <button class="btn sm" @click="saveMistralKey()">Save</button>
-          <button class="btn sm ghost" x-show="s.mistral_key_set" @click="mistralNote = 'Testing…'; post('/api/keys/mistral/test', {}).then((r) => mistralNote = r.result)">Test</button>
-          <div class="note" style="flex-basis:100%" x-show="mistralNote" x-text="mistralNote"></div>
-        </div>
+        <!-- other OpenAI-compatible providers (nim.PROVIDERS): their models join the list above as "<provider>: model" -->
+        <template x-for="p in (s.providers || [])" :key="p.id">
+          <div class="setting" style="flex-wrap:wrap">
+            <div class="txt" style="flex-basis:100%"><div x-text="p.label + ' API key (optional)'"></div>
+              <div>Adds <span x-text="p.label"></span>'s models to the list above. Get a key at <span class="url" x-text="p.site"></span>. Kept on this PC like the NVIDIA key; save it blank to remove it.</div></div>
+            <input type="password" style="flex:1" x-model="providerKeys[p.id]" autocomplete="off" :placeholder="p.key_set ? 'key saved (paste a new one to replace it)' : p.label + ' key'">
+            <button class="btn sm" @click="saveProviderKey(p)">Save</button>
+            <button class="btn sm ghost" x-show="p.key_set" @click="providerNotes[p.id] = 'Testing…'; post(`/api/keys/provider/${p.id}/test`, {}).then((r) => providerNotes[p.id] = r.result)">Test</button>
+            <div class="note" style="flex-basis:100%" x-show="providerNotes[p.id]" x-text="providerNotes[p.id]"></div>
+          </div>
+        </template>
       </div>
       <h2>Skills IO taught itself</h2>
       <div class="card">
@@ -1574,7 +1577,7 @@ function agent() {
     trig: { kind: "folder", name: "", template: "", folder: "", pattern: "", slug: "" },
     trigMsg: "", notes: [], noteDraft: "",
     checking: false, checkLines: [],
-    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", mistralKey: "", mistralNote: "",
+    chromeToken: "", browserTest: "", nimKey: "", nimNote: "", providerKeys: {}, providerNotes: {},
     titleMenu: false, renaming: false, renameDraft: "", renameId: "", dialog: null,
     readFails: 0, native: false, maximized: false, railHidden: false, narrow: false, railOpen: false, dragDepth: 0, pending: 0, notice: "",
     clock: Date.now(),  // ticks every second for the live line's elapsed time (only it reads this, so nothing else re-renders)
@@ -1853,7 +1856,7 @@ function agent() {
     EFFORTS, effortOpen: false,
     effortNext: null,  // the picker's level: null follows the Settings default, then it sticks for the session
     effortInfo(id) { return EFFORTS.find((e) => e.id === id) || EFFORTS[0]; },
-    effortUsable(id) { return id === "low" || !!this.s.nim_key_set; },
+    effortUsable(id) { return id === "low" || this.anyApiKey; },
     effortDefault() { const d = this.s.settings.effort; return EFFORTS.some((e) => e.id === d) ? d : "high"; },
     effortNow() { const e = this.effortNext ?? this.effortDefault(); return this.effortUsable(e) ? e : "low"; },  // what a message is sent at
     effortPicked() { return this.effortNext !== null && this.effortNow() === this.effortNext && this.effortNext !== this.effortDefault(); },
@@ -2183,14 +2186,17 @@ function agent() {
       await post("/api/browser", { token: this.chromeToken });
       this.chromeToken = ""; this.browserTest = "Token saved."; this.refresh();
     },
-    async saveMistralKey() {
-      if (!this.mistralKey.trim() && !this.s.mistral_key_set) return;
-      const r = await post("/api/keys/mistral", { key: this.mistralKey });
-      this.mistralKey = "";
-      this.s.mistral_key_set = !!r.mistral_key_set;
-      this.catalog = [];  // the model list now includes (or drops) Mistral's
-      this.mistralNote = r.mistral_key_set ? "Key saved. Its models are in the list above; Test shows which ones your plan opens." : "Key removed.";
+    async saveProviderKey(p) {
+      const key = (this.providerKeys[p.id] || "").trim();
+      if (!key && !p.key_set) return;
+      const r = await post(`/api/keys/provider/${p.id}`, { key });
+      this.providerKeys = { ...this.providerKeys, [p.id]: "" };
+      if (r.providers) this.s.providers = r.providers;
+      if (key && EFFORTS.some((e) => e.id === r.effort)) this.s.settings.effort = r.effort;  // a first API key moves the default up
+      this.catalog = [];  // the model list now includes (or drops) this provider's
+      this.providerNotes = { ...this.providerNotes, [p.id]: key ? `Key saved. ${p.label}'s models are in the list above; Test shows which ones answer.` : "Key removed." };
     },
+    get anyApiKey() { return !!this.s.nim_key_set || (this.s.providers || []).some((p) => p.key_set); },
     async saveNimKey() {
       // blank clears the key; the page never gets it back, only whether one is set
       if (!this.nimKey.trim() && !this.s.nim_key_set) return;

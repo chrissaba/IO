@@ -2929,12 +2929,12 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
     # The local models stay as eyes (EvoCUA finds where to click) and as the last fallback.
     # who decides: High and Max, NVIDIA's models every step; Medium, the local model unless the task is a hard one (below,
     # once its kind is known) or it gets stuck (Escalate); Low, the local model alone, nothing leaves the PC
-    api_ok = bool(eff["api"] and nim.nim_key())
+    api_ok = bool(eff["api"] and nim.any_key())
     remote_brain = api_ok and eff["api"] is True
     brain_chain = [(boss, BOSS_MODEL)]
     brain_models: list[str] = []  # the NVIDIA models the brain goes round, in order (Settings > Brain)
     if api_ok:  # Medium's local brain can still ask them (ask_model) and hand over to them
-        nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=300)  # DeepSeek queues ~3 min
+        nim_client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key() or "none", max_retries=0, timeout=300)  # DeepSeek queues ~3 min
         brain_models[:] = [m for m in (options.get("brain_models") or []) if isinstance(m, str) and m.strip()] or list(nim.BRAIN_MODELS)
         brain_chain = [(nim_client, m) for m in brain_models] + brain_chain
 
@@ -3061,7 +3061,7 @@ async def _run(task: str, max_steps: int, options: dict | None = None, ask=None,
 
             def run(i: int) -> None:
                 model = brain_models[i]
-                client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key(), max_retries=0, timeout=90)
+                client = OpenAI(base_url=nim.NIM_URL, api_key=nim.nim_key() or "none", max_retries=0, timeout=90)
                 with lock:
                     clients.append(client)
                 t = time.time()
